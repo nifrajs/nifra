@@ -577,6 +577,8 @@ struct ConnMetaSlot {
     chunk_resume: Option<Box<ChunkResume>>,
     ws: Option<Box<WsConnState>>,
     h2: Option<Box<H2Conn>>,
+    /// A terminal parse error is queued behind earlier answers: whatever the peer sends next is dropped.
+    refuse_input: bool,
 }
 
 #[cfg(unix)]
@@ -589,6 +591,7 @@ impl ConnMetaSlot {
         self.chunk_resume = None;
         self.ws = None;
         self.h2 = None;
+        self.refuse_input = false;
     }
 
     #[inline]
@@ -687,6 +690,9 @@ impl ConnMetaTable {
 /// Most bytes one connection may park behind an unanswered earlier request before it is closed.
 #[cfg(unix)]
 const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+/// How long a server-initiated WebSocket close waits for the peer's Close before the socket is cut.
+#[cfg(unix)]
+const WS_CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Most unanswered pipelined requests one HTTP/1.1 connection may have in flight.
 #[cfg(unix)]
@@ -793,6 +799,71 @@ fn h1_send(
         }
     }
     result
+}
+
+/// Queue a finished answer behind the connection's earlier unanswered requests, so it leaves in
+/// request order. Returns `true` when more than `MAX_HELD_BYTES` now wait on this connection.
+#[cfg(unix)]
+fn park_behind_pending(
+    st: &mut UvHttpShared,
+    conn_id: u32,
+    frame: Vec<u8>,
+    keep_alive: bool,
+) -> bool {
+    let id = st.placeholder_seq;
+    st.placeholder_seq = id.wrapping_sub(1);
+    let slot = st.conn_meta.ensure(conn_id);
+    if slot.h1_overflow.is_none() {
+        let mut order = Box::new(H1Order::default());
+        if slot.h1_head != 0 {
+            order.queue.push_back(slot.h1_head);
+            slot.h1_head = 0;
+        }
+        slot.h1_overflow = Some(order);
+    }
+    let Some(order) = slot.h1_overflow.as_deref_mut() else {
+        return false;
+    };
+    order.queue.push_back(id);
+    order.held_bytes += frame.len();
+    let over = order.held_bytes > MAX_HELD_BYTES;
+    order.held.insert(
+        id,
+        Held {
+            bytes: frame,
+            done: true,
+            keep_alive,
+        },
+    );
+    over
+}
+
+/// Answer a request the parser refused and end the connection. A request still being handled on the
+/// connection owns the next bytes the client reads, so the error waits its turn behind it.
+#[cfg(unix)]
+fn refuse_request(
+    st: &mut UvHttpShared,
+    conn_id: u32,
+    template: u32,
+    body: &[u8],
+    write_buf: &mut Vec<u8>,
+    consumed: usize,
+) -> ConnAction {
+    if st
+        .conn_meta
+        .get(conn_id)
+        .is_some_and(|s| s.has_h1_pending())
+    {
+        let mut frame = Vec::new();
+        st.templates.write_prepared(template, body, &mut frame);
+        if park_behind_pending(st, conn_id, frame, false) {
+            return ConnAction::CloseNow;
+        }
+        st.conn_meta.ensure(conn_id).refuse_input = true;
+        return ConnAction::Continue { consumed };
+    }
+    st.templates.write_prepared(template, body, write_buf);
+    ConnAction::CloseAfterWrite { consumed }
 }
 
 /// Direct-indexed O(1) free-list slab replacing `HashMap<u32, PendingReq>` on the hot path.
@@ -910,6 +981,9 @@ struct UvHttpShared {
     batch_data_pos: usize,
     batch_heads: Vec<u8>,
     batch_req_ids: Vec<u32>,
+    /// Requests (id, connection, stream) whose stream was reset before the batch carrying them
+    /// reached JS: their ids stay held until after it, so no later request reuses one in that batch.
+    reset_in_batch: Vec<(u32, u32, u32)>,
     pending: PendingSlab,
     conn_meta: ConnMetaTable,
     /// Ids for native-route answers parked behind a JS request; they count down from the top so they
@@ -931,6 +1005,27 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
         (st.raw_env, st.on_batch_ref, c)
     };
     unsafe { call_js_u32(raw_env, on_batch_ref, count as u32) };
+
+    // A stream reset while its request was still in that batch is aborted now, once JS has it.
+    let (raw_env, aborted_ref, resets) = {
+        let mut st = shared.borrow_mut();
+        let resets = std::mem::take(&mut st.reset_in_batch);
+        let mut aborted = Vec::with_capacity(resets.len());
+        for (id, conn_id, stream_id) in resets {
+            let same = st
+                .pending
+                .get(id)
+                .is_some_and(|p| p.conn_id == conn_id && p.h2_stream_id() == Some(stream_id));
+            if same {
+                st.pending.remove(id);
+                aborted.push(id);
+            }
+        }
+        (st.raw_env, st.on_aborted_ref, aborted)
+    };
+    for req_id in resets {
+        unsafe { call_js_u32(raw_env, aborted_ref, req_id) };
+    }
 
     // Promote any request that stayed async past `onBatch` out of the per-batch head arena.
     let mut st = shared.borrow_mut();
@@ -1118,10 +1213,16 @@ impl HttpUvCallbacks {
                                 })
                                 .map(|(id, _)| id)
                                 .collect();
-                            for &id in &ids {
-                                st.pending.remove(id);
+                            let mut aborted = Vec::with_capacity(ids.len());
+                            for id in ids {
+                                if st.batch_req_ids.contains(&id) {
+                                    st.reset_in_batch.push((id, conn_id, stream_id));
+                                } else {
+                                    st.pending.remove(id);
+                                    aborted.push(id);
+                                }
                             }
-                            (st.raw_env, st.on_aborted_ref, ids)
+                            (st.raw_env, st.on_aborted_ref, aborted)
                         };
                         for req_id in aborted {
                             unsafe { call_js_u32(raw_env, cb_ref, req_id) };
@@ -1163,6 +1264,11 @@ impl HttpUvCallbacks {
             };
         }
 
+        if st.conn_meta.get(conn_id).is_some_and(|s| s.refuse_input) {
+            return ConnAction::Continue {
+                consumed: read_buf.len(),
+            };
+        }
         let mut consumed = 0usize;
         let mut close_after = false;
         let limits = st.limits;
@@ -1185,47 +1291,29 @@ impl HttpUvCallbacks {
                     // request still unanswered waits behind it instead of jumping the queue.
                     let mut parked = false;
                     let mut over_held = false;
-                    let fast_hit =
-                        if st.routes.is_empty() || req.method_idx != 0 || req.is_ws_upgrade {
-                            false
-                        } else if st
-                            .conn_meta
-                            .get(conn_id)
-                            .is_some_and(|s| s.has_h1_pending())
-                        {
-                            let mut frame = Vec::new();
-                            if st.routes.try_match_get(req.path, &mut frame) {
-                                let id = st.placeholder_seq;
-                                st.placeholder_seq = id.wrapping_sub(1);
-                                let slot = st.conn_meta.ensure(conn_id);
-                                if slot.h1_overflow.is_none() {
-                                    let mut order = Box::new(H1Order::default());
-                                    if slot.h1_head != 0 {
-                                        order.queue.push_back(slot.h1_head);
-                                        slot.h1_head = 0;
-                                    }
-                                    slot.h1_overflow = Some(order);
-                                }
-                                let order = slot.h1_overflow.as_deref_mut().unwrap();
-                                order.queue.push_back(id);
-                                order.held_bytes += frame.len();
-                                over_held = order.held_bytes > MAX_HELD_BYTES;
-                                order.held.insert(
-                                    id,
-                                    Held {
-                                        bytes: frame,
-                                        done: true,
-                                        keep_alive: req.keep_alive,
-                                    },
-                                );
-                                parked = true;
-                                true
-                            } else {
-                                false
-                            }
+                    let fast_hit = if st.routes.is_empty()
+                        || req.method_idx != 0
+                        || req.is_ws_upgrade
+                        || req.over_max_body
+                    {
+                        false
+                    } else if st
+                        .conn_meta
+                        .get(conn_id)
+                        .is_some_and(|s| s.has_h1_pending())
+                    {
+                        let mut frame = Vec::new();
+                        if st.routes.try_match_get(req.path, &mut frame) {
+                            over_held =
+                                park_behind_pending(&mut st, conn_id, frame, req.keep_alive);
+                            parked = true;
+                            true
                         } else {
-                            st.routes.try_match_get(req.path, write_buf)
-                        };
+                            false
+                        }
+                    } else {
+                        st.routes.try_match_get(req.path, write_buf)
+                    };
                     if over_held {
                         return ConnAction::CloseNow;
                     }
@@ -1307,14 +1395,15 @@ impl HttpUvCallbacks {
                     } else {
                         st.pending.remove(req_id);
                         st.batch_heads.truncate(head_off as usize);
-                        st.templates.write_prepared(
-                            st.headers_too_large_tpl,
+                        let template = st.headers_too_large_tpl;
+                        return refuse_request(
+                            &mut st,
+                            conn_id,
+                            template,
                             b"Request Header Fields Too Large",
                             write_buf,
+                            read_buf.len(),
                         );
-                        return ConnAction::CloseAfterWrite {
-                            consumed: read_buf.len(),
-                        };
                     }
 
                     if resume.is_active() {
@@ -1331,28 +1420,37 @@ impl HttpUvCallbacks {
                     break;
                 }
                 Err(nifra_http::ParseError::PayloadTooLarge) => {
-                    st.templates
-                        .write_prepared(st.too_large_tpl, b"", write_buf);
-                    return ConnAction::CloseAfterWrite {
-                        consumed: read_buf.len(),
-                    };
+                    let template = st.too_large_tpl;
+                    return refuse_request(
+                        &mut st,
+                        conn_id,
+                        template,
+                        b"",
+                        write_buf,
+                        read_buf.len(),
+                    );
                 }
                 Err(nifra_http::ParseError::HeadersTooLarge) => {
-                    st.templates.write_prepared(
-                        st.headers_too_large_tpl,
+                    let template = st.headers_too_large_tpl;
+                    return refuse_request(
+                        &mut st,
+                        conn_id,
+                        template,
                         b"Request Header Fields Too Large",
                         write_buf,
+                        read_buf.len(),
                     );
-                    return ConnAction::CloseAfterWrite {
-                        consumed: read_buf.len(),
-                    };
                 }
                 Err(_) => {
-                    st.templates
-                        .write_prepared(st.bad_req_tpl, b"Bad Request", write_buf);
-                    return ConnAction::CloseAfterWrite {
-                        consumed: read_buf.len(),
-                    };
+                    let template = st.bad_req_tpl;
+                    return refuse_request(
+                        &mut st,
+                        conn_id,
+                        template,
+                        b"Bad Request",
+                        write_buf,
+                        read_buf.len(),
+                    );
                 }
             }
         }
@@ -1373,6 +1471,15 @@ impl UvCallbacks for HttpUvCallbacks {
 
     fn on_turn_end(&mut self) {
         invoke_on_batch_unlocked(&self.shared);
+    }
+
+    fn oldest_incomplete_request(&self, conn_id: u32) -> Option<std::time::Instant> {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.h2.as_deref())
+            .and_then(H2Conn::oldest_incomplete_request)
     }
 
     fn unanswered_only(&self, conn_id: u32) -> bool {
@@ -2362,6 +2469,20 @@ impl UvHttpServer {
 
         let (raw_env, open_ref, conn_id) = {
             let mut st = self.shared.borrow_mut();
+            // A response still owed to an earlier request would arrive inside the WebSocket stream
+            // once 101 is sent ahead of it: the upgrade is refused (answered in order by the caller).
+            let owed_earlier = st.pending.get(req_id).is_some_and(|p| {
+                st.conn_meta.get(p.conn_id).is_some_and(|slot| {
+                    (slot.h1_head != 0 && slot.h1_head != req_id)
+                        || slot
+                            .h1_overflow
+                            .as_ref()
+                            .is_some_and(|o| o.queue.iter().any(|&queued| queued != req_id))
+                })
+            });
+            if owed_earlier {
+                return -1;
+            }
             let Some(mut pending) = st.pending.remove(req_id) else {
                 return -1;
             };
@@ -2454,9 +2575,14 @@ impl UvHttpServer {
             ws.sent_close = Some((code, reason_str.clone()));
             st.scratch_frame.clear();
             write_close_frame(code, &reason_str, &mut st.scratch_frame);
+            // The socket stays open for the peer's own Close (RFC 6455 section 7.1.2); closing at
+            // once could reset the connection over the frame just sent. A silent peer is cut off.
             let res = self
                 .server
-                .write_to_conn(socket_id, &st.scratch_frame, true);
+                .write_to_conn(socket_id, &st.scratch_frame, false);
+            if res != WriteResult::Closed {
+                self.server.close_within(socket_id, WS_CLOSE_WAIT);
+            }
             if res == WriteResult::Closed {
                 let emit = st
                     .conn_meta
@@ -2524,6 +2650,20 @@ impl UvHttpServer {
         self.server
             .reload_tls(&to_tls_input(&tls, http2_enabled))
             .map_err(|e| Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    /// Whether response bytes are still held for a client: queued on a socket the peer is not
+    /// reading, or behind an HTTP/2 flow-control window. A graceful stop waits for this to clear.
+    #[napi]
+    pub fn has_unsent_output(&self) -> bool {
+        if self.server.any_queued() {
+            return true;
+        }
+        let st = self.shared.borrow();
+        st.conn_meta.slots.iter().any(|s| {
+            s.h2.as_ref()
+                .is_some_and(|h| h.active_response_streams() > 0)
+        })
     }
 
     #[napi]
@@ -2606,15 +2746,6 @@ pub fn create_uv_server(
         ));
     }
 
-    let mut cb_ref: sys::napi_ref = std::ptr::null_mut();
-    let status = unsafe { sys::napi_create_reference(env.raw(), on_batch.raw(), 1, &mut cb_ref) };
-    if status != sys::Status::napi_ok {
-        return Err(Error::new(
-            Status::GenericFailure,
-            format!("napi_create_reference failed: {status}"),
-        ));
-    }
-
     let mut limits = ParseLimits::default();
     let mut ws_max_message_size = WsConfig::default().max_message_size;
     let mut http2_enabled = false;
@@ -2665,6 +2796,16 @@ pub fn create_uv_server(
     let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
         .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
 
+    // Taken only once the options are valid and the port is bound, so a failed start holds no callback.
+    let mut cb_ref: sys::napi_ref = std::ptr::null_mut();
+    let status = unsafe { sys::napi_create_reference(env.raw(), on_batch.raw(), 1, &mut cb_ref) };
+    if status != sys::Status::napi_ok {
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("napi_create_reference failed: {status}"),
+        ));
+    }
+
     let mut templates = PreparedTemplates::default();
     let bad_req_tpl = templates.register(400, &[("content-type", "text/plain; charset=utf-8")]);
     let too_large_tpl = templates.register(413, &[]);
@@ -2708,6 +2849,7 @@ pub fn create_uv_server(
         batch_data_pos: 0,
         batch_heads: Vec::with_capacity(64 * 1024),
         batch_req_ids: Vec::with_capacity(DEFAULT_IN_SLOTS),
+        reset_in_batch: Vec::new(),
         pending: PendingSlab::with_capacity(256),
         conn_meta: ConnMetaTable::with_capacity(256),
         placeholder_seq: u32::MAX,

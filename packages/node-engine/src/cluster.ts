@@ -234,6 +234,8 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
   let nextAck = 1
   const acks = new Map<number, (worker: number, error: string | undefined) => void>()
   const timers = new Set<NodeJS.Timeout>()
+  /** The certificate last given to `reloadTls`, which a replacement worker must start serving. */
+  let currentTls: NonNullable<ServeOptions["tls"]> | undefined
 
   const emit = (event: ClusterWorkerEvent): void => {
     try {
@@ -243,7 +245,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     }
   }
 
-  const spawn = (): Slot => {
+  const spawn = (replacement = false): Slot => {
     const worker = cluster.fork(env)
     let resolve!: () => void
     let reject!: (error: Error) => void
@@ -259,9 +261,34 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     worker.on("message", (message: unknown) => {
       if (!isToPrimary(message)) return
       if (message.nifra === "listening") {
-        slot.listening = true
-        emit({ type: "listening", id: worker.id, pid: worker.process.pid ?? 0 })
-        resolve()
+        const settle = (): void => {
+          slot.listening = true
+          emit({ type: "listening", id: worker.id, pid: worker.process.pid ?? 0 })
+          resolve()
+        }
+        if (currentTls === undefined) {
+          settle()
+          return
+        }
+        // The worker started from the entrypoint's own certificate: it takes the reloaded one
+        // before it counts as listening, so a replacement never serves what was replaced.
+        const id = nextAck++
+        const done = (_worker: number, error: string | undefined): void => {
+          clearTimeout(timer)
+          acks.delete(id)
+          if (error === undefined) {
+            settle()
+            return
+          }
+          failure = `the reloaded certificate was not applied: ${error}`
+          worker.process.kill("SIGKILL")
+        }
+        const timer = setTimeout(() => done(worker.id, "no answer"), ACK_TIMEOUT_MS)
+        acks.set(id, done)
+        const reload: ToWorker = { nifra: "reloadTls", id, tls: currentTls }
+        worker.send(reload, (error) => {
+          if (error !== null) done(worker.id, "could not be reached")
+        })
       } else if (message.nifra === "error") {
         failure = message.message
       } else {
@@ -273,7 +300,9 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
       const uptime = Date.now() - slot.startedAt
       const unexpected = !stopping && !slot.retiring
       quickExits = uptime < QUICK_EXIT_MS && unexpected ? quickExits + 1 : 0
-      const again = unexpected && respawn && slot.listening && quickExits <= MAX_QUICK_EXITS
+      // A replacement that dies before it listens is tried again: only the first start fails the cluster.
+      const again =
+        unexpected && respawn && (slot.listening || replacement) && quickExits <= MAX_QUICK_EXITS
       emit({
         type: "exit",
         id: worker.id,
@@ -284,13 +313,12 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
       })
       if (!slot.listening) {
         reject(new Error(failure ?? `a worker exited before it was listening (code ${code})`))
-        return
       }
       if (!again) return
       const delay = quickExits === 0 ? 0 : Math.min(5000, 100 * 2 ** (quickExits - 1))
       const timer = setTimeout(() => {
         timers.delete(timer)
-        if (!stopping) spawn()
+        if (!stopping) spawn(true)
       }, delay)
       timers.add(timer)
     })
@@ -319,8 +347,11 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
       }, budget)
       for (const worker of all) {
         const message: ToWorker = { nifra: "stop", options: stopOptions }
-        if (worker.isConnected()) worker.send(message)
-        else worker.process.kill("SIGTERM")
+        if (worker.isConnected()) {
+          worker.send(message, (error) => {
+            if (error !== null) worker.process.kill("SIGTERM")
+          })
+        } else worker.process.kill("SIGTERM")
       }
       await Promise.all(all.map(exited))
       clearTimeout(killer)
@@ -368,8 +399,11 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
       const gone = exited(old.worker)
       const killer = setTimeout(() => old.worker.process.kill("SIGKILL"), budget)
       const message: ToWorker = { nifra: "stop", options: stopOptions }
-      if (old.worker.isConnected()) old.worker.send(message)
-      else old.worker.process.kill("SIGTERM")
+      if (old.worker.isConnected()) {
+        old.worker.send(message, (error) => {
+          if (error !== null) old.worker.process.kill("SIGTERM")
+        })
+      } else old.worker.process.kill("SIGTERM")
       await gone
       clearTimeout(killer)
     }
@@ -380,11 +414,12 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     void stopAll(signals)
   }
 
-  const started = await Promise.allSettled(Array.from({ length: count }, () => spawn().ready))
-  const failed = started.find((result) => result.status === "rejected")
-  if (failed !== undefined && failed.status === "rejected") {
+  try {
+    // The first worker that cannot start ends the wait: a sibling still starting would otherwise keep it open.
+    await Promise.all(Array.from({ length: count }, () => spawn().ready))
+  } catch (error) {
     await stopAll({ drainMs: 0 })
-    throw failed.reason
+    throw error
   }
   if (signals !== undefined) {
     process.once("SIGTERM", onSignal)
@@ -418,13 +453,18 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
             acks.set(id, done)
             const message: ToWorker =
               tls === undefined ? { nifra: "reloadTls", id } : { nifra: "reloadTls", id, tls }
-            if (!slot.worker.send(message)) done(slot.worker.id, "could not be reached")
+            // A send to a worker that has gone fails through the callback; without one it would be
+            // an `error` event nobody listens to, which ends the primary.
+            slot.worker.send(message, (error) => {
+              if (error !== null) done(slot.worker.id, "could not be reached")
+            })
           }),
       ),
     )
     if (failures.length > 0) {
       throw new Error(`@nifrajs/node-engine: reloadTls is not applied by ${failures.join("; ")}`)
     }
+    if (tls !== undefined) currentTls = tls
   }
 
   return {

@@ -6,6 +6,7 @@
 import { isSameOriginPath } from "@nifrajs/core/pattern"
 import type * as TS from "typescript"
 import { codeUnitOrder } from "./internal/code-unit-order.ts"
+import { importedAs } from "./internal/imported-as.ts"
 import {
   applyEdits,
   type Edit,
@@ -449,21 +450,7 @@ function rewritePprOption(ts: typeof TS, file: string, text: string): RewriteRes
   const manual: ManualSite[] = []
   let count = 0
   // The names createWebApp is imported under, and the names @nifrajs/web is imported as a namespace.
-  const locals = new Set<string>()
-  const namespaces = new Set<string>()
-  for (const statement of tree.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
-      continue
-    if (statement.moduleSpecifier.text !== WEB) continue
-    const bindings = statement.importClause?.namedBindings
-    if (bindings === undefined) continue
-    if (ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
-    else {
-      for (const element of bindings.elements) {
-        if ((element.propertyName ?? element.name).text === WEB_APP) locals.add(element.name.text)
-      }
-    }
-  }
+  const { locals, namespaces } = importedAs(ts, tree, (from) => from === WEB, WEB_APP)
   const isCreateWebApp = (callee: TS.Expression): boolean =>
     (ts.isIdentifier(callee) && locals.has(callee.text)) ||
     (ts.isPropertyAccessExpression(callee) &&

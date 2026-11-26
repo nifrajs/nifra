@@ -51,6 +51,11 @@ pub trait UvCallbacks {
     fn unanswered_only(&self, conn_id: u32) -> bool {
         self.has_pending_requests(conn_id)
     }
+    /// When the oldest request still being received on `conn_id` began, for protocols that keep
+    /// unfinished requests as parsed state rather than as unread bytes (HTTP/2 streams).
+    fn oldest_incomplete_request(&self, _conn_id: u32) -> Option<std::time::Instant> {
+        None
+    }
     fn on_writable(&mut self, conn_id: u32);
     fn on_disconnect(&mut self, conn_id: u32);
 }
@@ -177,6 +182,34 @@ impl UvServer {
         }
     }
 
+    /// Close `conn_id` after `wait` whether or not the peer has finished with it.
+    pub fn close_within(&self, conn_id: u32, wait: std::time::Duration) {
+        match &self.backend {
+            ServerBackend::Uv(state) => {
+                let mut st = state.borrow_mut();
+                let at = st.clock.now() + wait;
+                if let Some(conn) = st.conns.get_mut(conn_id) {
+                    conn.core.close_deadline = Some(at);
+                }
+            }
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.close_within(conn_id, wait),
+        }
+    }
+
+    /// Whether any connection still holds response bytes it has not yet written to its socket.
+    pub fn any_queued(&self) -> bool {
+        match &self.backend {
+            ServerBackend::Uv(state) => state
+                .borrow()
+                .conns
+                .iter()
+                .any(|(_, c)| c.core.queued_bytes() > 0),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.any_queued(),
+        }
+    }
+
     pub fn stop_listening(&self) {
         match &self.backend {
             ServerBackend::Uv(state) => UvPollState::stop_listening(state),
@@ -230,6 +263,8 @@ struct UvPollState {
     conns: ConnSlab<UvConn>,
     read_ended: HashSet<u32>,
     turn_dirty: bool,
+    /// Connections an application write drained, owed an `on_writable` once the borrow is released.
+    pending_writable: Vec<u32>,
     closed: bool,
     read_scratch: Vec<MaybeUninit<u8>>,
     scratch_write: Vec<u8>,
@@ -255,6 +290,7 @@ impl UvPollState {
             ));
         }
         let uv = uv_api()?;
+        listener.set_nonblocking(true)?;
         let listener_fd = listener.as_raw_fd();
         if cfg.tcp_nodelay {
             set_tcp_nodelay(listener_fd);
@@ -273,6 +309,7 @@ impl UvPollState {
             conns: ConnSlab::with_capacity(256),
             read_ended: HashSet::new(),
             turn_dirty: false,
+            pending_writable: Vec::new(),
             closed: false,
             read_scratch: alloc_read_scratch(),
             scratch_write: Vec::with_capacity(16 * 1024),
@@ -287,6 +324,7 @@ impl UvPollState {
         let rc = (uv.poll_init_socket)(uv_loop, poll_handle, listener_fd);
         if rc != 0 {
             free_handle(poll_handle, uv.poll_size);
+            close_spare_fd(&state);
             return Err(io::Error::other(format!(
                 "uv_poll_init_socket failed: {rc}"
             )));
@@ -297,6 +335,7 @@ impl UvPollState {
         if rc != 0 {
             free_handle(check_handle, uv.check_size);
             (uv.close)(poll_handle, on_raw_poll_close);
+            close_spare_fd(&state);
             return Err(io::Error::other(format!("uv_check_init failed: {rc}")));
         }
 
@@ -447,6 +486,11 @@ impl UvPollState {
             }
             return WriteResult::Closed;
         }
+        if action == FlushAction::DisarmWritable {
+            // A producer waiting for the queue to drain is woken at the turn's end.
+            st.pending_writable.push(conn_id);
+            st.turn_dirty = true;
+        }
         if armed {
             WriteResult::Backpressured
         } else {
@@ -541,6 +585,14 @@ fn apply_uv_flush_action(uv: &UvApi, handle: *mut c_void, read_ended: bool, acti
     }
 }
 
+fn close_spare_fd(state: &Rc<RefCell<UvPollState>>) {
+    let mut st = state.borrow_mut();
+    if st.spare_fd >= 0 {
+        unsafe { libc::close(st.spare_fd) };
+        st.spare_fd = -1;
+    }
+}
+
 fn close_client_handle(uv: &UvApi, handle: *mut c_void) {
     unsafe {
         if !handle.is_null() && (uv.is_closing)(handle) == 0 {
@@ -619,13 +671,9 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
             set_tcp_nodelay(client_fd);
         }
 
+        // The slot is taken before libuv is handed the handle: a full slab then frees an
+        // uninitialised handle, which libuv does not yet own.
         let poll_handle = alloc_handle(uv.poll_size);
-        if (uv.poll_init_socket)(uv_loop, poll_handle, client_fd) != 0 {
-            free_handle(poll_handle, uv.poll_size);
-            libc::close(client_fd);
-            continue;
-        }
-
         let Some(conn_id) = st.conns.alloc_with(|_| UvConn {
             core: ConnCore::new(client_fd, peer_ip, tls_conn, now),
             poll_handle,
@@ -634,6 +682,12 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
             libc::close(client_fd);
             continue;
         };
+        if (uv.poll_init_socket)(uv_loop, poll_handle, client_fd) != 0 {
+            st.conns.remove(conn_id);
+            free_handle(poll_handle, uv.poll_size);
+            libc::close(client_fd);
+            continue;
+        }
 
         let c_ctx = Box::into_raw(Box::new(ClientCtx {
             state: Rc::clone(&ctx.state),
@@ -1051,6 +1105,12 @@ unsafe extern "C" fn on_check_event(handle: *mut c_void) {
 
     if let Some(mut handler) = cb {
         handler.on_turn_end();
+        let writable = std::mem::take(&mut state_rc.borrow_mut().pending_writable);
+        for id in writable {
+            if state_rc.borrow().conns.get(id).is_some() {
+                handler.on_writable(id);
+            }
+        }
         let mut st = state_rc.borrow_mut();
         if !st.closed {
             let finished: Vec<u32> = st
@@ -1145,9 +1205,6 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     }
     let uv_ms = (uv.now)(st.uv_loop);
     if !st.clock.on_timer_tick(uv_ms) {
-        return;
-    }
-    if st.cfg.idle_timeout_ms == 0 && st.cfg.request_timeout_ms == 0 {
         return;
     }
     let now = st.clock.now();

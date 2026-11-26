@@ -118,6 +118,7 @@ struct InStream {
     declared_cl: Option<usize>,
     headers_done: bool,
     end_stream: bool,
+    started: Instant,
 }
 
 /// A response body still owed to the peer: sent as its flow-control windows open.
@@ -127,6 +128,22 @@ struct OutStream {
     sent: usize,
     end: bool,
     blocked: bool,
+}
+
+/// A field name or value HTTP/2 refuses: upper-case or non-token names, NUL/CR/LF in a value, or a
+/// connection-specific field (RFC 9113 sections 8.2 and 8.2.2).
+fn invalid_field(name: &str, val: &str) -> bool {
+    name.bytes().any(|b| b.is_ascii_uppercase())
+        || val.bytes().any(|b| matches!(b, 0 | b'\r' | b'\n'))
+        || !is_valid_header_name(name)
+        || connection_specific(name, val)
+}
+
+fn connection_specific(name: &str, val: &str) -> bool {
+    matches!(
+        name,
+        "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "proxy-connection"
+    ) || (name == "te" && !val.eq_ignore_ascii_case("trailers"))
 }
 
 impl OutStream {
@@ -171,6 +188,9 @@ pub struct H2Conn {
     conn_send_window: i64,
     peer_initial_window: i64,
     out_streams: HashMap<u32, OutStream>,
+    /// `WINDOW_UPDATE` credit a peer granted a stream before its response began, applied when it does.
+    early_credit: HashMap<u32, i64>,
+    client_settings_seen: bool,
 }
 
 impl H2Conn {
@@ -194,11 +214,30 @@ impl H2Conn {
             conn_send_window: INITIAL_WINDOW_SIZE as i64,
             peer_initial_window: INITIAL_WINDOW_SIZE as i64,
             out_streams: HashMap::new(),
+            early_credit: HashMap::new(),
+            client_settings_seen: false,
         }
     }
 
+    /// Response streams the connection still owes the peer: not yet ended, or ended with bytes
+    /// held back by flow control.
     pub fn active_response_streams(&self) -> usize {
         self.open_response_streams.len()
+            + self
+                .out_streams
+                .keys()
+                .filter(|id| !self.open_response_streams.contains_key(id))
+                .count()
+    }
+
+    /// When the oldest request still being received (its body unfinished) began, for the request deadline.
+    pub fn oldest_incomplete_request(&self) -> Option<Instant> {
+        self.active_streams.values().map(|st| st.started).min()
+    }
+
+    fn new_out_stream(&mut self, stream_id: u32) -> OutStream {
+        let credit = self.early_credit.remove(&stream_id).unwrap_or(0);
+        OutStream::new(self.peer_initial_window + credit)
     }
 
     /// Emit the initial server `SETTINGS` frame and connection `WINDOW_UPDATE` once.
@@ -286,6 +325,18 @@ impl H2Conn {
                 res.consumed = pos;
                 res.close_after_write = true;
                 return res;
+            }
+
+            // The first frame after the preface must be the client's own SETTINGS (RFC 9113 §3.4).
+            if !self.client_settings_seen {
+                if ftype == FRAME_SETTINGS && (flags & FLAG_ACK) == 0 {
+                    self.client_settings_seen = true;
+                } else {
+                    self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
+                    res.consumed = pos;
+                    res.close_after_write = true;
+                    return res;
+                }
             }
 
             match ftype {
@@ -422,6 +473,15 @@ impl H2Conn {
                         } else {
                             self.flush_stream(stream_id, write_buf, &mut res.writable);
                         }
+                    } else if self.active_streams.contains_key(&stream_id)
+                        || self.open_response_streams.contains_key(&stream_id)
+                    {
+                        let credit = self.early_credit.entry(stream_id).or_insert(0);
+                        *credit += i64::from(inc);
+                        if self.peer_initial_window + *credit > MAX_WINDOW {
+                            self.early_credit.remove(&stream_id);
+                            write_rst_stream(stream_id, ERR_FLOW_CONTROL_ERROR, write_buf);
+                        }
                     }
                 }
                 FRAME_PRIORITY => {
@@ -452,6 +512,7 @@ impl H2Conn {
                     self.active_streams.remove(&stream_id);
                     self.open_response_streams.remove(&stream_id);
                     self.out_streams.remove(&stream_id);
+                    self.early_credit.remove(&stream_id);
                     res.events.push(H2Event::StreamReset(stream_id));
                     // Rapid-reset DoS protection (CVE-2023-44487).
                     if self.rst_count > self.cfg.max_rst_streams {
@@ -463,7 +524,7 @@ impl H2Conn {
                 }
                 FRAME_GOAWAY => {
                     res.events.push(H2Event::GoAway);
-                    if self.open_response_streams.is_empty() && self.active_streams.is_empty() {
+                    if self.active_response_streams() == 0 && self.active_streams.is_empty() {
                         self.closed = true;
                         res.consumed = pos;
                         res.close_after_write = true;
@@ -670,6 +731,16 @@ impl H2Conn {
         // Check if this is trailing headers on an already-open stream.
         if let Some(st) = self.active_streams.get_mut(&stream_id) {
             if st.headers_done && end_stream {
+                // Trailers are ordinary fields: a pseudo-header, a malformed name or value, or a
+                // connection-specific field fails this stream (the table above is already in step).
+                if decoded
+                    .iter()
+                    .any(|(name, val)| name.starts_with(':') || invalid_field(name, val))
+                {
+                    self.active_streams.remove(&stream_id);
+                    write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    return Ok(());
+                }
                 if let Some(st) = self.active_streams.remove(&stream_id) {
                     if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
                         write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
@@ -691,7 +762,7 @@ impl H2Conn {
         if stream_id <= self.last_stream_id {
             return Err(ERR_PROTOCOL_ERROR);
         }
-        if (self.active_streams.len() + self.open_response_streams.len()) as u32
+        if (self.active_streams.len() + self.active_response_streams()) as u32
             >= self.cfg.max_concurrent_streams
         {
             write_rst_stream(stream_id, ERR_REFUSED_STREAM, write_buf);
@@ -703,6 +774,7 @@ impl H2Conn {
         let mut raw_path: Option<String> = None;
         let mut authority: Option<String> = None;
         let mut seen_regular = false;
+        let mut seen_scheme = false;
         let mut headers = Vec::with_capacity(decoded.len());
         let mut is_json_ct = false;
         let mut seen_content_type = false;
@@ -748,7 +820,13 @@ impl H2Conn {
                         }
                         authority = Some(val);
                     }
-                    ":scheme" => {}
+                    ":scheme" => {
+                        if seen_scheme {
+                            write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            return Ok(());
+                        }
+                        seen_scheme = true;
+                    }
                     _ => {
                         write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                         return Ok(());
@@ -758,11 +836,7 @@ impl H2Conn {
             }
             seen_regular = true;
             // RFC 9113 §8.2.2: forbidden connection-specific headers.
-            if matches!(
-                name.as_str(),
-                "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "proxy-connection"
-            ) || (name == "te" && !val.eq_ignore_ascii_case("trailers"))
-            {
+            if connection_specific(&name, &val) {
                 write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                 return Ok(());
             }
@@ -796,7 +870,7 @@ impl H2Conn {
             headers.push((name, val));
         }
 
-        let (Some(method), Some(raw_target)) = (method, raw_path) else {
+        let (Some(method), Some(raw_target), true) = (method, raw_path, seen_scheme) else {
             write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
         };
@@ -837,6 +911,7 @@ impl H2Conn {
             declared_cl,
             headers_done: true,
             end_stream,
+            started: (self.clock)(),
         };
 
         if end_stream {
@@ -910,7 +985,9 @@ impl H2Conn {
         let end_on_headers = body_bytes.is_empty();
         let hflags = FLAG_END_HEADERS | if end_on_headers { FLAG_END_STREAM } else { 0 };
         write_header_frames(stream_id, hflags, &block, self.peer_max_frame_size, out);
-        if !body_bytes.is_empty() {
+        if body_bytes.is_empty() {
+            self.early_credit.remove(&stream_id);
+        } else {
             self.queue_data(stream_id, body_bytes, true, out);
         }
     }
@@ -935,9 +1012,10 @@ impl H2Conn {
             out,
         );
         if self.open_response_streams.contains_key(&stream_id) {
-            self.out_streams
-                .entry(stream_id)
-                .or_insert_with(|| OutStream::new(self.peer_initial_window));
+            if !self.out_streams.contains_key(&stream_id) {
+                let os = self.new_out_stream(stream_id);
+                self.out_streams.insert(stream_id, os);
+            }
         }
     }
 
@@ -974,14 +1052,18 @@ impl H2Conn {
         }
         if !self.out_streams.contains_key(&stream_id) {
             // A whole body that fits the open windows needs no bookkeeping.
-            let room = self.peer_initial_window.min(self.conn_send_window).max(0) as usize;
+            let credit = self.early_credit.get(&stream_id).copied().unwrap_or(0);
+            let room = (self.peer_initial_window + credit)
+                .min(self.conn_send_window)
+                .max(0) as usize;
             if end_stream && data.len() <= room {
+                self.early_credit.remove(&stream_id);
                 write_data_frames(stream_id, data, true, self.peer_max_frame_size, out);
                 self.conn_send_window -= data.len() as i64;
                 return;
             }
-            self.out_streams
-                .insert(stream_id, OutStream::new(self.peer_initial_window));
+            let os = self.new_out_stream(stream_id);
+            self.out_streams.insert(stream_id, os);
         }
         if let Some(os) = self.out_streams.get_mut(&stream_id) {
             os.buf.extend_from_slice(data);
@@ -1057,6 +1139,7 @@ impl H2Conn {
         self.active_streams.remove(&stream_id);
         self.open_response_streams.remove(&stream_id);
         self.out_streams.remove(&stream_id);
+        self.early_credit.remove(&stream_id);
         write_rst_stream(stream_id, error_code, out);
     }
 
@@ -2110,7 +2193,9 @@ mod tests {
         };
         let mut conn = H2Conn::new(cfg);
         conn.clock = fake_now;
-        conn.feed(CLIENT_PREFACE, &mut Vec::new());
+        let mut opening = CLIENT_PREFACE.to_vec();
+        write_frame(FRAME_SETTINGS, 0, 0, &[], &mut opening);
+        conn.feed(&opening, &mut Vec::new());
         // Three resets in each of many windows never trip the limit...
         for round in 0..5u64 {
             OFFSET_MS.store(round * 31_000, Ordering::SeqCst);
@@ -2237,6 +2322,7 @@ mod tests {
         // A size update above what the server advertised is a compression error.
         let mut conn = H2Conn::new(H2Config::default());
         let mut wire = CLIENT_PREFACE.to_vec();
+        write_frame(FRAME_SETTINGS, 0, 0, &[], &mut wire);
         let mut block = vec![0x3F, 0xE2, 0x1F]; // dynamic table size update to 4097
         block.extend_from_slice(&[0x82, 0x84, 0x86]);
         write_frame(
@@ -2317,6 +2403,7 @@ mod tests {
         let mut conn = H2Conn::new(cfg);
         let mut wire = Vec::new();
         wire.extend_from_slice(CLIENT_PREFACE);
+        write_frame(FRAME_SETTINGS, 0, 0, &[], &mut wire);
         write_rst_stream(1, ERR_CANCEL, &mut wire);
         write_rst_stream(3, ERR_CANCEL, &mut wire);
         write_rst_stream(5, ERR_CANCEL, &mut wire);
@@ -2324,9 +2411,214 @@ mod tests {
         let mut out = Vec::new();
         let res = conn.feed(&wire, &mut out);
         assert!(res.close_after_write);
-        // Verify GOAWAY with ENHANCE_YOUR_CALM (0x0b) was written.
-        assert!(out.windows(5).any(|w| w[0] == FRAME_GOAWAY
-            || w == [0, 0, 0, 0x0b, 0]
-            || w[1..5] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+        assert!(frames(&out)
+            .iter()
+            .any(|(ty, _, _, p)| *ty == FRAME_GOAWAY
+                && p[4..8] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+    }
+
+    /// A connection that has read the preface and a SETTINGS frame, with the server's own output drained.
+    fn ready_conn(cfg: H2Config) -> H2Conn {
+        let mut conn = H2Conn::new(cfg);
+        let mut wire = CLIENT_PREFACE.to_vec();
+        write_frame(FRAME_SETTINGS, 0, 0, &[], &mut wire);
+        conn.feed(&wire, &mut Vec::new());
+        conn
+    }
+
+    fn get_headers(extra: &[u8]) -> Vec<u8> {
+        let mut block = vec![0x82, 0x84, 0x86];
+        block.extend_from_slice(extra);
+        block
+    }
+
+    #[test]
+    fn h2_first_frame_must_be_the_client_settings() {
+        let mut conn = H2Conn::new(H2Config::default());
+        let mut wire = CLIENT_PREFACE.to_vec();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            1,
+            &get_headers(&[]),
+            &mut wire,
+        );
+        let mut out = Vec::new();
+        let res = conn.feed(&wire, &mut out);
+        assert!(res.close_after_write);
+        assert!(res.events.is_empty());
+        assert!(frames(&out).iter().any(
+            |(ty, _, _, p)| *ty == FRAME_GOAWAY && p[4..8] == ERR_PROTOCOL_ERROR.to_be_bytes()
+        ));
+    }
+
+    #[test]
+    fn h2_a_request_needs_exactly_one_scheme() {
+        let attempt = |block: &[u8]| {
+            let mut conn = ready_conn(H2Config::default());
+            let mut wire = Vec::new();
+            write_frame(
+                FRAME_HEADERS,
+                FLAG_END_HEADERS | FLAG_END_STREAM,
+                1,
+                block,
+                &mut wire,
+            );
+            let mut out = Vec::new();
+            let res = conn.feed(&wire, &mut out);
+            let reset = frames(&out)
+                .iter()
+                .any(|(ty, _, sid, _)| *ty == FRAME_RST_STREAM && *sid == 1);
+            (
+                res.events.iter().any(|e| matches!(e, H2Event::Request(_))),
+                reset,
+            )
+        };
+        assert_eq!(attempt(&[0x82, 0x84, 0x86]), (true, false));
+        assert_eq!(attempt(&[0x82, 0x84]), (false, true));
+        assert_eq!(attempt(&[0x82, 0x84, 0x86, 0x87]), (false, true));
+    }
+
+    #[test]
+    fn h2_trailers_with_a_pseudo_header_or_connection_field_reset_the_stream() {
+        let attempt = |trailer: &[(&str, &str)]| {
+            let mut conn = ready_conn(H2Config::default());
+            let mut wire = Vec::new();
+            write_frame(
+                FRAME_HEADERS,
+                FLAG_END_HEADERS,
+                1,
+                &get_headers(&[]),
+                &mut wire,
+            );
+            write_frame(FRAME_DATA, 0, 1, b"abc", &mut wire);
+            let mut block = Vec::new();
+            for (name, value) in trailer {
+                encode_header_pair(name, value.as_bytes(), &mut block);
+            }
+            write_frame(
+                FRAME_HEADERS,
+                FLAG_END_HEADERS | FLAG_END_STREAM,
+                1,
+                &block,
+                &mut wire,
+            );
+            let mut out = Vec::new();
+            let res = conn.feed(&wire, &mut out);
+            let reset = frames(&out)
+                .iter()
+                .any(|(ty, _, sid, _)| *ty == FRAME_RST_STREAM && *sid == 1);
+            (
+                res.events.iter().any(|e| matches!(e, H2Event::Request(_))),
+                reset,
+                res.close_after_write,
+            )
+        };
+        assert_eq!(attempt(&[("x-checksum", "1")]), (true, false, false));
+        assert_eq!(attempt(&[(":path", "/other")]), (false, true, false));
+        assert_eq!(attempt(&[("connection", "close")]), (false, true, false));
+        assert_eq!(attempt(&[("x-a", "a\r\nb")]), (false, true, false));
+    }
+
+    /// A response that waits on flow control still counts toward the stream limit, so a peer that
+    /// withholds credit cannot keep opening streams.
+    #[test]
+    fn h2_a_response_held_by_flow_control_still_counts_as_open() {
+        let cfg = H2Config {
+            max_concurrent_streams: 1,
+            ..H2Config::default()
+        };
+        let mut conn = ready_conn(cfg);
+        let mut wire = Vec::new();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            1,
+            &get_headers(&[]),
+            &mut wire,
+        );
+        let res = conn.feed(&wire, &mut Vec::new());
+        assert!(res
+            .events
+            .iter()
+            .any(|e| matches!(e, H2Event::Request(r) if r.stream_id == 1)));
+        // A body larger than the initial 65,535-byte window cannot leave in one go.
+        let body = vec![b'x'; 200_000];
+        conn.write_response(1, 200, &[], Some(&body), &mut Vec::new());
+        assert_eq!(conn.active_response_streams(), 1);
+
+        let mut second = Vec::new();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            3,
+            &get_headers(&[]),
+            &mut second,
+        );
+        let mut out = Vec::new();
+        let res = conn.feed(&second, &mut out);
+        assert!(!res.events.iter().any(|e| matches!(e, H2Event::Request(_))));
+        assert!(frames(&out).iter().any(|(ty, _, sid, p)| {
+            *ty == FRAME_RST_STREAM && *sid == 3 && p == &ERR_REFUSED_STREAM.to_be_bytes()
+        }));
+    }
+
+    /// Credit granted before the response began is not lost: the response starts with it.
+    #[test]
+    fn h2_stream_credit_sent_before_the_response_is_kept() {
+        let mut conn = ready_conn(H2Config::default());
+        let mut wire = Vec::new();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            1,
+            &get_headers(&[]),
+            &mut wire,
+        );
+        write_frame(
+            FRAME_WINDOW_UPDATE,
+            0,
+            1,
+            &100_000u32.to_be_bytes(),
+            &mut wire,
+        );
+        write_frame(
+            FRAME_WINDOW_UPDATE,
+            0,
+            0,
+            &100_000u32.to_be_bytes(),
+            &mut wire,
+        );
+        conn.feed(&wire, &mut Vec::new());
+        let body = vec![b'x'; 150_000];
+        let mut out = Vec::new();
+        conn.write_response(1, 200, &[], Some(&body), &mut out);
+        let sent: usize = frames(&out)
+            .iter()
+            .filter(|(ty, _, sid, _)| *ty == FRAME_DATA && *sid == 1)
+            .map(|(_, _, _, p)| p.len())
+            .sum();
+        assert_eq!(sent, 150_000);
+        assert_eq!(conn.active_response_streams(), 0);
+    }
+
+    #[test]
+    fn h2_the_oldest_unfinished_request_is_reported_until_it_ends() {
+        let mut conn = ready_conn(H2Config::default());
+        assert!(conn.oldest_incomplete_request().is_none());
+        let mut wire = Vec::new();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS,
+            1,
+            &get_headers(&[]),
+            &mut wire,
+        );
+        conn.feed(&wire, &mut Vec::new());
+        assert!(conn.oldest_incomplete_request().is_some());
+        let mut end = Vec::new();
+        write_frame(FRAME_DATA, FLAG_END_STREAM, 1, &[], &mut end);
+        conn.feed(&end, &mut Vec::new());
+        assert!(conn.oldest_incomplete_request().is_none());
     }
 }

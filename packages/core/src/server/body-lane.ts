@@ -93,7 +93,13 @@ export function readBoundedJsonSource<T>(
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
 ): Promise<unknown | ResponseResult | T> {
-  const settled = readBoundedJsonNow(req, maxBytes, protoPoisoning, onResult, onError)
+  let settled: MaybePromise<unknown | ResponseResult | T>
+  try {
+    settled = readBoundedJsonNow(req, maxBytes, protoPoisoning, onResult, onError)
+  } catch (error) {
+    // The continuation ran synchronously on a ready body: its throw is still this promise's rejection.
+    return Promise.reject(error)
+  }
   return settled instanceof Promise ? settled : Promise.resolve(settled)
 }
 
@@ -348,13 +354,23 @@ export const crossSiteFormRefused = (
  * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and
  * not one of `formOrigins`, is refused with `403` before the body is read.
  */
-export function readBodyFramed<T>(...args: Parameters<typeof readBodyFramedNow<T>>): Promise<T> {
-  const settled = readBodyFramedNow<T>(...args)
+export function readBodyFramed<T>(...args: FramedBodyArgs<T>): Promise<T> {
+  let settled: MaybePromise<T>
+  try {
+    settled = readBodyFramedNow<T>(...args)
+  } catch (error) {
+    // A continuation that throws after a synchronous read still reaches `.catch` as a rejection.
+    return Promise.reject(error)
+  }
   return settled instanceof Promise ? settled : Promise.resolve(settled)
 }
 
-/** {@link readBodyFramed} that answers synchronously when the source already holds its body. */
-export function readBodyFramedNow<T>(
+/**
+ * The arguments of {@link readBodyFramed}: the request, the byte cap and the prototype-poisoning
+ * policy; the continuation for a parsed body, the wrapper for a refusal and the one for an error;
+ * then the route's body schema and the origins a form may come from.
+ */
+export type FramedBodyArgs<T> = [
   source: RequestSource,
   maxBodyBytes: number,
   protoPoisoning: ProtoPoisoning,
@@ -363,6 +379,20 @@ export function readBodyFramedNow<T>(
   onError: (err: unknown) => MaybePromise<T>,
   bodySchema?: object,
   formOrigins?: FormOrigins,
+]
+
+/** {@link readBodyFramed} that answers synchronously when the source already holds its body. */
+export function readBodyFramedNow<T>(
+  ...[
+    source,
+    maxBodyBytes,
+    protoPoisoning,
+    onParsed,
+    wrapResponse,
+    onError,
+    bodySchema,
+    formOrigins,
+  ]: FramedBodyArgs<T>
 ): MaybePromise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
   // A body a transport codec decoded keeps its media type; the JSON lane below takes its value.

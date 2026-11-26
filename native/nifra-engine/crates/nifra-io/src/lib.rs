@@ -19,7 +19,7 @@ pub use sys::conn_slot;
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener as StdTcpListener};
+use std::net::{SocketAddr, TcpListener as StdTcpListener, ToSocketAddrs};
 
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
@@ -32,7 +32,6 @@ const READ_BUF_SIZE: usize = 16 * 1024;
 pub enum TransportKind {
     Epoll,
     LibuvPoll,
-    IoUring,
     Mio,
 }
 
@@ -41,7 +40,6 @@ impl TransportKind {
         match self {
             Self::Epoll => "epoll",
             Self::LibuvPoll => "libuv-poll",
-            Self::IoUring => "io_uring",
             Self::Mio => "mio",
         }
     }
@@ -76,12 +74,12 @@ impl Default for SocketConfig {
     }
 }
 
-/// Probe the preferred I/O transport for the current OS/kernel.
+/// The transport the engine will actually run: the epoll loop on Linux unless
+/// `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere.
 pub fn detect_transport() -> TransportKind {
     #[cfg(target_os = "linux")]
     {
         match std::env::var("NIFRA_ENGINE_TRANSPORT").as_deref() {
-            Ok("uring") if probe_io_uring() => return TransportKind::IoUring,
             Ok("uv") => return TransportKind::LibuvPoll,
             _ => return TransportKind::Epoll,
         }
@@ -92,20 +90,27 @@ pub fn detect_transport() -> TransportKind {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn probe_io_uring() -> bool {
-    io_uring::IoUring::new(8).is_ok()
-}
-
 /// Bind a non-blocking TCP listener using `socket2` with `SO_REUSEADDR` and optional `SO_REUSEPORT`.
 pub fn bind_tcp_listener(
     host: &str,
     port: u16,
     cfg: SocketConfig,
 ) -> io::Result<(StdTcpListener, SocketAddr)> {
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    // Resolves a name such as `localhost` and takes an IPv6 literal with or without brackets.
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    let addr = (bare, port)
+        .to_socket_addrs()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?
+        .next()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("`{host}` resolves to no address"),
+            )
+        })?;
     let domain = match addr {
         SocketAddr::V4(_) => Domain::IPV4,
         SocketAddr::V6(_) => Domain::IPV6,
@@ -184,6 +189,9 @@ where
                 SERVER_TOKEN => loop {
                     match listener.accept() {
                         Ok((mut stream, _addr)) => {
+                            if cfg.max_connections > 0 && conns.len() >= cfg.max_connections {
+                                continue;
+                            }
                             if cfg.tcp_nodelay {
                                 let _ = stream.set_nodelay(true);
                             }
@@ -201,10 +209,12 @@ where
                     let mut remove = false;
                     if let Some(conn) = conns.get_mut(&token) {
                         if event.is_readable() {
+                            // EOF ends the read side only: what arrived with it is still a request.
+                            let mut eof = false;
                             loop {
                                 match conn.stream.read(&mut scratch) {
                                     Ok(0) => {
-                                        remove = true;
+                                        eof = true;
                                         break;
                                     }
                                     Ok(n) => {
@@ -235,8 +245,17 @@ where
                                     }
                                 }
                             }
+                            if eof {
+                                conn.close_after_write = true;
+                            }
                         }
 
+                        if !remove
+                            && conn.close_after_write
+                            && conn.write_pos == conn.write_buf.len()
+                        {
+                            remove = true;
+                        }
                         if !remove && conn.write_pos < conn.write_buf.len() {
                             while conn.write_pos < conn.write_buf.len() {
                                 match conn.stream.write(&conn.write_buf[conn.write_pos..]) {

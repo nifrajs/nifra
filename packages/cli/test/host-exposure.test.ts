@@ -65,18 +65,25 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
         { file: "app.ts", content: `${CORE}export const app = server({ validateHost: true })` },
       ]),
     ).toEqual([])
-    expect(
-      await scan([
+  })
+
+  test("allowedHosts and canonicalHost are the Node adapters' options: a Deno or Bun listener ignores them", async () => {
+    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
+    for (const options of ['{ allowedHosts: ["a.test"] }', '{ canonicalHost: "a.test" }']) {
+      const found = await scan([
         listener,
-        { file: "app.ts", content: `${CORE}server({ allowedHosts: ["a.test"] })` },
-      ]),
-    ).toEqual([])
-    expect(
-      await scan([
-        listener,
-        { file: "app.ts", content: `${CORE}server({ canonicalHost: "a.test" })` },
-      ]),
-    ).toEqual([])
+        { file: "app.ts", content: `${CORE}export const app = server(${options})` },
+      ])
+      expect(found).toHaveLength(1)
+    }
+  })
+
+  test("a validateHost a later spread may switch off is not a guarantee", async () => {
+    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
+    const content = `${CORE}server({ validateHost: true, ...(disabled ? { validateHost: false } : {}) })`
+    expect(await scan([listener, { file: "app.ts", content }])).toHaveLength(1)
+    const unrelated = `${CORE}server({ validateHost: true, ...(more ? { port: 1 } : {}) })`
+    expect(await scan([listener, { file: "app.ts", content: unrelated }])).toEqual([])
   })
 
   test("validateHost: false, a comment or a string that names it configures nothing", async () => {
@@ -88,6 +95,44 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
     ]) {
       expect(await scan([listener, { file: "app.ts", content }])).toHaveLength(1)
     }
+  })
+
+  test("a listen() chained off the server factory is named, as is one off a bound name", async () => {
+    const chained = await one(
+      `${CORE}server().get("/", handler).listen(443, { tls: { cert, key } })`,
+    )
+    expect(chained).toHaveLength(1)
+    const bound = await one(`${CORE}const app = server()\napp.listen(9000, { tls: { cert, key } })`)
+    expect(bound).toHaveLength(1)
+    // Not a Nifra server: a socket server in a file that merely imports core.
+    expect(
+      await one(
+        `${CORE}import net from "node:net"\nconst tcp = net.createServer()\ntcp.listen(9000, { tls: { cert, key } })`,
+        "direct",
+      ),
+    ).toEqual([])
+  })
+
+  test("TLS is read from the argument that holds the listener's options", async () => {
+    // The first argument of an adapter's serve() is the app, whose own `tls` key is not the listener's.
+    expect(await one(`${DENO}await serve({ tls, fetch }, { port: 8000 })`)).toEqual([])
+    expect(await one(`${DENO}await serve(app, { port: 443, tls: { cert, key } })`)).toHaveLength(1)
+    expect(await one(`${DENO}await serve(app, { port: 8000, tls: undefined })`)).toEqual([])
+  })
+
+  test("a listener in a .js file is scanned like a .ts one", async () => {
+    const found = await scan([
+      { file: "backend/server.js", content: "Bun.serve({ port: 443, tls: { cert, key }, fetch })" },
+    ])
+    expect(found).toHaveLength(1)
+  })
+
+  test("a bare Deno or Bun handler is told to check Host itself; a Nifra server is told validateHost", async () => {
+    const native = await one("Deno.serve({ port: 443, cert, key }, handler)")
+    expect(native[0]?.message).toContain("Check `Host` in the handler")
+    expect(native[0]?.message).not.toContain("Set `validateHost: true`")
+    const app = await one(`${DENO}await serve(app, { port: 443, tls: { cert, key } })`)
+    expect(app[0]?.message).toContain("Set `validateHost: true`")
   })
 
   test("a nifra-expect comment with a reason accepts it; without one it does not", async () => {

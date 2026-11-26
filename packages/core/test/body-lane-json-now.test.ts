@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  readBodyFramed,
   readBodyFramedNow,
   readBoundedJsonNow,
   readBoundedJsonSource,
@@ -174,6 +175,38 @@ describe("a source that already holds its body (jsonNow)", () => {
     )
     await result
     expect(read).toBe(0)
+  })
+
+  test("a continuation that throws on a ready body rejects the promise instead of throwing past it", async () => {
+    const ready = source(declared, { jsonNow: () => ({ value: { a: 1 }, byteLength: 7 }) })
+    const boom = new Error("continuation failed")
+    const lane = readBoundedJsonSource(
+      ready,
+      64,
+      "reject",
+      () => {
+        throw boom
+      },
+      (error) => {
+        throw error
+      },
+    )
+    expect(lane).toBeInstanceOf(Promise)
+    await expect(lane).rejects.toBe(boom)
+    const framed = readBodyFramed(
+      ready,
+      64,
+      "reject",
+      () => {
+        throw boom
+      },
+      () => "response",
+      (error) => {
+        throw error
+      },
+    )
+    expect(framed).toBeInstanceOf(Promise)
+    await expect(framed).rejects.toBe(boom)
   })
 
   test("readBodyFramed hands the parsed value to the route with no promise", () => {

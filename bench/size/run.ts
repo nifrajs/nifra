@@ -408,7 +408,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // (Bun 1.4.4), crossing the next 0.1 KiB cap.
   // Opt-in `normalizeTarget`: idempotency 45,061 B, mcp 40,466 B, sse 41,065 B (Bun 1.4.4).
   // The same `listen()` disposal: idempotency 46,096 B (Bun 1.4.4).
-  "nifra-idempotency": 46.0,
+  // A synchronous body continuation that throws rejects the lane's promise: idempotency 47,113 B.
+  "nifra-idempotency": 46.1,
   // The router's dynamic-match admission window: effect-ledger 44,167 B, mcp 42,403 B, sse 43,010 B and
   // typebox-t 71,587 B (Bun 1.4.4), each the next 0.1 KiB step. Interleaved hot dynamic paths: 10 -> 33 M finds/s.
   "nifra-effect-ledger": 43.3,

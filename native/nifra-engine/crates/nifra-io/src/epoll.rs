@@ -69,7 +69,12 @@ unsafe fn epoll_ctl_mod(epfd: RawFd, fd: RawFd, conn_id: u32, events: u32) {
         events,
         u64: u64::from(conn_id),
     };
-    libc::epoll_ctl(epfd, libc::EPOLL_CTL_MOD, fd, &mut ev);
+    // A connection whose read side ended and queue drained was taken out of the set: re-add it.
+    if libc::epoll_ctl(epfd, libc::EPOLL_CTL_MOD, fd, &mut ev) != 0
+        && *libc::__errno_location() == libc::ENOENT
+    {
+        libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fd, &mut ev);
+    }
 }
 
 #[inline]
@@ -224,6 +229,9 @@ impl EpollServer {
             ));
         }
         let uv = uv_api()?;
+        // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
+        // would stall Node's thread once the backlog is empty.
+        listener.set_nonblocking(true)?;
         let epfd = libc::epoll_create1(libc::EPOLL_CLOEXEC);
         if epfd < 0 {
             return Err(io::Error::last_os_error());
@@ -435,6 +443,13 @@ impl EpollServer {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
+        if fa == FlushAction::DisarmWritable {
+            // A producer waiting for the queue to drain is woken at the turn's end.
+            st.pending_writable.push(conn_id);
+            if !st.in_poll_loop {
+                st.arm_check();
+            }
+        }
         if read_ended {
             st.turn_dirty = true;
             if !st.in_poll_loop {
@@ -450,6 +465,22 @@ impl EpollServer {
 
     pub fn close_conn(&self, conn_id: u32) -> bool {
         self.state.borrow_mut().remove_and_close_conn(conn_id)
+    }
+
+    pub fn close_within(&self, conn_id: u32, wait: std::time::Duration) {
+        let mut st = self.state.borrow_mut();
+        let at = st.clock.now() + wait;
+        if let Some(conn) = st.conns.get_mut(conn_id) {
+            conn.close_deadline = Some(at);
+        }
+    }
+
+    pub fn any_queued(&self) -> bool {
+        self.state
+            .borrow()
+            .conns
+            .iter()
+            .any(|(_, c)| c.queued_bytes() > 0)
     }
 
     pub fn stop_listening(&self) {
@@ -1321,21 +1352,17 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         if !st.clock.on_timer_tick(uv_ms) {
             return;
         }
-        if st.cfg.idle_timeout_ms == 0 && st.cfg.request_timeout_ms == 0 {
-            false
-        } else {
-            let now = st.clock.now();
-            let ids = collect_timeout_ids(
-                st.conns.iter().map(|(id, c)| (id, c)),
-                now,
-                st.cfg,
-                st.callbacks.as_deref(),
-            );
-            for id in ids {
-                st.remove_and_close_conn(id);
-            }
-            !st.pending_disconnects.is_empty()
+        let now = st.clock.now();
+        let ids = collect_timeout_ids(
+            st.conns.iter().map(|(id, c)| (id, c)),
+            now,
+            st.cfg,
+            st.callbacks.as_deref(),
+        );
+        for id in ids {
+            st.remove_and_close_conn(id);
         }
+        !st.pending_disconnects.is_empty()
     };
 
     if sweep_due {

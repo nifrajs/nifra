@@ -77,6 +77,20 @@ after(async () => {
 
 const SKIP = new Set(["date", "connection", "keep-alive", "x-request-id"])
 
+/** The payload of a chunked body: transfer framing is how it travelled, not what the application sent. */
+function dechunk(wire: string): string {
+  let out = ""
+  let at = 0
+  for (;;) {
+    const eol = wire.indexOf("\r\n", at)
+    if (eol === -1) return out
+    const size = Number.parseInt(wire.slice(at, eol).split(";")[0] ?? "", 16)
+    if (!Number.isFinite(size) || size === 0) return out
+    out += wire.slice(eol + 2, eol + 2 + size)
+    at = eol + 2 + size + 2
+  }
+}
+
 interface Observed {
   status: number
   headers: Array<[string, string]>
@@ -101,13 +115,18 @@ async function observe(port: number, request: string | Buffer): Promise<Observed
     return !Number.isNaN(length) && parsed.body.length >= length
   })
   const parsed = parseHead(text)
+  const chunked = parsed.headers.get("transfer-encoding")?.[0]?.toLowerCase() === "chunked"
+  const body = chunked ? dechunk(parsed.body) : parsed.body
+  // A HEAD or bodyless answer's length is part of the reply; elsewhere it only frames the body.
+  const lengthMatters = /^HEAD /.test(request.toString("latin1")) || parsed.status === 204
   const headers: Array<[string, string]> = []
   for (const [name, values] of parsed.headers) {
-    if (SKIP.has(name)) continue
+    if (SKIP.has(name) || name === "transfer-encoding") continue
+    if (name === "content-length" && !lengthMatters) continue
     for (const value of values) headers.push([name, value])
   }
   headers.sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1]))
-  return { status: parsed.status, headers, body: parsed.body }
+  return { status: parsed.status, headers, body }
 }
 
 function get(path: string, extra = ""): string {

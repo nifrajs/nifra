@@ -173,18 +173,59 @@ test("without the option, a client opening with the HTTP/2 preface is not served
 })
 
 test("stop() lets an open HTTP/2 stream finish and then closes the connection", async () => {
-  const running = await serve(app(), { port: 0, hostname: "127.0.0.1", http2: true })
+  const encoder = new TextEncoder()
+  let began!: () => void
+  const started = new Promise<void>((resolve) => {
+    began = resolve
+  })
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const held = server().get(
+    "/held",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(encoder.encode("first;"))
+            began()
+            await gate
+            controller.enqueue(encoder.encode("last"))
+            controller.close()
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      ),
+  )
+  const running = await serve(held, { port: 0, hostname: "127.0.0.1", http2: true })
   const session = connect(`http://127.0.0.1:${running.port}`)
   const closed = new Promise<void>((resolve) => session.once("close", () => resolve()))
   try {
-    const first = await exchange(session, "GET", "/teapot")
-    assert.equal(first.status, 418)
-    await running.stop({ drainMs: 500 })
+    const stream = session.request({ ":path": "/held" })
+    let text = ""
+    stream.setEncoding("utf8")
+    stream.on("data", (chunk: string) => {
+      text += chunk
+    })
+    const ended = new Promise<void>((resolve, reject) => {
+      stream.on("end", () => resolve())
+      stream.on("error", reject)
+    })
+    stream.end()
+    await started
+    // The stream is open when shutdown starts: it must be allowed to finish.
+    const stopping = running.stop({ drainMs: 3000 })
+    release()
+    await ended
+    assert.equal(text, "first;last")
+    await stopping
     await Promise.race([
       closed,
       new Promise<void>((_, reject) => setTimeout(() => reject(new Error("still open")), 3000)),
     ])
   } finally {
+    release()
     session.destroy()
   }
 })
@@ -210,13 +251,19 @@ test("a stream that fails short of its declared length resets the HTTP/2 stream"
   }
 })
 
-test("a stream of no declared length that fails ends cleanly on HTTP/2: there is no failed end to send", async () => {
+test("a stream of no declared length that fails resets the HTTP/2 stream rather than ending it as whole", async () => {
   const running = await serve(app(), { port: 0, hostname: "127.0.0.1", http2: true })
   const session = connect(`http://127.0.0.1:${running.port}`)
+  session.on("error", () => {})
   try {
-    const reply = await exchange(session, "GET", "/errors-midway")
-    assert.equal(reply.status, 200)
-    assert.equal(reply.body, "partpart")
+    const outcome = await new Promise<string>((resolve) => {
+      const stream = session.request({ ":path": "/errors-midway" })
+      stream.on("data", () => {})
+      stream.on("end", () => resolve("finished"))
+      stream.on("error", () => resolve(`reset ${stream.rstCode}`))
+      stream.end()
+    })
+    assert.match(outcome, /^reset [1-9]/)
     assert.equal((await exchange(session, "GET", "/teapot")).status, 418)
   } finally {
     session.destroy()

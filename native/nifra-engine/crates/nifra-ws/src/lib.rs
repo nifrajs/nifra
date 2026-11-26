@@ -103,11 +103,26 @@ pub fn validate_upgrade_headers<'a>(
         return None;
     }
     let key = key?.trim();
-    // Standard 16-byte nonce base64-encoded is 24 characters ending with `==`.
-    if key.len() != 24 || !key.is_ascii() {
-        return None;
+    is_nonce_key(key).then_some(key)
+}
+
+/// A `Sec-WebSocket-Key`: the base64 of a 16-byte nonce, which is 22 characters and `==`, the last
+/// character carrying four bits and two zero pad bits.
+fn is_nonce_key(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    if bytes.len() != 24 || !key.ends_with("==") {
+        return false;
     }
-    Some(key)
+    let sextet = |b: u8| match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    bytes[..22].iter().all(|&b| sextet(b).is_some())
+        && sextet(bytes[21]).is_some_and(|last| last & 0x03 == 0)
 }
 
 /// Compute RFC 6455 §4.2.2 `Sec-WebSocket-Accept` from a client's `Sec-WebSocket-Key`.
@@ -243,7 +258,13 @@ impl WsConn {
                     if rem.len() < 4 {
                         break;
                     }
-                    (u16::from_be_bytes([rem[2], rem[3]]) as usize, 4usize)
+                    let wide = u16::from_be_bytes([rem[2], rem[3]]) as usize;
+                    // RFC 6455 §5.2: the shortest length form that holds the payload.
+                    if wide < 126 {
+                        self.fail_protocol(1002, "protocol error", write_buf, &mut res, buf.len());
+                        return res;
+                    }
+                    (wide, 4usize)
                 }
                 127 => {
                     if rem.len() < 10 {
@@ -252,7 +273,7 @@ impl WsConn {
                     let raw64 = u64::from_be_bytes([
                         rem[2], rem[3], rem[4], rem[5], rem[6], rem[7], rem[8], rem[9],
                     ]);
-                    if (raw64 >> 63) != 0 {
+                    if (raw64 >> 63) != 0 || raw64 < 65_536 {
                         self.fail_protocol(1002, "protocol error", write_buf, &mut res, buf.len());
                         return res;
                     }
@@ -322,6 +343,9 @@ impl WsConn {
                     res.close_after_write = true;
                     return res;
                 }
+                // After this side sent Close nothing more is delivered; Ping and the peer's Close
+                // still run so the closing handshake can finish.
+                OPCODE_TEXT | OPCODE_BINARY | OPCODE_CONT if self.close_sent => {}
                 OPCODE_TEXT | OPCODE_BINARY => {
                     if self.frag_opcode.is_some() {
                         self.fail_protocol(1002, "protocol error", write_buf, &mut res, pos);
@@ -530,6 +554,80 @@ mod tests {
         apply_mask(&mut masked, mask);
         out.extend_from_slice(&masked);
         out
+    }
+
+    #[test]
+    fn a_handshake_key_is_a_base64_sixteen_byte_nonce() {
+        let accepted = |key: &str| {
+            validate_upgrade_headers(Some("Upgrade"), Some("websocket"), Some("13"), Some(key))
+                .is_some()
+        };
+        assert!(accepted("dGhlIHNhbXBsZSBub25jZQ=="));
+        // 24 characters, but not base64, not a 16-byte nonce, or with stray pad bits.
+        assert!(!accepted("!!!!!!!!!!!!!!!!!!!!!!=="));
+        assert!(!accepted("dGhlIHNhbXBsZSBub25jZQ=A"));
+        assert!(!accepted("dGhlIHNhbXBsZSBub25jZR=="));
+        assert!(!accepted("dGhlIHNhbXBsZSBub25jZQ"));
+    }
+
+    #[test]
+    fn a_length_is_sent_in_its_shortest_form() {
+        let feed = |frame: Vec<u8>| {
+            let mut conn = WsConn::new(1 << 20);
+            let mut out = Vec::new();
+            let res = conn.feed(&frame, &mut out);
+            let delivered = res
+                .events
+                .iter()
+                .filter(|e| !matches!(e, WsEvent::Close { .. }))
+                .count();
+            (delivered, res.close_after_write)
+        };
+        let mask = [1, 2, 3, 4];
+        // One byte in the 16-bit form.
+        let mut wide = vec![0x81, 0x80 | 126, 0, 1];
+        wide.extend_from_slice(&mask);
+        wide.push(b'x' ^ mask[0]);
+        assert_eq!(feed(wide), (0, true));
+        // 126 bytes is the smallest the 16-bit form may carry.
+        assert_eq!(
+            feed(make_client_frame(true, OPCODE_TEXT, &[b'x'; 126], mask)),
+            (1, false)
+        );
+        // 65,535 bytes in the 64-bit form.
+        let mut huge = vec![0x81, 0x80 | 127];
+        huge.extend_from_slice(&65_535u64.to_be_bytes());
+        huge.extend_from_slice(&mask);
+        huge.extend_from_slice(&[0u8; 65_535]);
+        assert_eq!(feed(huge), (0, true));
+        assert_eq!(
+            feed(make_client_frame(true, OPCODE_TEXT, &[b'x'; 65_536], mask)),
+            (1, false)
+        );
+    }
+
+    #[test]
+    fn nothing_is_delivered_after_this_side_sent_close() {
+        let mut conn = WsConn::new(1024);
+        conn.mark_close_sent();
+        let mask = [5, 6, 7, 8];
+        let mut wire = make_client_frame(true, OPCODE_TEXT, b"late", mask);
+        wire.extend(make_client_frame(false, OPCODE_BINARY, b"a", mask));
+        wire.extend(make_client_frame(true, OPCODE_CONT, b"b", mask));
+        let mut out = Vec::new();
+        let res = conn.feed(&wire, &mut out);
+        assert!(res.events.is_empty());
+        assert!(!res.close_after_write);
+        // The peer's Close still ends it.
+        let res = conn.feed(
+            &make_client_frame(true, OPCODE_CLOSE, &1000u16.to_be_bytes(), mask),
+            &mut out,
+        );
+        assert!(res.close_after_write);
+        assert!(matches!(
+            res.events.last(),
+            Some(WsEvent::Close { code: 1000, .. })
+        ));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 name = "nifra-tls"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Sans-I/O rustls + aws-lc-rs TLS layer with atomic hot reload and cluster session ticket sharing."
 

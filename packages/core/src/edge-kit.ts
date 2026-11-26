@@ -28,7 +28,12 @@ export {
   resolveErrorLogDetail,
 } from "./server/bare-error-lane.ts"
 export { assertByteLimit, capBodyBytes, DEFAULT_MAX_BODY_BYTES } from "./server/body.ts"
-export { crossSiteFormRefused, type FormOrigins, readBodyFramed } from "./server/body-lane.ts"
+export {
+  crossSiteFormRefused,
+  type FormOrigins,
+  type FramedBodyArgs,
+  readBodyFramed,
+} from "./server/body-lane.ts"
 export { plainError } from "./server/http.ts"
 export { boundedJsonText, JsonByteLimitError, jsonResponse } from "./server/json-response.ts"
 export {

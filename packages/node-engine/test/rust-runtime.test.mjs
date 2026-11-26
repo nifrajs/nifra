@@ -307,6 +307,7 @@ test("Rust decodes a chunked body that arrives a few bytes at a time", nativeTes
       (received) => received.includes('"1200"'),
     )
     assert.match(wire, /^HTTP\/1\.1 200 /)
+    assert.deepEqual(bodies(wire), ['"1200"'])
   } finally {
     await running.stop({ drainMs: 0 })
   }
@@ -488,6 +489,184 @@ test(
         answers,
         names.map((name) => [200, { name }]),
       )
+    } finally {
+      await running.stop({ drainMs: 0 })
+    }
+  },
+)
+
+test(
+  "a malformed request after an unanswered one is answered after it, not as its reply",
+  nativeTest,
+  async () => {
+    const release = Promise.withResolvers()
+    const app = server().get("/slow", async () => {
+      await release.promise
+      return "slow"
+    })
+    const running = await serve(app, settings)
+    try {
+      const wire = await converse(
+        running.port,
+        (socket) => {
+          socket.write("GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\n")
+          // The malformed request arrives while /slow is still being handled.
+          setTimeout(() => {
+            socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nBad Header\r\n\r\n")
+            setTimeout(release.resolve, 50)
+          }, 50)
+        },
+        (received) => /HTTP\/1\.1 400 /.test(received),
+      )
+      const statuses = [...wire.matchAll(/HTTP\/1\.1 (\d{3}) /g)].map((match) => match[1])
+      assert.deepEqual(statuses, ["200", "400"])
+      assert.match(wire, /"slow"/)
+    } finally {
+      release.resolve()
+      await running.stop({ drainMs: 0 })
+    }
+  },
+)
+
+test(
+  "a body read after the handler awaits is its own bytes, whatever later batches carried",
+  nativeTest,
+  async () => {
+    const release = Promise.withResolvers()
+    const app = server().post("/late", async (c) => {
+      await release.promise
+      const bytes = new Uint8Array(await c.req.arrayBuffer())
+      return { length: bytes.byteLength, text: new TextDecoder().decode(bytes) }
+    })
+    const running = await serve(app, settings)
+    const post = (text) =>
+      fetch(`http://127.0.0.1:${running.port}/late`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: text,
+      }).then((response) => response.json())
+    try {
+      // Half non-ASCII, which travel as bytes; half ASCII, which travel as a string and are re-encoded
+      // from a pooled buffer when read as an ArrayBuffer.
+      const texts = Array.from({ length: 20 }, (_, i) =>
+        i % 2 === 0 ? `plain-${i}` : `café-${i}-${"ü".repeat(i + 1)}`,
+      )
+      const pending = texts.map(post)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      release.resolve()
+      const answers = await Promise.all(pending)
+      assert.deepEqual(
+        answers.map((answer) => answer.text),
+        texts,
+      )
+      assert.deepEqual(
+        answers.map((answer) => answer.length),
+        texts.map((text) => Buffer.byteLength(text)),
+      )
+    } finally {
+      release.resolve()
+      await running.stop({ drainMs: 0 })
+    }
+  },
+)
+
+test("validateHost gives the request URL the normalised authority", nativeTest, async () => {
+  const app = server().get("/where", (c) => ({ url: c.req.url }))
+  const running = await serve(app, { ...settings, validateHost: true })
+  try {
+    const wire = await converse(
+      running.port,
+      (socket) => socket.write("GET /where HTTP/1.1\r\nHost: EXAMPLE.COM:080\r\n\r\n"),
+      (received) => received.includes("}"),
+    )
+    assert.match(wire, /"url":"http:\/\/example\.com\/where"/)
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+test(
+  "sizes the engine takes as 32-bit values are refused above that range",
+  nativeTest,
+  async () => {
+    const app = server().get("/", () => "ok")
+    await assert.rejects(
+      async () => serve(app, { ...settings, maxBodySize: 2 ** 32 + 1 }),
+      /maxBodySize/,
+    )
+    await assert.rejects(
+      async () => serve(app, { ...settings, oversizeWindow: 2 ** 32 }),
+      /oversizeWindow/,
+    )
+  },
+)
+
+test(
+  "a streamed route's first event is sent without waiting for the next",
+  nativeTest,
+  async () => {
+    const release = Promise.withResolvers()
+    const encoder = new TextEncoder()
+    const app = server().get(
+      "/events",
+      () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode("hello;"))
+              await release.promise
+              controller.enqueue(encoder.encode("bye"))
+              controller.close()
+            },
+          }),
+          { headers: { "content-type": "text/plain" } },
+        ),
+    )
+    const running = await serve(app, settings)
+    try {
+      const wire = await converse(
+        running.port,
+        (socket) => socket.write("GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        (received) => received.includes("hello;"),
+      )
+      assert.match(wire, /^HTTP\/1\.1 200 /)
+      assert.ok(!wire.includes("bye"))
+    } finally {
+      release.resolve()
+      await running.stop({ drainMs: 0 })
+    }
+  },
+)
+
+test(
+  "a stream that fails after its head ends the connection, not as a whole body",
+  nativeTest,
+  async () => {
+    const encoder = new TextEncoder()
+    const app = server().get(
+      "/cut",
+      () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode("part"))
+              await new Promise((resolve) => setTimeout(resolve, 20))
+              controller.error(new Error("producer failed"))
+            },
+          }),
+          { headers: { "content-type": "text/plain" } },
+        ),
+    )
+    const running = await serve(app, settings)
+    try {
+      const wire = await converse(
+        running.port,
+        (socket) => socket.write("GET /cut HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        () => false,
+      )
+      assert.match(wire, /part/)
+      // No terminating chunk: the client is told the body is incomplete by the close.
+      assert.ok(!wire.endsWith("0\r\n\r\n"))
     } finally {
       await running.stop({ drainMs: 0 })
     }

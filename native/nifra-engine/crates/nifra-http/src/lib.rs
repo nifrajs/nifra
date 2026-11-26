@@ -214,6 +214,21 @@ pub struct ChunkResume {
     /// Wire bytes spent on size lines, extensions, CRLFs and trailers rather than payload.
     framing: usize,
     examined: u64,
+    /// Once the zero-size chunk is read: where the trailers stand, so a short read resumes inside
+    /// them instead of at the size line.
+    trailer: Option<TrailerScan>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrailerScan {
+    /// Where the trailer section begins.
+    start: usize,
+    /// Where the line being read begins.
+    line_start: usize,
+    /// How many bytes of that line were already searched for its end.
+    searched: usize,
+    /// Length of the zero-size chunk line.
+    size_line: usize,
 }
 
 impl ChunkResume {
@@ -258,6 +273,9 @@ fn decode_chunked(
     framing_cap: usize,
     resume: &mut ChunkResume,
 ) -> Result<ChunkedStatus, ParseError> {
+    if let Some(scan) = resume.trailer {
+        return scan_trailers(buf, scan, framing_cap, resume);
+    }
     let mut pos = resume.pos;
 
     loop {
@@ -280,41 +298,13 @@ fn decode_chunked(
         if chunk_len == 0 {
             // Trailer lines end at an empty line; the whole section is bounded.
             let start = pos + line_total;
-            let mut tp = start;
-            loop {
-                let tail = &buf[tp.min(buf.len())..];
-                if tail.len() >= 2 && &tail[..2] == b"\r\n" {
-                    resume.examined += 2;
-                    let consumed = tp + 2;
-                    let framing = resume
-                        .framing
-                        .saturating_add(line_total)
-                        .saturating_add(consumed - start);
-                    if framing > framing_cap {
-                        return Err(ParseError::PayloadTooLarge);
-                    }
-                    return Ok(ChunkedStatus::Complete {
-                        body: std::mem::take(&mut resume.body),
-                        consumed,
-                    });
-                }
-                let Some(t_lf) = memchr::memchr(b'\n', tail) else {
-                    resume.examined += tail.len() as u64;
-                    if tp - start + tail.len() > MAX_CHUNK_TRAILERS {
-                        return Err(ParseError::Malformed);
-                    }
-                    resume.pos = pos;
-                    return Ok(ChunkedStatus::Incomplete);
-                };
-                resume.examined += t_lf as u64 + 1;
-                if t_lf == 0 || tail[t_lf - 1] != b'\r' {
-                    return Err(ParseError::Malformed);
-                }
-                tp += t_lf + 1;
-                if tp - start > MAX_CHUNK_TRAILERS {
-                    return Err(ParseError::Malformed);
-                }
-            }
+            let scan = TrailerScan {
+                start,
+                line_start: start,
+                searched: 0,
+                size_line: line_total,
+            };
+            return scan_trailers(buf, scan, framing_cap, resume);
         }
 
         let new_len = resume
@@ -346,6 +336,54 @@ fn decode_chunked(
         resume.body.extend_from_slice(&buf[data_start..data_end]);
         pos = chunk_end;
         resume.pos = pos;
+    }
+}
+
+/// The trailer section after a zero-size chunk, bounded as a whole and resumed where a short read stopped.
+fn scan_trailers(
+    buf: &[u8],
+    mut scan: TrailerScan,
+    framing_cap: usize,
+    resume: &mut ChunkResume,
+) -> Result<ChunkedStatus, ParseError> {
+    loop {
+        let tail = &buf[scan.line_start.min(buf.len())..];
+        if tail.len() >= 2 && &tail[..2] == b"\r\n" {
+            resume.examined += 2;
+            let consumed = scan.line_start + 2;
+            let framing = resume
+                .framing
+                .saturating_add(scan.size_line)
+                .saturating_add(consumed - scan.start);
+            if framing > framing_cap {
+                return Err(ParseError::PayloadTooLarge);
+            }
+            resume.trailer = None;
+            return Ok(ChunkedStatus::Complete {
+                body: std::mem::take(&mut resume.body),
+                consumed,
+            });
+        }
+        let from = scan.searched.min(tail.len());
+        let Some(rel) = memchr::memchr(b'\n', &tail[from..]) else {
+            resume.examined += (tail.len() - from) as u64;
+            if scan.line_start - scan.start + tail.len() > MAX_CHUNK_TRAILERS {
+                return Err(ParseError::Malformed);
+            }
+            scan.searched = tail.len();
+            resume.trailer = Some(scan);
+            return Ok(ChunkedStatus::Incomplete);
+        };
+        let t_lf = from + rel;
+        resume.examined += rel as u64 + 1;
+        if t_lf == 0 || tail[t_lf - 1] != b'\r' {
+            return Err(ParseError::Malformed);
+        }
+        scan.line_start += t_lf + 1;
+        scan.searched = 0;
+        if scan.line_start - scan.start > MAX_CHUNK_TRAILERS {
+            return Err(ParseError::Malformed);
+        }
     }
 }
 
@@ -428,7 +466,9 @@ pub fn parse_http1_resume<'a>(
     let mut is_chunked = false;
     let mut has_te = false;
     let mut is_ws_upgrade = false;
-    let mut keep_alive = req.version.unwrap_or(1) == 1;
+    let default_keep_alive = req.version.unwrap_or(1) == 1;
+    let mut close_seen = false;
+    let mut keep_alive_seen = false;
 
     for h in req.headers.iter() {
         let name = h.name;
@@ -447,18 +487,11 @@ pub fn parse_http1_resume<'a>(
                 }
             }
             10 if name.eq_ignore_ascii_case("connection") => {
-                // A token list: `close` wins over `keep-alive` wherever it appears.
-                let mut has_close = false;
-                let mut has_keep_alive = false;
+                // A token list across every `Connection` field: `close` wins over `keep-alive`.
                 for token in val.split(',') {
                     let token = token.trim();
-                    has_close |= token.eq_ignore_ascii_case("close");
-                    has_keep_alive |= token.eq_ignore_ascii_case("keep-alive");
-                }
-                if has_close {
-                    keep_alive = false;
-                } else if has_keep_alive {
-                    keep_alive = true;
+                    close_seen |= token.eq_ignore_ascii_case("close");
+                    keep_alive_seen |= token.eq_ignore_ascii_case("keep-alive");
                 }
             }
             12 if is_json_ct.is_none() && name.eq_ignore_ascii_case("content-type") => {
@@ -538,7 +571,7 @@ pub fn parse_http1_resume<'a>(
         content_type,
         is_chunked,
         is_ws_upgrade,
-        keep_alive,
+        keep_alive: !close_seen && (keep_alive_seen || default_keep_alive),
         over_max_body,
         head_len,
         body,
@@ -567,8 +600,14 @@ pub fn collect_headers_in_head(raw_head: &[u8]) -> Vec<String> {
 /// Pre-framed native responses for `staticResponse()` and `echoParam()` routes (bypass JS completely).
 #[derive(Default)]
 pub struct FastRoutes {
-    static_get: HashMap<String, Vec<u8>>,
+    static_get: HashMap<String, StaticRoute>,
     param_get: Vec<ParamRoute>,
+}
+
+/// A fixed reply: the invariant head and the body, joined with the current `Date` on every hit.
+struct StaticRoute {
+    head: Vec<u8>,
+    body: Vec<u8>,
 }
 
 struct ParamRoute {
@@ -589,10 +628,15 @@ impl FastRoutes {
         headers: &[(&str, &str)],
         body: &[u8],
     ) {
-        let mut frame = Vec::with_capacity(128 + body.len());
-        write_head_prefix(&mut frame, status, headers);
-        append_content_length_and_body(&mut frame, body);
-        self.static_get.insert(path, frame);
+        let mut head = Vec::with_capacity(128);
+        write_head_prefix(&mut head, status, headers);
+        self.static_get.insert(
+            path,
+            StaticRoute {
+                head,
+                body: body.to_vec(),
+            },
+        );
     }
 
     pub fn add_param_get(
@@ -613,8 +657,9 @@ impl FastRoutes {
 
     #[inline]
     pub fn try_match_get(&self, path: &str, out: &mut Vec<u8>) -> bool {
-        if let Some(frame) = self.static_get.get(path) {
-            out.extend_from_slice(frame);
+        if let Some(route) = self.static_get.get(path) {
+            out.extend_from_slice(&route.head);
+            append_content_length_and_body(out, &route.body);
             return true;
         }
         for route in &self.param_get {
@@ -736,6 +781,10 @@ pub fn write_buffered_response(
             continue;
         }
         if k.eq_ignore_ascii_case("content-length") {
+            // A 205 has no body whatever the caller declared; its length is written below.
+            if status == 205 {
+                continue;
+            }
             has_cl = true;
         }
         out.extend_from_slice(k.as_bytes());
@@ -746,7 +795,11 @@ pub fn write_buffered_response(
 
     date::append_header(out);
     let bodyless = matches!(status, 204 | 205 | 304);
-    if !bodyless && !has_cl {
+    if status == 205 {
+        // Unlike 204 and 304, a 205 is not delimited by the end of its head: an explicit zero length
+        // lets a client on a persistent connection finish instead of waiting for EOF.
+        out.extend_from_slice(b"content-length: 0\r\n");
+    } else if !bodyless && !has_cl {
         let len = body.map_or(0, |b| b.len());
         out.extend_from_slice(b"content-length: ");
         out.extend_from_slice(num.format(len).as_bytes());
@@ -1216,6 +1269,83 @@ mod tests {
         assert!(!keep_alive("Upgrade, Close"));
         assert!(keep_alive("keep-alive"));
         assert!(keep_alive("TE"));
+    }
+
+    #[test]
+    fn connection_tokens_accumulate_across_repeated_fields() {
+        let keep_alive = |fields: &str| {
+            let raw = format!("GET / HTTP/1.1\r\nHost: a\r\n{fields}\r\n");
+            let Ok(ParseStatus::Complete(req)) =
+                parse_http1(raw.as_bytes(), ParseLimits::default())
+            else {
+                panic!("expected a complete request");
+            };
+            req.keep_alive
+        };
+        assert!(!keep_alive(
+            "Connection: close\r\nConnection: keep-alive\r\n"
+        ));
+        assert!(!keep_alive(
+            "Connection: keep-alive\r\nConnection: close\r\n"
+        ));
+        assert!(keep_alive("Connection: TE\r\nConnection: keep-alive\r\n"));
+    }
+
+    #[test]
+    fn a_trailer_section_split_across_reads_is_scanned_once() {
+        let mut wire =
+            b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n"
+                .to_vec();
+        for i in 0..40 {
+            wire.extend_from_slice(format!("x-trailer-{i}: value-{i}\r\n").as_bytes());
+        }
+        wire.extend_from_slice(b"\r\n");
+        let mut resume = ChunkResume::default();
+        let mut done = false;
+        for end in 1..=wire.len() {
+            if let ParseStatus::Complete(req) =
+                parse_http1_resume(&wire[..end], ParseLimits::default(), &mut resume).unwrap()
+            {
+                assert_eq!(req.body.as_ref(), b"x");
+                assert_eq!(req.total_bytes, wire.len());
+                done = true;
+                break;
+            }
+        }
+        assert!(done);
+        assert!(
+            resume.examined() < 8 * wire.len() as u64,
+            "examined {} bytes for a {}-byte request",
+            resume.examined(),
+            wire.len()
+        );
+    }
+
+    #[test]
+    fn a_205_declares_a_zero_length_and_no_body() {
+        let mut out = Vec::new();
+        write_buffered_response(&mut out, 205, &[("content-length", "9")], Some(b"ignored"));
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with("HTTP/1.1 205 Reset Content\r\n"));
+        assert_eq!(text.matches("content-length").count(), 1);
+        assert!(text.contains("content-length: 0\r\n"));
+        assert!(text.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
+    fn a_static_reply_carries_the_date_of_the_hit() {
+        let mut routes = FastRoutes::default();
+        routes.add_static_get(
+            "/ok".to_owned(),
+            200,
+            &[("content-type", "text/plain")],
+            b"ok",
+        );
+        let mut out = Vec::new();
+        assert!(routes.try_match_get("/ok", &mut out));
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.matches("date: ").count(), 1, "{text}");
+        assert!(text.ends_with("content-length: 2\r\n\r\nok"));
     }
 
     #[test]

@@ -62,6 +62,7 @@ const FLAG_HAS_CT = 1 << 13
 
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
+const MAX_NATIVE_LENGTH = 0xffff_ffff
 const DEFAULT_MAX_BODY_SIZE = 1_048_576
 const MAX_BUFFERED_RESPONSE_BYTES = 2 * 1024 * 1024
 const STREAM_CHUNK_BYTES = 256 * 1024
@@ -141,6 +142,7 @@ interface RustUvServer {
   end(reqId: number, chunk?: Buffer | null): boolean
   abortStream(reqId: number): boolean
   reloadTls(tls: RustTlsOptions): void
+  hasUnsentOutput(): boolean
   stopListening(): void
   close(): void
 }
@@ -297,7 +299,12 @@ function declaredContentLength(headers: HeaderRecord | undefined): number | unde
     if (name.length !== 14 || name.toLowerCase() !== "content-length") continue
     const text = typeof value === "string" ? value : value?.[0]
     if (text === undefined || !/^\d{1,15}$/.test(text)) return undefined
-    return Number(text)
+    const length = Number(text)
+    // The native writer takes a u32 and would wrap a larger value into a short, wrong length.
+    if (length > MAX_NATIVE_LENGTH) {
+      throw new RangeError(`Content-Length ${text} is larger than the engine can frame`)
+    }
+    return length
   }
   return undefined
 }
@@ -316,7 +323,6 @@ class RustBatchSource {
   aborted = false
   settled = false
   headWritten = false
-  hasDeclaredLength = false
   onAbort: (() => void) | undefined
   onWritable: (() => void) | undefined
 
@@ -466,7 +472,10 @@ class RustBatchSource {
   arrayBuffer(): Promise<ArrayBuffer> {
     const bytes = this.toBytes()
     if (bytes === null) return Promise.resolve(NO_BODY)
-    return Promise.resolve(bytes.slice().buffer)
+    // Exactly the body's bytes: `bytes` may be a view into a pooled Buffer.
+    const copy = new Uint8Array(bytes.byteLength)
+    copy.set(bytes)
+    return Promise.resolve(copy.buffer)
   }
 
   bytes(): Promise<Uint8Array> {
@@ -558,14 +567,23 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   if (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port < 0) {
     throw new TypeError("@nifrajs/node-engine: `port` must be a non-negative integer")
   }
-  if (options.maxBodySize !== undefined && !isCap(options.maxBodySize)) {
-    throw new TypeError("@nifrajs/node-engine: `maxBodySize` must be a positive integer")
+  if (
+    options.maxBodySize !== undefined &&
+    !(isCap(options.maxBodySize) && options.maxBodySize <= MAX_NATIVE_LENGTH)
+  ) {
+    throw new TypeError("@nifrajs/node-engine: `maxBodySize` must be a positive integer below 2^32")
   }
   if (
     options.oversizeWindow !== undefined &&
-    !(Number.isSafeInteger(options.oversizeWindow) && options.oversizeWindow >= 0)
+    !(
+      Number.isSafeInteger(options.oversizeWindow) &&
+      options.oversizeWindow >= 0 &&
+      options.oversizeWindow <= MAX_NATIVE_LENGTH
+    )
   ) {
-    throw new TypeError("@nifrajs/node-engine: `oversizeWindow` must be a non-negative integer")
+    throw new TypeError(
+      "@nifrajs/node-engine: `oversizeWindow` must be a non-negative integer below 2^32",
+    )
   }
   if (options.validateHost !== undefined && typeof options.validateHost !== "boolean") {
     throw new TypeError("@nifrajs/node-engine: `validateHost` must be a boolean")
@@ -643,11 +661,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     }
     if (!source.aborted && !source.settled) {
       if (source.headWritten) {
-        if (source.isH2 && !source.hasDeclaredLength) {
-          uvServer.end(source.requestId, null)
-        } else {
-          uvServer.abortStream(source.requestId)
-        }
+        // A clean end would tell the client (and any cache) the truncated body is whole.
+        uvServer.abortStream(source.requestId)
       } else {
         uvServer.respondPrepared(source.requestId, tpl500, Buffer.from(INTERNAL_ERROR_BODY))
         source.headWritten = true
@@ -711,9 +726,20 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     const declared = bodyLength ?? declaredContentLength(headers)
     const pending: Uint8Array[] = []
     let finished = false
+    // A second read that is still pending after a turn is not waited for: a route that sent its first
+    // event and then waits on something external must not hold that event back.
+    let carried: ReturnType<typeof reader.read> | undefined
     for (let i = 0; i < 2 && !finished; i++) {
-      const next = await reader.read()
+      const read = reader.read()
+      let next: Awaited<ReturnType<typeof reader.read>> | undefined
+      if (i === 0 || pending.length === 0) {
+        next = await read
+      } else {
+        next = await Promise.race([read, new Promise<undefined>((r) => setImmediate(r))])
+        if (next === undefined) carried = read
+      }
       if (source.aborted) return
+      if (next === undefined) break
       if (next.done) finished = true
       else if (next.value.byteLength > 0) pending.push(next.value)
     }
@@ -728,7 +754,6 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
     validateHeaders(status, headers, cookies)
     const flat = buildFlatHeaders(headers, cookies, defaultType)
-    source.hasDeclaredLength = declared !== undefined
     uvServer.writeHead(source.requestId, status, flat, declared ?? null)
     source.headWritten = true
 
@@ -766,7 +791,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       if (source.aborted || done) return
     }
     for (;;) {
-      const next = await reader.read()
+      const next = await (carried ?? reader.read())
+      carried = undefined
       if (source.aborted) return
       if (next.done) break
       if (next.value.byteLength === 0) continue
@@ -978,9 +1004,18 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           queueSync(reqId, tpl400, BAD_REQUEST_BODY)
           continue
         }
-      } else if (checkHost && (flags & FLAG_HOST_VALID) === 0) {
-        queueSync(reqId, tpl400, BAD_REQUEST_BODY)
-        continue
+      } else if (checkHost) {
+        // The engine's syntax check is the cheap early refusal; the authority is then normalised as
+        // a Host policy would, so `EXAMPLE.COM:080` builds the same URL under either option.
+        if ((flags & FLAG_HOST_VALID) === 0) {
+          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+          continue
+        }
+        authority = resolveRequestHost(uvServer.getHeader(reqId, "host") ?? undefined, policy)
+        if (authority === undefined) {
+          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+          continue
+        }
       }
 
       if ((flags & FLAG_OVER_MAX_BODY) !== 0) {
@@ -1019,7 +1054,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
           bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
         } else {
-          bodyBytes = inData.subarray(bodyOff, bodyOff + bodyLen).slice()
+          // `Buffer#slice` is a view of the batch, which the next batch overwrites: copy the bytes.
+          bodyBytes = new Uint8Array(bodyLen)
+          bodyBytes.set(inData.subarray(bodyOff, bodyOff + bodyLen))
         }
       } else if ((flags & FLAG_HAS_BODY) === 0) {
         bodyBytes = null
@@ -1127,6 +1164,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           dispatchHttp(source)
         } else if (outcome.kind === "reject") {
           writeComplexOutcome(source, { kind: "response", response: outcome.response }, false)
+        } else if (closed) {
+          // The resolver settled after shutdown swept the sockets: this one would miss the sweep.
+          uvServer.respond(
+            source.requestId,
+            503,
+            ["content-type", JSON_CONTENT_TYPE],
+            Buffer.from('{"ok":false,"error":"shutting_down"}'),
+          )
+          source.headWritten = true
+          finish(source)
         } else {
           openingWs = outcome
           let socketId: number
@@ -1381,7 +1428,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       uvServer.stopListening()
       for (const entry of [...wsSockets.values()]) entry.closeSocket(1001, "server shutting down")
       const deadline = Date.now() + drainMs
-      while ((inflight.size > 0 || wsSockets.size > 0) && Date.now() < deadline) {
+      while (
+        (inflight.size > 0 || wsSockets.size > 0 || uvServer.hasUnsentOutput()) &&
+        Date.now() < deadline
+      ) {
         await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
       }
     } finally {

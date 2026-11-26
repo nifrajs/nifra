@@ -33,6 +33,7 @@ pub fn probe_uring_support(cfg: UringConfig) -> io::Result<bool> {
     }
     match builder.build(cfg.ring_entries.min(64)) {
         Ok(_) => Ok(true),
-        Err(_) => Ok(io_uring::IoUring::new(8).is_ok()),
+        // The requested setup flags are unsupported: a plain ring would not honour them.
+        Err(_) => Ok(false),
     }
 }

@@ -44,7 +44,7 @@ if (target.startsWith("nifra-")) {
 } else if (target === "raw-moro-engine") {
   // `@morojs/engine` straight on its API: its ceiling with no framework above it.
   if (MORO_DIR === undefined) throw new Error("MORO_DIR is required for raw-moro-engine")
-  const { handle, decode } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const { handle, decode } = await import("./raw-handler.mjs")
   const engine = createRequire(`${MORO_DIR}/`)("@morojs/engine")
   const METHODS = ["GET", "POST"]
   const serverId = engine.serve(
@@ -62,7 +62,7 @@ if (target.startsWith("nifra-")) {
   engine.listen(serverId, "0.0.0.0", port)
 } else if (target === "raw-nifra-engine" || target === "raw-nifra-engine-ct") {
   // The Rust addon straight on its batch ABI, the way `serve()` drives it, with no adapter and no core.
-  const { handle } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const { handle } = await import("./raw-handler.mjs")
   const addonPath = process.env.NIFRA_RUST_ENGINE_PATH
   if (addonPath === undefined)
     throw new Error("NIFRA_RUST_ENGINE_PATH is required for raw-nifra-engine")
@@ -119,7 +119,7 @@ if (target.startsWith("nifra-")) {
   server = addon.createUvServer("0.0.0.0", port, onBatch, { maxBodySize: 2_097_152 })
   bufs = server.getBatchBuffers()
 } else if (target === "raw-uws") {
-  const { handle, decode } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const { handle, decode } = await import("./raw-handler.mjs")
   const uws = createRequire(`${ROOT}/packages/node-uws/`)("uWebSockets.js")
   const cfg = Reflect.get(uws, "_cfg")
   if (typeof cfg === "function") Reflect.apply(cfg, uws, ["silent"])
@@ -146,7 +146,7 @@ if (target.startsWith("nifra-")) {
     })
     .listen("0.0.0.0", port, () => {})
 } else if (target === "raw-node") {
-  const { handle } = await load(new URL("./raw-handler.mjs", import.meta.url).pathname)
+  const { handle } = await import("./raw-handler.mjs")
   const http = await import("node:http")
   http
     .createServer((req, res) => {

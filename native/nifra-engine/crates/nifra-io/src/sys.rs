@@ -33,12 +33,16 @@ pub(crate) const DATE_TICK_INTERVAL_MS: u64 = 250;
 pub(crate) const IDLE_SWEEP_INTERVAL_MS: u64 = 1_000;
 pub(crate) const HALF_CLOSE_GRACE: Duration = Duration::from_millis(250);
 pub(crate) const HANDLE_ALIGN: usize = 16;
+const SENT_PREFIX_COMPACT_BYTES: usize = 64 * 1024;
 
 /// Number of low bits reserved for the slot index inside a `conn_id`.
-pub const SLOT_BITS: u32 = 20;
+///
+/// A retired id is refused only until its slot has been reused `MAX_GEN` times, so the generation
+/// takes the 13 bits a 262,144-connection slab leaves free.
+pub const SLOT_BITS: u32 = 18;
 pub const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
 const MAX_SLOTS: usize = 1 << SLOT_BITS;
-const MAX_GEN: u16 = 2047; // keeps bit 31 = 0 so `conn_id as i32 > 0` always holds
+const MAX_GEN: u16 = 8191; // keeps bit 31 = 0 so `conn_id as i32 > 0` always holds
 
 /// Extract the direct O(1) slot index from a `conn_id`.
 #[inline]
@@ -489,6 +493,8 @@ pub(crate) struct ConnCore {
     pub close_after_write: bool,
     pub last_activity: Instant,
     pub partial_since: Option<Instant>,
+    /// When the connection is closed whether or not the peer has answered (a Close handshake's wait).
+    pub close_deadline: Option<Instant>,
 }
 
 impl ConnCore {
@@ -517,6 +523,7 @@ impl ConnCore {
             close_after_write: false,
             last_activity: now,
             partial_since: None,
+            close_deadline: None,
         }
     }
 
@@ -584,6 +591,16 @@ pub(crate) fn flush_write_buf_core(core: &mut ConnCore) -> FlushAction {
     }
 }
 
+/// Drop the already-sent prefix of a partly drained queue before more is appended, so a stream that
+/// always leaves a small tail does not keep every byte it ever sent.
+#[inline]
+fn compact_sent_prefix(core: &mut ConnCore) {
+    if core.write_pos >= SENT_PREFIX_COMPACT_BYTES && core.write_pos * 2 >= core.write_buf.len() {
+        core.write_buf.drain(..core.write_pos);
+        core.write_pos = 0;
+    }
+}
+
 /// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
 /// falling back to buffering the tail only on partial writes, backpressure, or TLS.
 #[inline]
@@ -622,6 +639,7 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
         }
     }
 
+    compact_sent_prefix(core);
     if let Some(ref mut tls_conn) = core.tls {
         if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
             return FlushAction::Close;
@@ -650,10 +668,17 @@ pub(crate) fn collect_timeout_ids<'a>(
         if idle_limit.is_some_and(|l| now.duration_since(c.last_activity) >= l) {
             idle.push(id);
         }
-        if let Some(started) = c.partial_since {
+        let started = c.partial_since.or_else(|| {
+            request_limit?;
+            callbacks?.oldest_incomplete_request(id)
+        });
+        if let Some(started) = started {
             if request_limit.is_some_and(|l| now.duration_since(started) >= l) {
                 partial.push(id);
             }
+        }
+        if c.close_deadline.is_some_and(|d| now >= d) {
+            partial.push(id);
         }
         if c.eof_at
             .is_some_and(|at| now.duration_since(at) >= HALF_CLOSE_GRACE)

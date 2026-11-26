@@ -3,7 +3,6 @@
 // An "#2" suffix on a target repeats it as an A/A control: its gap to the original is noise.
 import { execFileSync, spawn } from "node:child_process"
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { availableParallelism } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -69,12 +68,29 @@ const luaFor = (name) => {
 }
 const scripts = Object.fromEntries(names.map((n) => [n, luaFor(n)]))
 
-// Server and client on separate cores when there are enough; otherwise unpinned.
-const cpus = availableParallelism()
-const half = Math.floor(cpus / 2)
+// Server and client on separate cores when there are enough; otherwise unpinned. The sets are the
+// CPUs this process may actually use, which a container can restrict to ids that do not start at 0.
+const allowedCpus = () => {
+  try {
+    const list = /Cpus_allowed_list:\s*(\S+)/.exec(readFileSync("/proc/self/status", "utf8"))?.[1]
+    if (list === undefined) return []
+    return list.split(",").flatMap((part) => {
+      const [from, to = from] = part.split("-").map(Number)
+      return Array.from({ length: to - from + 1 }, (_, i) => from + i)
+    })
+  } catch {
+    return []
+  }
+}
+const usable = process.platform === "linux" ? allowedCpus() : []
+const half = Math.floor(usable.length / 2)
 const pin =
-  process.platform === "linux" && cpus >= 4
-    ? { server: `0-${half - 1}`, client: `${half}-${cpus - 1}`, threads: cpus - half }
+  usable.length >= 4
+    ? {
+        server: usable.slice(0, half).join(","),
+        client: usable.slice(half).join(","),
+        threads: Math.min(usable.length - half, 64),
+      }
     : undefined
 const withPin = (set, cmd, args) =>
   pin === undefined ? [cmd, args] : ["taskset", ["-c", set, cmd, ...args]]
@@ -137,6 +153,8 @@ for (const name of names) {
         if (wrk(name, url).bad)
           throw new Error(`${name} on ${target}: warm-up got non-2xx or socket errors`)
         run = wrk(name, url)
+        if (run.bad)
+          throw new Error(`${name} on ${target}: the measured run got non-2xx or socket errors`)
       } finally {
         child.kill("SIGTERM")
       }

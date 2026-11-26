@@ -88,6 +88,14 @@ struct SharedKeyTicketer {
     rng: SystemRandom,
 }
 
+const TICKET_LIFETIME_SECS: u32 = 6 * 60 * 60;
+
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 struct TicketKey {
     name: [u8; 16],
     aead: LessSafeKey,
@@ -100,6 +108,28 @@ impl std::fmt::Debug for SharedKeyTicketer {
 }
 
 impl SharedKeyTicketer {
+    /// Seal `plain` under the newest key, stamped with the time it was issued.
+    ///
+    /// The stamp rides inside the sealed bytes, so a key that stays in the list past the advertised
+    /// lifetime still cannot resume a ticket older than it.
+    fn seal(&self, issued: u64, plain: &[u8]) -> Option<Vec<u8>> {
+        let key = self.keys.first()?;
+        let mut nonce_bytes = [0u8; 12];
+        self.rng.fill(&mut nonce_bytes).ok()?;
+        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+        let mut in_out = Vec::with_capacity(8 + plain.len() + 16);
+        in_out.extend_from_slice(&issued.to_be_bytes());
+        in_out.extend_from_slice(plain);
+        key.aead
+            .seal_in_place_append_tag(nonce, Aad::from(&key.name), &mut in_out)
+            .ok()?;
+        let mut ticket = Vec::with_capacity(16 + 12 + in_out.len());
+        ticket.extend_from_slice(&key.name);
+        ticket.extend_from_slice(&nonce_bytes);
+        ticket.extend_from_slice(&in_out);
+        Some(ticket)
+    }
+
     fn from_bytes(raw: &[u8]) -> Result<Self, TlsError> {
         if raw.is_empty() || raw.len() % 48 != 0 {
             return Err(TlsError::InvalidTicketKeys);
@@ -132,23 +162,11 @@ impl ProducesTickets for SharedKeyTicketer {
     }
 
     fn lifetime(&self) -> u32 {
-        6 * 60 * 60
+        TICKET_LIFETIME_SECS
     }
 
     fn encrypt(&self, plain: &[u8]) -> Option<Vec<u8>> {
-        let key = self.keys.first()?;
-        let mut nonce_bytes = [0u8; 12];
-        self.rng.fill(&mut nonce_bytes).ok()?;
-        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-        let mut in_out = plain.to_vec();
-        key.aead
-            .seal_in_place_append_tag(nonce, Aad::from(&key.name), &mut in_out)
-            .ok()?;
-        let mut ticket = Vec::with_capacity(16 + 12 + in_out.len());
-        ticket.extend_from_slice(&key.name);
-        ticket.extend_from_slice(&nonce_bytes);
-        ticket.extend_from_slice(&in_out);
-        Some(ticket)
+        self.seal(unix_secs(), plain)
     }
 
     fn decrypt(&self, cipher: &[u8]) -> Option<Vec<u8>> {
@@ -164,7 +182,9 @@ impl ProducesTickets for SharedKeyTicketer {
             .aead
             .open_in_place(nonce, Aad::from(&key.name), &mut buf)
             .ok()?;
-        Some(plain.to_vec())
+        let (issued, rest) = plain.split_first_chunk::<8>()?;
+        let age = unix_secs().saturating_sub(u64::from_be_bytes(*issued));
+        (age <= u64::from(TICKET_LIFETIME_SECS)).then(|| rest.to_vec())
     }
 }
 
@@ -355,6 +375,19 @@ mod tests {
         let last = ticket.len() - 1;
         ticket[last] ^= 0xff;
         assert!(worker_b.decrypt(&ticket).is_none());
+    }
+
+    #[test]
+    fn a_ticket_older_than_its_lifetime_is_refused_even_under_a_current_key() {
+        let ticketer = SharedKeyTicketer::from_bytes(&[0x33u8; 48]).unwrap();
+        let now = unix_secs();
+        let lifetime = u64::from(TICKET_LIFETIME_SECS);
+        let fresh = ticketer.seal(now, b"state").unwrap();
+        assert_eq!(ticketer.decrypt(&fresh).as_deref(), Some(&b"state"[..]));
+        let edge = ticketer.seal(now - lifetime + 5, b"state").unwrap();
+        assert!(ticketer.decrypt(&edge).is_some());
+        let stale = ticketer.seal(now - lifetime - 5, b"state").unwrap();
+        assert!(ticketer.decrypt(&stale).is_none());
     }
 
     #[test]

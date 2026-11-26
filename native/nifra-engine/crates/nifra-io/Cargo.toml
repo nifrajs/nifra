@@ -2,6 +2,7 @@
 name = "nifra-io"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Zero-hop socket and event-loop layer for @nifrajs/node-engine (libuv poll, Linux io_uring, mio)."
 

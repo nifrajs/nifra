@@ -20,6 +20,10 @@ afterEach(async () => {
 
 test("stop() lets an in-flight request finish, refuses new connections, and runs the lifecycle hooks in order", async () => {
   const events: string[] = []
+  let entered!: () => void
+  const inHandler = new Promise<void>((resolve) => {
+    entered = resolve
+  })
   const app = server()
     .onStopping(() => {
       events.push("stopping")
@@ -28,13 +32,14 @@ test("stop() lets an in-flight request finish, refuses new connections, and runs
       events.push("stopped")
     })
     .get("/slow", async () => {
+      entered()
       await sleep(150)
       events.push("handled")
       return { slow: true }
     })
   const handle = await serve(app, { port: 0, hostname: "127.0.0.1" })
   const inFlight = fetch(`http://127.0.0.1:${handle.port}/slow`)
-  await sleep(30)
+  await inHandler
   const stopping = handle.stop({ drainMs: 3000 })
   const response = await inFlight
   assert.equal(response.status, 200)
@@ -61,10 +66,17 @@ test("stop() is idempotent and await using waits for the shutdown under way", as
 })
 
 test("a request that outlives drainMs is closed at the deadline", async () => {
-  const app = server().get("/never", () => new Promise<never>(() => {}))
+  let entered!: () => void
+  const inHandler = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const app = server().get("/never", () => {
+    entered()
+    return new Promise<never>(() => {})
+  })
   const handle = await serve(app, { port: 0, hostname: "127.0.0.1" })
   const request = fetch(`http://127.0.0.1:${handle.port}/never`).catch((error: unknown) => error)
-  await sleep(30)
+  await inHandler
   const started = Date.now()
   await handle.stop({ drainMs: 120 })
   const elapsed = Date.now() - started
