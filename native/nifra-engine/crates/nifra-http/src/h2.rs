@@ -51,6 +51,8 @@ const CONN_BACKLOG_LIMIT: usize = 16 * 1024 * 1024;
 /// Request body bytes one connection may hold across the streams still receiving. One body of the
 /// largest accepted size always fits.
 const CONN_BODY_LIMIT: usize = 32 * 1024 * 1024;
+/// Cut-short uploads a connection remembers, so their in-flight `DATA` is not held against the peer.
+const DRAINING_LIMIT: usize = 128;
 const MAX_WINDOW: i64 = 0x7FFF_FFFF;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16_384;
 const MAX_ALLOWED_FRAME_SIZE: usize = 16_777_215;
@@ -192,6 +194,11 @@ pub struct H2Conn {
     active_streams: HashMap<u32, InStream>,
     open_response_streams: HashMap<u32, ()>,
     continuation: Option<HeaderContinuation>,
+    /// When the header frame now arriving began.
+    partial_head: Option<Instant>,
+    /// Streams answered or reset while the peer was still sending, each with whether its first late
+    /// `DATA` is still owed an `RST_STREAM`.
+    draining: Vec<(u32, bool)>,
     hpack: HpackDecoder,
     rst_count: u32,
     rst_window_start: Option<Instant>,
@@ -220,6 +227,8 @@ impl H2Conn {
             active_streams: HashMap::with_capacity(16),
             open_response_streams: HashMap::with_capacity(16),
             continuation: None,
+            partial_head: None,
+            draining: Vec::new(),
             hpack: HpackDecoder::new(4096, cfg.max_header_list_size),
             rst_count: 0,
             rst_window_start: None,
@@ -256,9 +265,64 @@ impl H2Conn {
             .min()
     }
 
-    /// When a header block still waiting for its `CONTINUATION` frames began.
+    /// When the oldest header block still arriving began: a partly received `HEADERS` frame, or one
+    /// waiting for its `CONTINUATION` frames.
     pub fn oldest_incomplete_head(&self) -> Option<Instant> {
-        self.continuation.as_ref().map(|cont| cont.started)
+        let waiting = self.continuation.as_ref().map(|cont| cont.started);
+        [waiting, self.partial_head].into_iter().flatten().min()
+    }
+
+    /// `rest` is what a read left unparsed. A frame too short to show its type may be a header frame.
+    fn note_partial_head(&mut self, rest: &[u8], advanced: bool) {
+        let may_be_head = !rest.is_empty() && rest.get(3).is_none_or(|&t| t == FRAME_HEADERS);
+        if !may_be_head {
+            self.partial_head = None;
+        } else if advanced || self.partial_head.is_none() {
+            self.partial_head = Some((self.clock)());
+        }
+    }
+
+    /// After a header block: a request neither being received nor already answered was refused.
+    fn drain_if_refused(&mut self, stream_id: u32, end_stream: bool) {
+        if !end_stream
+            && !self.active_streams.contains_key(&stream_id)
+            && !self.draining.iter().any(|&(id, _)| id == stream_id)
+        {
+            self.drain_stream(stream_id, false);
+        }
+    }
+
+    fn drain_stream(&mut self, stream_id: u32, rst_owed: bool) {
+        if self.draining.len() >= DRAINING_LIMIT {
+            self.draining.remove(0);
+        }
+        self.draining.push((stream_id, rst_owed));
+    }
+
+    /// `DATA` for a stream that takes none. The peer may still be sending what was in flight when the
+    /// server cut the stream short; anything else makes the server reset, and counts as such.
+    fn stray_data(
+        &mut self,
+        stream_id: u32,
+        end_stream: bool,
+        out: &mut Vec<u8>,
+        res: &mut H2FeedResult,
+    ) {
+        if let Some(at) = self.draining.iter().position(|&(id, _)| id == stream_id) {
+            if std::mem::take(&mut self.draining[at].1) {
+                write_rst_stream(stream_id, ERR_STREAM_CLOSED, out);
+            }
+            if end_stream {
+                self.draining.remove(at);
+            }
+            return;
+        }
+        let owed = self.open_response_streams.contains_key(&stream_id)
+            || self.out_streams.contains_key(&stream_id);
+        self.fault(stream_id, ERR_STREAM_CLOSED, out);
+        if owed {
+            res.events.push(H2Event::StreamReset(stream_id));
+        }
     }
 
     /// Since when response bytes held by the peer's flow-control windows have not moved.
@@ -351,6 +415,7 @@ impl H2Conn {
             self.ensure_server_preface(write_buf);
         }
 
+        let first_frame = pos;
         while pos + 9 <= buf.len() {
             if self.rst_count > self.cfg.max_rst_streams {
                 break;
@@ -623,6 +688,8 @@ impl H2Conn {
                         res.consumed = pos;
                         res.close_after_write = true;
                         return res;
+                    } else {
+                        self.drain_if_refused(stream_id, end_stream);
                     }
                 }
                 FRAME_CONTINUATION => {
@@ -668,6 +735,7 @@ impl H2Conn {
                             res.close_after_write = true;
                             return res;
                         }
+                        self.drain_if_refused(cont.stream_id, cont.end_stream);
                     } else {
                         self.continuation = Some(cont);
                     }
@@ -718,7 +786,10 @@ impl H2Conn {
                     if buffered.saturating_add(data.len()) > hard_cap.max(CONN_BODY_LIMIT)
                         && self.active_streams.contains_key(&stream_id)
                     {
-                        self.reset_stream(stream_id, ERR_ENHANCE_YOUR_CALM, write_buf);
+                        self.fault(stream_id, ERR_ENHANCE_YOUR_CALM, write_buf);
+                        if !end_stream {
+                            self.drain_stream(stream_id, false);
+                        }
                         continue;
                     }
                     let mut remove_stream = false;
@@ -733,6 +804,9 @@ impl H2Conn {
                         {
                             // More body than content-length declared (RFC 9113 §8.1.1).
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            if !end_stream {
+                                self.drain_stream(stream_id, false);
+                            }
                             continue;
                         } else {
                             st.body.extend_from_slice(data);
@@ -742,13 +816,16 @@ impl H2Conn {
                             }
                         }
                     } else {
-                        write_rst_stream(stream_id, ERR_STREAM_CLOSED, write_buf);
+                        self.stray_data(stream_id, end_stream, write_buf, &mut res);
                         continue;
                     }
                     if too_large {
                         self.active_streams.remove(&stream_id);
                         self.open_response_streams.insert(stream_id, ());
                         self.write_response(stream_id, 413, &[], None, write_buf);
+                        if !end_stream {
+                            self.drain_stream(stream_id, true);
+                        }
                     } else if remove_stream {
                         if let Some(st) = self.active_streams.remove(&stream_id) {
                             if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
@@ -771,6 +848,7 @@ impl H2Conn {
             res.close_after_write = true;
             return res;
         }
+        self.note_partial_head(&buf[pos..], pos > first_frame);
         res.consumed = pos;
         res
     }
@@ -973,6 +1051,9 @@ impl H2Conn {
             if cl > hard_cap {
                 self.open_response_streams.insert(stream_id, ());
                 self.write_response(stream_id, 413, &[], None, write_buf);
+                if !end_stream {
+                    self.drain_stream(stream_id, true);
+                }
                 return Ok(());
             }
         }
@@ -2595,6 +2676,67 @@ mod tests {
             .iter()
             .any(|(ty, _, _, p)| *ty == FRAME_GOAWAY
                 && p[4..8] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+    }
+
+    #[test]
+    fn h2_a_headers_frame_still_arriving_is_an_incomplete_head() {
+        let (mut conn, mut wire) = open_wire();
+        conn.feed(&wire, &mut Vec::new());
+        assert!(conn.oldest_incomplete_head().is_none());
+        wire.clear();
+        headers_frame(&mut wire, 1, WHOLE, &get_block("/", &[]));
+        conn.feed(&wire[..2], &mut Vec::new());
+        let began = conn.oldest_incomplete_head().expect("type not yet known");
+        conn.feed(&wire[..wire.len() - 1], &mut Vec::new());
+        assert_eq!(conn.oldest_incomplete_head(), Some(began));
+        conn.feed(&wire, &mut Vec::new());
+        assert!(conn.oldest_incomplete_head().is_none());
+        // A frame of another type that is still arriving is not a head.
+        wire.clear();
+        write_frame(FRAME_DATA, 0, 3, b"abc", &mut wire);
+        conn.feed(&wire[..wire.len() - 1], &mut Vec::new());
+        assert!(conn.oldest_incomplete_head().is_none());
+    }
+
+    #[test]
+    fn h2_data_on_a_finished_stream_counts_as_a_reset() {
+        let (mut conn, mut wire) = open_wire();
+        headers_frame(&mut wire, 1, WHOLE, &get_block("/", &[]));
+        for _ in 0..300 {
+            write_frame(FRAME_DATA, FLAG_END_STREAM, 1, &[], &mut wire);
+        }
+        let mut out = Vec::new();
+        let res = conn.feed(&wire, &mut out);
+        assert!(res.close_after_write);
+        let sent = frames(&out);
+        assert!(sent.iter().filter(|f| f.0 == FRAME_RST_STREAM).count() <= 101);
+        assert!(sent
+            .iter()
+            .any(|(ty, _, _, p)| *ty == FRAME_GOAWAY
+                && p[4..8] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+        // The handler still owed a response on it is told the stream is gone.
+        assert!(res
+            .events
+            .iter()
+            .any(|e| matches!(e, H2Event::StreamReset(1))));
+    }
+
+    #[test]
+    fn h2_data_in_flight_for_a_cut_short_upload_is_not_held_against_the_peer() {
+        let (mut conn, mut wire) = open_wire();
+        let block = get_block("/", &[("content-length", b"999999999999")]);
+        headers_frame(&mut wire, 1, FLAG_END_HEADERS, &block);
+        for _ in 0..300 {
+            write_frame(FRAME_DATA, 0, 1, b"late", &mut wire);
+        }
+        let mut out = Vec::new();
+        let res = conn.feed(&wire, &mut out);
+        assert!(!res.close_after_write);
+        let resets = frames(&out)
+            .iter()
+            .filter(|f| f.0 == FRAME_RST_STREAM)
+            .count();
+        assert_eq!(resets, 1);
     }
 
     #[test]

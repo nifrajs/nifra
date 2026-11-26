@@ -83,6 +83,28 @@ test("Expect: 100-continue is answered before the body is sent", async () => {
   }
 })
 
+test("Expect: 100-continue is answered past 64 header fields, and in request order", async () => {
+  const running = await start()
+  const expecting = (extra = "") =>
+    `POST /p HTTP/1.1\r\nHost: a\r\n${extra}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`
+  try {
+    const many = Array.from({ length: 100 }, (_, i) => `x-${i}: 1\r\n`).join("")
+    const alone = await raw(running.port, expecting(many), (r) => r.includes("\r\n\r\n"), 1000)
+    assert.equal(status(alone), "HTTP/1.1 100 Continue")
+    // Behind a response still streaming: that response first, then the interim reply.
+    const behind = await raw(
+      running.port,
+      `GET /stream HTTP/1.1\r\nHost: a\r\n\r\n${expecting()}`,
+      (r) => r.includes("100 Continue"),
+      2000,
+    )
+    assert.equal(status(behind), "HTTP/1.1 200 OK")
+    assert.ok(behind.indexOf("0\r\n\r\n") < behind.indexOf("HTTP/1.1 100 Continue"))
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a streamed HTTP/1.0 response ends with the connection, not with chunks", async () => {
   const running = await start()
   try {

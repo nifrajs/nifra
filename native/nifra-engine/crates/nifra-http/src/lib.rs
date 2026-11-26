@@ -56,12 +56,37 @@ fn is_routable_target(method: &str, target: &str) -> bool {
     })
 }
 
+/// Parse a request head, on the stack up to [`MAX_HEADERS`] fields and on the heap past that.
+fn parse_head<'h, 'b>(
+    buf: &'b [u8],
+    inline: &'h mut [MaybeUninit<httparse::Header<'b>>; MAX_HEADERS],
+    heavy: &'h mut Vec<MaybeUninit<httparse::Header<'b>>>,
+) -> (httparse::Request<'h, 'b>, httparse::Result<usize>) {
+    let mut req = httparse::Request::new(&mut []);
+    let mut parsed = req.parse_with_uninit_headers(buf, inline);
+    if parsed == Err(httparse::Error::TooManyHeaders) {
+        heavy.resize_with(MAX_HEADERS_HEAVY, MaybeUninit::uninit);
+        req = httparse::Request::new(&mut []);
+        parsed = req.parse_with_uninit_headers(buf, heavy);
+    }
+    (req, parsed)
+}
+
+/// A long head with no blank line yet is not worth reparsing on every read.
+fn head_surely_partial(buf: &[u8]) -> bool {
+    buf.len() > REPARSE_LIMIT && !buf.windows(4).any(|w| w == b"\r\n\r\n")
+}
+
 /// Whether a request whose body has not all arrived asked for `100 Continue` before sending it;
 /// `None` while its head is still arriving.
 pub fn awaits_continue(buf: &[u8]) -> Option<bool> {
-    let mut headers = [const { MaybeUninit::uninit() }; MAX_HEADERS];
-    let mut req = httparse::Request::new(&mut []);
-    let Ok(httparse::Status::Complete(_)) = req.parse_with_uninit_headers(buf, &mut headers) else {
+    if head_surely_partial(buf) {
+        return None;
+    }
+    let mut inline = [const { MaybeUninit::uninit() }; MAX_HEADERS];
+    let mut heavy = Vec::new();
+    let (req, parsed) = parse_head(buf, &mut inline, &mut heavy);
+    let Ok(httparse::Status::Complete(_)) = parsed else {
         return None;
     };
     Some(
@@ -498,7 +523,7 @@ pub fn parse_http1_resume<'a>(
     limits: ParseLimits,
     resume: &mut ChunkResume,
 ) -> Result<ParseStatus<'a>, ParseError> {
-    if buf.len() > REPARSE_LIMIT && !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+    if head_surely_partial(buf) {
         if buf.len() > limits.max_header_bytes {
             return Err(ParseError::HeadersTooLarge);
         }
@@ -506,13 +531,7 @@ pub fn parse_http1_resume<'a>(
     }
     let mut inline = [const { MaybeUninit::uninit() }; MAX_HEADERS];
     let mut heavy = Vec::new();
-    let mut req = httparse::Request::new(&mut []);
-    let mut parsed = req.parse_with_uninit_headers(buf, &mut inline);
-    if parsed == Err(httparse::Error::TooManyHeaders) {
-        heavy.resize_with(MAX_HEADERS_HEAVY, MaybeUninit::uninit);
-        req = httparse::Request::new(&mut []);
-        parsed = req.parse_with_uninit_headers(buf, &mut heavy);
-    }
+    let (req, parsed) = parse_head(buf, &mut inline, &mut heavy);
     let head_len = match parsed {
         Ok(httparse::Status::Complete(n)) => {
             if n > limits.max_header_bytes {
@@ -673,13 +692,7 @@ pub fn parse_http1_resume<'a>(
 pub fn collect_headers_in_head(raw_head: &[u8]) -> Vec<String> {
     let mut inline = [const { MaybeUninit::uninit() }; MAX_HEADERS];
     let mut heavy = Vec::new();
-    let mut req = httparse::Request::new(&mut []);
-    let mut parsed = req.parse_with_uninit_headers(raw_head, &mut inline);
-    if parsed == Err(httparse::Error::TooManyHeaders) {
-        heavy.resize_with(MAX_HEADERS_HEAVY, MaybeUninit::uninit);
-        req = httparse::Request::new(&mut []);
-        parsed = req.parse_with_uninit_headers(raw_head, &mut heavy);
-    }
+    let (req, parsed) = parse_head(raw_head, &mut inline, &mut heavy);
     let Ok(httparse::Status::Complete(_)) = parsed else {
         return Vec::new();
     };
@@ -1698,6 +1711,13 @@ mod tests {
             b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\nExpect: 100-Continue\r\n\r\n";
         assert_eq!(awaits_continue(head), Some(true));
         assert_eq!(awaits_continue(&head[..30]), None);
+        // The same field capacity as the request parser.
+        let mut many = b"POST / HTTP/1.1\r\nHost: a\r\n".to_vec();
+        for i in 0..MAX_HEADERS * 2 {
+            many.extend_from_slice(format!("X-{i}: v\r\n").as_bytes());
+        }
+        many.extend_from_slice(b"Content-Length: 3\r\nExpect: 100-continue\r\n\r\n");
+        assert_eq!(awaits_continue(&many), Some(true));
         assert_eq!(
             awaits_continue(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\n"),
             Some(false)

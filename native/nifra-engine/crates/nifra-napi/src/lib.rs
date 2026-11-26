@@ -1618,12 +1618,22 @@ impl HttpUvCallbacks {
                         st.conn_meta.ensure(conn_id).chunk_resume = Some(Box::new(resume));
                     }
                     let slot = st.conn_meta.ensure(conn_id);
-                    // An interim reply must not overtake an answer still owed to an earlier request.
-                    if !slot.continue_checked && !slot.has_h1_pending() {
+                    if !slot.continue_checked {
                         if let Some(expects) = awaits_continue(&read_buf[consumed..]) {
                             slot.continue_checked = true;
                             if expects {
-                                write_buf.extend_from_slice(b"HTTP/1.1 100 Continue\r\n\r\n");
+                                const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+                                // Behind an earlier request still unanswered, it queues like a reply.
+                                if !slot.has_h1_pending() {
+                                    write_buf.extend_from_slice(CONTINUE);
+                                } else if park_behind_pending(
+                                    &mut st,
+                                    conn_id,
+                                    CONTINUE.to_vec(),
+                                    true,
+                                ) {
+                                    return ConnAction::CloseNow;
+                                }
                             }
                         }
                     }
