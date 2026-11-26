@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { runInNewContext } from "node:vm"
 import { cspHeaderValue, prepareCspPolicy } from "../src/csp.ts"
 import {
   createCspPolicy,
@@ -323,6 +324,16 @@ describe("createWebApp({ nonce, cspHeader })", () => {
     expect(nonces.size).toBeLessThanOrEqual(1)
     return [...nonces][0]
   }
+
+  test("a nonce Promise from another realm reaches both the document and the header", async () => {
+    const nonce: Promise<string> = runInNewContext('Promise.resolve("fixtureNonce")')
+    expect(nonce).not.toBeInstanceOf(Promise)
+    const app = nonceApp(manifestOf({ "/": () => ({ default: "home" }) }), () => nonce)
+    const response = await app.fetch(new Request("http://localhost/"))
+    expect(response.status).toBe(200)
+    expect(scriptNonce(await response.text())).toBe("fixtureNonce")
+    expect(response.headers.get("content-security-policy")).toContain("'nonce-fixtureNonce'")
+  })
 
   test("the header names the nonce on the scripts, however the request was rebuilt in front", async () => {
     const app = nonceApp(

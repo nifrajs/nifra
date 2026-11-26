@@ -443,6 +443,8 @@ struct PendingCold {
 #[cfg(unix)]
 struct PendingReq {
     conn_id: u32,
+    prev_on_conn: u32,
+    next_on_conn: u32,
     flags: u8,
     raw_head: HeadStorage,
     cold: Option<Box<PendingCold>>,
@@ -463,6 +465,8 @@ impl PendingReq {
         }
         Self {
             conn_id,
+            prev_on_conn: 0,
+            next_on_conn: 0,
             flags,
             raw_head,
             cold,
@@ -581,7 +585,7 @@ struct H1Order {
 #[derive(Default)]
 struct ConnMetaSlot {
     gen_id: u32,
-    pending_count: u32,
+    pending_head: u32,
     h1_head: u32,
     h1_overflow: Option<Box<H1Order>>,
     chunk_resume: Option<Box<ChunkResume>>,
@@ -596,7 +600,7 @@ impl ConnMetaSlot {
     #[inline]
     fn clear_for(&mut self, new_gen_id: u32) {
         self.gen_id = new_gen_id;
-        self.pending_count = 0;
+        self.pending_head = 0;
         self.h1_head = 0;
         self.h1_overflow = None;
         self.chunk_resume = None;
@@ -650,6 +654,8 @@ impl ConnMetaSlot {
 #[derive(Default)]
 struct ConnMetaTable {
     slots: Vec<ConnMetaSlot>,
+    // A driver can reuse a connection slot before delivering its old disconnect callback.
+    retired_pending: HashMap<u32, u32>,
 }
 
 #[cfg(unix)]
@@ -657,6 +663,7 @@ impl ConnMetaTable {
     fn with_capacity(cap: usize) -> Self {
         Self {
             slots: Vec::with_capacity(cap),
+            retired_pending: HashMap::new(),
         }
     }
 
@@ -668,6 +675,9 @@ impl ConnMetaTable {
         }
         let slot = &mut self.slots[idx];
         if slot.gen_id != conn_id {
+            if slot.pending_head != 0 {
+                self.retired_pending.insert(slot.gen_id, slot.pending_head);
+            }
             slot.clear_for(conn_id);
         }
         slot
@@ -685,13 +695,30 @@ impl ConnMetaTable {
         (slot.gen_id == conn_id).then_some(slot)
     }
 
+    fn pending_head(&self, conn_id: u32) -> u32 {
+        match self.get(conn_id) {
+            Some(slot) => slot.pending_head,
+            None => self.retired_pending.get(&conn_id).copied().unwrap_or(0),
+        }
+    }
+
+    fn set_pending_head(&mut self, conn_id: u32, head: u32) {
+        if let Some(slot) = self.get_mut(conn_id) {
+            slot.pending_head = head;
+        } else if head == 0 {
+            self.retired_pending.remove(&conn_id);
+        } else {
+            self.retired_pending.insert(conn_id, head);
+        }
+    }
+
     fn clear_conn(&mut self, conn_id: u32) -> Option<Box<WsConnState>> {
         let slot = self.slots.get_mut(conn_slot(conn_id))?;
         if slot.gen_id != conn_id {
             return None;
         }
         slot.gen_id = 0;
-        slot.pending_count = 0;
+        slot.pending_head = 0;
         slot.h1_head = 0;
         slot.h1_overflow = None;
         slot.chunk_resume = None;
@@ -701,6 +728,7 @@ impl ConnMetaTable {
 
     fn clear_all(&mut self) {
         self.slots.clear();
+        self.retired_pending.clear();
     }
 }
 
@@ -929,16 +957,23 @@ impl PendingSlab {
     }
 
     #[inline]
-    fn insert(&mut self, req: PendingReq) -> u32 {
+    fn insert(&mut self, conn_meta: &mut ConnMetaTable, mut req: PendingReq) -> u32 {
+        let slot = conn_meta.ensure(req.conn_id);
+        req.next_on_conn = slot.pending_head;
         self.active += 1;
-        if let Some(idx) = self.free.pop() {
+        let id = if let Some(idx) = self.free.pop() {
             self.slots[idx as usize] = Some(req);
             idx + 1
         } else {
             let idx = self.slots.len() as u32;
             self.slots.push(Some(req));
             idx + 1
+        };
+        if let Some(previous_head) = self.get_mut(slot.pending_head) {
+            previous_head.prev_on_conn = id;
         }
+        slot.pending_head = id;
+        id
     }
 
     #[inline]
@@ -958,16 +993,45 @@ impl PendingSlab {
     }
 
     #[inline]
-    fn remove(&mut self, id: u32) -> Option<PendingReq> {
+    fn remove(&mut self, conn_meta: &mut ConnMetaTable, id: u32) -> Option<PendingReq> {
         if id == 0 {
             return None;
         }
         let idx = (id - 1) as usize;
         let slot = self.slots.get_mut(idx)?;
         let val = slot.take()?;
+        if let Some(prev) = self.get_mut(val.prev_on_conn) {
+            prev.next_on_conn = val.next_on_conn;
+        } else {
+            conn_meta.set_pending_head(val.conn_id, val.next_on_conn);
+        }
+        if let Some(next) = self.get_mut(val.next_on_conn) {
+            next.prev_on_conn = val.prev_on_conn;
+        }
         self.free.push(idx as u32);
         self.active -= 1;
         Some(val)
+    }
+
+    fn remove_connection(&mut self, conn_meta: &mut ConnMetaTable, conn_id: u32) -> Vec<u32> {
+        let mut ids = Vec::new();
+        let mut id = conn_meta.pending_head(conn_id);
+        while let Some(req) = self.remove(conn_meta, id) {
+            ids.push(id);
+            id = req.next_on_conn;
+        }
+        // Preserve the slab order used to deliver abort notifications.
+        ids.sort_unstable();
+        ids
+    }
+
+    fn iter_connection(&self, mut id: u32) -> impl Iterator<Item = (u32, &PendingReq)> {
+        std::iter::from_fn(move || {
+            let request = self.get(id)?;
+            let entry = (id, request);
+            id = request.next_on_conn;
+            Some(entry)
+        })
     }
 
     fn iter(&self) -> impl Iterator<Item = (u32, &PendingReq)> {
@@ -981,6 +1045,43 @@ impl PendingSlab {
         self.slots.clear();
         self.free.clear();
         self.active = 0;
+    }
+}
+
+#[cfg(all(unix, test))]
+mod pending_tests {
+    use super::*;
+
+    #[test]
+    fn disconnect_drains_only_the_retired_generation() {
+        let retired = 0x40005;
+        let replacement = 0x80005;
+        assert_eq!(conn_slot(retired), conn_slot(replacement));
+        let mut connections = ConnMetaTable::default();
+        let mut pending = PendingSlab::with_capacity(4);
+        let request = |conn_id| PendingReq::new(conn_id, true, HeadStorage::Empty, None);
+
+        let first = pending.insert(&mut connections, request(retired));
+        let finished = pending.insert(&mut connections, request(retired));
+        let last = pending.insert(&mut connections, request(retired));
+        assert!(pending.remove(&mut connections, finished).is_some());
+        let current = pending.insert(&mut connections, request(replacement));
+        assert_eq!(current, finished);
+        assert!(connections.get(retired).is_none());
+
+        let aborted = pending.remove_connection(&mut connections, retired);
+        connections.clear_conn(retired);
+        assert_eq!(aborted, vec![first, last]);
+        assert!(pending.get(first).is_none());
+        assert!(pending.get(last).is_none());
+        assert_eq!(connections.pending_head(retired), 0);
+        assert_eq!(connections.pending_head(replacement), current);
+        assert_eq!(pending.get(current).unwrap().conn_id, replacement);
+        assert_eq!(
+            pending.remove_connection(&mut connections, replacement),
+            vec![current]
+        );
+        assert!(pending.is_empty());
     }
 }
 
@@ -1033,17 +1134,16 @@ struct UvHttpShared {
 impl UvHttpShared {
     #[inline]
     fn insert_pending(&mut self, req: PendingReq) -> u32 {
-        self.conn_meta.ensure(req.conn_id).pending_count += 1;
-        self.pending.insert(req)
+        self.pending.insert(&mut self.conn_meta, req)
     }
 
     #[inline]
     fn remove_pending(&mut self, req_id: u32) -> Option<PendingReq> {
-        let removed = self.pending.remove(req_id)?;
-        if let Some(slot) = self.conn_meta.get_mut(removed.conn_id) {
-            slot.pending_count = slot.pending_count.saturating_sub(1);
-        }
-        Some(removed)
+        self.pending.remove(&mut self.conn_meta, req_id)
+    }
+
+    fn disconnect_pending(&mut self, conn_id: u32) -> Vec<u32> {
+        self.pending.remove_connection(&mut self.conn_meta, conn_id)
     }
 }
 
@@ -1578,7 +1678,7 @@ impl UvCallbacks for HttpUvCallbacks {
     fn has_pending_requests(&self, conn_id: u32) -> bool {
         let st = self.shared.borrow();
         st.conn_meta.get(conn_id).is_some_and(|s| {
-            s.pending_count > 0
+            s.pending_head != 0
                 || s.has_h1_pending()
                 || s.h2
                     .as_ref()
@@ -1591,7 +1691,7 @@ impl UvCallbacks for HttpUvCallbacks {
         ids.into_iter()
             .filter(|&id| {
                 !st.conn_meta.get(id).is_some_and(|s| {
-                    s.pending_count > 0
+                    s.pending_head != 0
                         || s.has_h1_pending()
                         || s.h2
                             .as_ref()
@@ -1602,44 +1702,25 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 
     fn on_writable(&mut self, conn_id: u32) {
-        let req_ids: Vec<u32> = {
+        let mut req_ids: Vec<u32> = {
             let st = self.shared.borrow();
-            if st.on_writable_ref.is_null()
-                || st
-                    .conn_meta
-                    .get(conn_id)
-                    .is_none_or(|s| s.pending_count == 0)
-            {
+            if st.on_writable_ref.is_null() {
                 return;
             }
             st.pending
-                .iter()
-                .filter(|(_, p)| p.conn_id == conn_id && p.streaming())
+                .iter_connection(st.conn_meta.pending_head(conn_id))
+                .filter(|(_, p)| p.streaming())
                 .map(|(id, _)| id)
                 .collect()
         };
+        req_ids.sort_unstable();
         notify_each(&self.shared, req_ids, |st| st.on_writable_ref);
     }
 
     fn on_disconnect(&mut self, conn_id: u32) {
         let (aborted_ids, ws_close) = {
             let mut st = self.shared.borrow_mut();
-            let ids: Vec<u32> = if st
-                .conn_meta
-                .get(conn_id)
-                .is_none_or(|s| s.pending_count == 0)
-            {
-                Vec::new()
-            } else {
-                st.pending
-                    .iter()
-                    .filter(|(_, p)| p.conn_id == conn_id)
-                    .map(|(id, _)| id)
-                    .collect()
-            };
-            for &id in &ids {
-                st.remove_pending(id);
-            }
+            let ids = st.disconnect_pending(conn_id);
             let ws_close = st.conn_meta.clear_conn(conn_id).and_then(|ws| {
                 if ws.close_emitted {
                     None

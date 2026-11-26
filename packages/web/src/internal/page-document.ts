@@ -260,7 +260,9 @@ export function createDocumentRenderer<Env = unknown>(
 
     if (options.nonce === undefined) return renderWithNonce(undefined)
     const nonce = resolveNonce(req, env)
-    return nonce instanceof Promise ? nonce.then(renderWithNonce) : renderWithNonce(nonce)
+    return typeof nonce === "string" || nonce === undefined
+      ? renderWithNonce(nonce)
+      : Promise.resolve(nonce).then(renderWithNonce)
   }
 
   const pprRequestFor = (
