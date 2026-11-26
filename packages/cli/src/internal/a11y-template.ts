@@ -11,7 +11,7 @@ const OTHER: AttributeValue = { kind: "other" }
 
 /** An attribute that may bring in any other: a Svelte `{...props}` or a Vue `v-bind="props"` / `:[name]`. */
 const spreads = (name: string): boolean =>
-  name.startsWith("{...") ||
+  /^\{\s*\.\.\./.test(name) ||
   name === "v-bind" ||
   name.startsWith(":[") ||
   name.startsWith("v-bind:[")
@@ -22,7 +22,7 @@ const spreads = (name: string): boolean =>
 function attributeName(
   name: string,
 ): { readonly name: string; readonly bound: boolean } | undefined {
-  const shorthand = /^\{([\w-]+)\}$/.exec(name)
+  const shorthand = /^\{\s*([\w-]+)\s*\}$/.exec(name)
   if (shorthand?.[1] !== undefined) return { name: shorthand[1].toLowerCase(), bound: true }
   const bound = name.startsWith(":") || name.startsWith("v-bind:")
   const plain = name.startsWith(":")

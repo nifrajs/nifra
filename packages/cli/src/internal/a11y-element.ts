@@ -60,8 +60,26 @@ export interface ElementAttribute {
   readonly value: AttributeValue
 }
 
-/** Elements whose own state stands in for the `aria-*` attribute their role would otherwise need. */
-const NATIVE_STATE = /^(?:input|select|textarea|option|meter|progress|h[1-6])$/
+/** Whether the element's own state stands in for an `aria-*` attribute its role would otherwise need. */
+function suppliesState(
+  tag: string,
+  attributes: ReadonlyMap<string, ElementAttribute>,
+  name: string,
+): boolean {
+  if (tag === "input") {
+    const type = attributes.get("type")?.value
+    // An input whose type is an expression may be any of them.
+    if (type?.kind === "other") return true
+    const kind = type?.text.trim().toLowerCase()
+    if (name === "aria-checked") return kind === "checkbox" || kind === "radio"
+    if (name === "aria-valuenow") return kind === "range"
+    return name === "aria-expanded" && attributes.has("list")
+  }
+  if (name === "aria-expanded") return tag === "select"
+  if (name === "aria-selected") return tag === "option"
+  if (name === "aria-valuenow") return tag === "meter" || tag === "progress"
+  return name === "aria-level" && /^h[1-6]$/.test(tag)
+}
 
 const closest = (word: string, among: Iterable<string>): string | undefined => {
   let best: string | undefined
@@ -148,17 +166,11 @@ export function judgeElement(
 
   if (role !== undefined && written !== undefined) {
     const required = ROLE_REQUIRED.get(role) ?? []
-    if (!NATIVE_STATE.test(tag)) {
-      for (const name of required)
-        if (!attributes.has(name))
-          report("missing-required", written.at, `role="${role}" requires ${name}.`)
-      if (role === "separator" && attributes.has("tabindex") && !attributes.has("aria-valuenow"))
-        report(
-          "missing-required",
-          written.at,
-          'a focusable role="separator" requires aria-valuenow.',
-        )
-    }
+    for (const name of required)
+      if (!attributes.has(name) && !suppliesState(tag, attributes, name))
+        report("missing-required", written.at, `role="${role}" requires ${name}.`)
+    if (role === "separator" && attributes.has("tabindex") && !attributes.has("aria-valuenow"))
+      report("missing-required", written.at, 'a focusable role="separator" requires aria-valuenow.')
     const implicit = IMPLICIT_ROLES.get(tag)
     if (implicit === role && roleText?.trim() === role)
       report(

@@ -29,7 +29,37 @@ function commentAt(text: string, start: number): HtmlComment {
     : { start, bodyEnd: close.index, end: close.index + close[0].length }
 }
 
-/** The end of a markup tag or `{expression}`, ignoring `>`/braces inside quoted values. */
+const SPACE = /\s/
+// A `/` after one of these starts a regex literal rather than dividing.
+const BEFORE_REGEX =
+  /(?:^|[({[,;:=!&|?+\-*%^~>]|\b(?:await|case|const|delete|do|else|html|if|in|instanceof|new|of|return|throw|typeof|void|yield))\s*$/
+// A Svelte `{/if}` closes a block; it opens no regex.
+const BLOCK_CLOSE = /\/(?:if|each|await|key|snippet)\s*\}/y
+// One line, with `/` allowed unescaped inside a character class.
+const REGEX_LITERAL = /\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/[\\\n])+\//y
+
+/** The offset just past the JavaScript comment or regex literal opening at the `/` at `at`, or past
+ * that `/` alone when it divides: a brace or quote inside either literal is not code. */
+function pastSlash(text: string, at: number, from: number): number {
+  if (text[at + 1] === "/") {
+    const newline = text.indexOf("\n", at)
+    return newline === -1 ? text.length : newline
+  }
+  if (text[at + 1] === "*") {
+    const close = text.indexOf("*/", at + 2)
+    return close === -1 ? text.length : close + 2
+  }
+  let code = at
+  while (code > 0 && SPACE.test(text[code - 1] ?? "")) code--
+  BLOCK_CLOSE.lastIndex = at
+  if (text[code - 1] === "{" && BLOCK_CLOSE.test(text)) return at + 1
+  if (!BEFORE_REGEX.test(text.slice(Math.max(from, code - 16), code))) return at + 1
+  REGEX_LITERAL.lastIndex = at
+  return REGEX_LITERAL.test(text) ? REGEX_LITERAL.lastIndex : at + 1
+}
+
+/** The end of a markup tag or `{expression}`, ignoring `>`/braces inside quoted values and inside an
+ * expression's comments and regex literals. */
 function markupEnd(text: string, start: number, expression = false): number {
   let quote: string | undefined
   let braces = expression ? 1 : 0
@@ -38,7 +68,8 @@ function markupEnd(text: string, start: number, expression = false): number {
     if (quote !== undefined) {
       if (braces > 0 && char === "\\") at++
       else if (char === quote) quote = undefined
-    } else if (char === '"' || char === "'" || (braces > 0 && char === "`")) quote = char
+    } else if (braces > 0 && char === "/") at = pastSlash(text, at, start) - 1
+    else if (char === '"' || char === "'" || (braces > 0 && char === "`")) quote = char
     else if (char === "{") braces++
     else if (char === "}") {
       braces--
@@ -151,7 +182,6 @@ export interface TemplateAttribute {
   readonly bare: string | undefined
 }
 
-const SPACE = /\s/
 const NAME_END = /[\s=>/]/
 const STRING_IN_BRACES = /^(?:"([^"]*)"|'([^']*)'|`([^`]*)`)$/
 

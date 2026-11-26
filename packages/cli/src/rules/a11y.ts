@@ -9,8 +9,8 @@ import type { CheckRule, RuleContext } from "./index.ts"
 import { scanSources } from "./source-scan.ts"
 
 const TEST_DIR = /(?:^|\/)(?:tests?|__tests__)\//
-const SCRIPT_MAY_MATCH = /\brole=|\baria-|\btabindex=|<(?:img|html|area|input)\b/i
-const TEMPLATE_MAY_MATCH = /\brole\b|\baria-|tabindex|<(?:img|area|input)\b/i
+const SCRIPT_MAY_MATCH = /\brole\s*=|\baria-|\btabindex\s*=|<(?:img|html|area|input)\b/i
+const TEMPLATE_MAY_MATCH = /\brole\b|\baria-|tabindex|<(?:img|html|area|input)\b/i
 
 function report(
   code: A11yCode,

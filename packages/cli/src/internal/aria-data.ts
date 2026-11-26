@@ -165,9 +165,8 @@ export const ARIA_ATTRIBUTES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * What a role requires on the element, by the spec. `aria-controls` is left out of `combobox` and
- * `scrollbar`: it names an id that need not exist while the popup is closed, so its absence is not
- * provably a bug.
+ * What a role requires on the element, by the spec. `aria-controls` is left out of `combobox`: it
+ * names a popup that need not exist while closed, so its absence is not provably a bug.
  */
 export const ROLE_REQUIRED: ReadonlyMap<string, readonly string[]> = new Map([
   ["checkbox", ["aria-checked"]],
@@ -178,7 +177,7 @@ export const ROLE_REQUIRED: ReadonlyMap<string, readonly string[]> = new Map([
   ["meter", ["aria-valuenow"]],
   ["option", ["aria-selected"]],
   ["radio", ["aria-checked"]],
-  ["scrollbar", ["aria-valuenow"]],
+  ["scrollbar", ["aria-controls", "aria-valuenow"]],
   ["slider", ["aria-valuenow"]],
   ["switch", ["aria-checked"]],
 ])

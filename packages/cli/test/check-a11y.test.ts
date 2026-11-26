@@ -257,10 +257,10 @@ test("an element with a spread, a component and a namespaced or custom tag are n
 
 test("a native element that carries its own state needs no ARIA attribute for the role", async () => {
   page([
-    '<input role="checkbox" />',
-    '<input role="switch" />',
-    '<input role="slider" />',
-    '<input role="combobox" />',
+    '<input type="checkbox" role="checkbox" />',
+    '<input type="checkbox" role="switch" />',
+    '<input type="range" role="slider" />',
+    '<input list="options" role="combobox" />',
     '<select role="combobox" />',
     '<option role="option" />',
     '<h2 role="heading" />',
