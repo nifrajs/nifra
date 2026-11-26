@@ -51,10 +51,15 @@ pub trait UvCallbacks {
     fn unanswered_only(&self, conn_id: u32) -> bool {
         self.has_pending_requests(conn_id)
     }
-    /// When the oldest request still being received on `conn_id` began, for protocols that keep
-    /// unfinished requests as parsed state rather than as unread bytes (HTTP/2 streams).
-    fn oldest_incomplete_request(&self, _conn_id: u32) -> Option<std::time::Instant> {
-        None
+    /// Cancel expired protocol requests and append any reply bytes. Returns true if the
+    /// connection must close. Runs while the transport is borrowed, so this cannot call JS.
+    fn expire_requests(
+        &mut self,
+        _conn_id: u32,
+        _now: std::time::Instant,
+        _out: &mut Vec<u8>,
+    ) -> bool {
+        false
     }
     /// Whether `conn_id` is still speaking HTTP/1.1, so unread bytes are a request.
     fn reads_http1(&self, _conn_id: u32) -> bool {
@@ -1224,12 +1229,15 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         return;
     }
     let now = st.clock.now();
-    let sweep = collect_timeouts(
-        st.conns.iter().map(|(id, c)| (id, &c.core)),
-        now,
-        st.cfg,
-        st.callbacks.as_deref(),
-    );
+    let sweep = {
+        let st = &mut *st;
+        collect_timeouts(
+            st.conns.iter().map(|(id, c)| (id, &c.core)),
+            now,
+            st.cfg,
+            st.callbacks.as_deref_mut(),
+        )
+    };
     let mut close = sweep.close;
     for id in sweep.ping {
         if let Some(conn) = st.conns.get_mut(id) {
@@ -1247,6 +1255,10 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         if let Some(conn) = st.conns.remove(id) {
             close_client_handle(uv, conn.poll_handle);
         }
+    }
+    drop(st);
+    for (id, reply) in sweep.replies {
+        UvPollState::write_to_conn(&state_rc, id, &reply, false, false);
     }
 }
 

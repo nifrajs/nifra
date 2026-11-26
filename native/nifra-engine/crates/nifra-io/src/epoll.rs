@@ -1331,7 +1331,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     let ctx = &*(data as *const TimerCtx);
     let state_rc = Rc::clone(&ctx.state);
 
-    let sweep_due = {
+    let replies = {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
@@ -1340,13 +1340,9 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         if !st.clock.on_timer_tick(uv_ms) {
             return;
         }
+        let st = &mut *st;
         let now = st.clock.now();
-        let sweep = collect_timeouts(
-            st.conns.iter().map(|(id, c)| (id, c)),
-            now,
-            st.cfg,
-            st.callbacks.as_deref(),
-        );
+        let sweep = collect_timeouts(st.conns.iter(), now, st.cfg, st.callbacks.as_deref_mut());
         let epfd = st.epfd;
         let mut close = sweep.close;
         for id in sweep.ping {
@@ -1363,10 +1359,16 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         for id in close {
             st.remove_and_close_conn(id);
         }
-        !st.pending_disconnects.is_empty()
+        sweep.replies
     };
 
-    if sweep_due {
+    let server = EpollServer {
+        state: Rc::clone(&state_rc),
+    };
+    for (id, reply) in replies {
+        server.write_to_conn(id, &reply, false, false);
+    }
+    if !state_rc.borrow().pending_disconnects.is_empty() {
         drain_turn_and_side_effects(&state_rc);
     }
 }

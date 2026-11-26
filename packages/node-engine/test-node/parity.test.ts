@@ -1,62 +1,18 @@
 /**
- * The same app behind `@nifrajs/node` and `@nifrajs/node-uws`: for every request below the two must
- * answer alike - status, body, and every header the app set. Headers a transport adds on its own
+ * The same app behind node-engine, node:http and, when enabled, Deno.serve.
+ * Compare status, body, and every header the app set. Headers a transport adds on its own
  * (`date`, `server`-style banners, connection framing) are not part of the app's answer and are left out.
  */
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { once } from "node:events"
+import { createInterface } from "node:readline"
 import { after, before, test } from "node:test"
-import { server, status } from "@nifrajs/core"
+import { fileURLToPath } from "node:url"
 import { serve as serveNode } from "@nifrajs/node"
 import { serve as serveEngine } from "../src/index.ts"
+import { makeApp } from "./fixtures/parity-app.ts"
 import { AUTH, parseHead, raw } from "./support.ts"
-
-function makeApp() {
-  return server()
-    .use({
-      name: "headers",
-      beforeHandle: (c) => {
-        c.set.headers["x-content-type-options"] = "nosniff"
-        c.set.headers.vary = "Origin"
-      },
-    })
-    .derive((c) => {
-      const auth = c.header("authorization")
-      if (auth === null || !auth.startsWith("Bearer ")) {
-        return status(401, { ok: false, error: "unauthorized" })
-      }
-      return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
-    })
-    .get("/orders", (c) => ({ user: c.userId, theme: c.theme, q: c.query }))
-    .get("/echo-url", (c) => ({ url: c.req.url, ip: typeof c.clientIp }))
-    .get("/cookies", (c) => {
-      c.set.cookie("a", "1", { path: "/" })
-      c.set.cookie("b", "2", { path: "/" })
-      return { ok: true }
-    })
-    .get("/text", () => new Response("plain text", { headers: { "content-type": "text/plain" } }))
-    .get("/bytes", () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 201 }))
-    .get("/empty", () => new Response(null, { status: 204 }))
-    .get("/redirect", () => new Response(null, { status: 302, headers: { location: "/orders" } }))
-    .get("/slow", async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20))
-      return { slow: true }
-    })
-    .get("/async-header", async (c) => {
-      await new Promise((resolve) => setTimeout(resolve, 5))
-      return { header: c.header("x-late") }
-    })
-    .post("/json", async (c) => {
-      const body: { n: number } = await c.req.json()
-      return { doubled: body.n * 2 }
-    })
-    .post("/raw", async (c) => {
-      const bytes = new Uint8Array(await c.req.arrayBuffer())
-      return { length: bytes.byteLength, sum: bytes.reduce((a, b) => a + b, 0) }
-    })
-    .get("/throws", () => {
-      throw new Error("boom")
-    })
-}
 
 let nodePort = 0
 let enginePort = 0
@@ -185,3 +141,43 @@ for (const [name, request] of cases) {
     assert.deepEqual(b, a)
   })
 }
+
+test("parity with the live Deno adapter", {
+  skip: process.env.NIFRA_ENGINE_TEST_DENO !== "1",
+  timeout: 30_000,
+}, async (t) => {
+  const fixture = fileURLToPath(new URL("./fixtures/deno-server.ts", import.meta.url))
+  const worker = spawn(
+    "deno",
+    ["run", "--cached-only", "--allow-env=NODE_ENV", "--allow-net=127.0.0.1", fixture],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  )
+  const exited = once(worker, "close")
+  // A startup error is reported by the race below, and cleanup can still await the child.
+  exited.catch(() => {})
+  const lines = createInterface({ input: worker.stdout })
+  try {
+    const port = await Promise.race([
+      once(lines, "line", { signal: t.signal }).then(([line]) => {
+        assert.match(line, /^\d+$/)
+        return Number(line)
+      }),
+      exited.then(([code]) => {
+        throw new Error(`Deno parity fixture exited before listening (code ${code})`)
+      }),
+    ])
+    for (const [name, request] of cases) {
+      await t.test(name, async () => {
+        const [deno, engine] = await Promise.all([
+          observe(port, request),
+          observe(enginePort, request),
+        ])
+        assert.deepEqual(engine, deno)
+      })
+    }
+  } finally {
+    lines.close()
+    worker.kill()
+    await exited
+  }
+})

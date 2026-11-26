@@ -689,13 +689,14 @@ pub(crate) struct Sweep {
     pub close: Vec<u32>,
     /// Quiet WebSockets to probe before judging them.
     pub ping: Vec<u32>,
+    pub replies: Vec<(u32, Vec<u8>)>,
 }
 
 pub(crate) fn collect_timeouts<'a>(
     conns: impl Iterator<Item = (u32, &'a ConnCore)>,
     now: Instant,
     cfg: SocketConfig,
-    callbacks: Option<&dyn UvCallbacks>,
+    mut callbacks: Option<&mut (dyn UvCallbacks + 'static)>,
 ) -> Sweep {
     let limit = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
     let idle_limit = limit(cfg.idle_timeout_ms);
@@ -712,25 +713,34 @@ pub(crate) fn collect_timeouts<'a>(
     let mut idle = Vec::new();
     let mut overdue = Vec::new();
     let mut abandoned = Vec::new();
+    let mut replies = Vec::new();
+    let mut reply = Vec::new();
 
     for (id, c) in conns {
         if past(c.last_activity, idle_limit) {
             idle.push(id);
         }
-        let unfinished = request_limit.and_then(|_| callbacks?.oldest_incomplete_request(id));
-        let started = [c.partial_since, unfinished].into_iter().flatten().min();
-        if started.is_some_and(|at| past(at, request_limit)) {
+        if c.partial_since.is_some_and(|at| past(at, request_limit))
+            || (request_limit.is_some()
+                && callbacks
+                    .as_deref_mut()
+                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply)))
+        {
             overdue.push(id);
+            reply.clear();
+        } else if !reply.is_empty() {
+            replies.push((id, std::mem::take(&mut reply)));
         }
         if c.tls.as_ref().is_some_and(|tls| tls.is_handshaking()) && past(c.accepted_at, head_limit)
         {
             overdue.push(id);
         }
         let head_pending = c.partial_since.is_some_and(|at| past(at, head_limit))
-            && callbacks.is_some_and(|cb| cb.reads_http1(id))
+            && callbacks.as_deref().is_some_and(|cb| cb.reads_http1(id))
             && !c.read_buf.windows(4).any(|w| w == b"\r\n\r\n");
         if head_pending
             || callbacks
+                .as_deref()
                 .and_then(|cb| cb.oldest_incomplete_head(id))
                 .is_some_and(|at| past(at, head_limit))
         {
@@ -739,7 +749,9 @@ pub(crate) fn collect_timeouts<'a>(
         // A peer that takes none of what it asked for is gone, whatever is still owed to it.
         let stalled = [
             c.stalled_since,
-            callbacks.and_then(|cb| cb.output_stalled_since(id)),
+            callbacks
+                .as_deref()
+                .and_then(|cb| cb.output_stalled_since(id)),
         ];
         if stalled.into_iter().flatten().any(|at| past(at, idle_limit)) {
             overdue.push(id);
@@ -752,13 +764,14 @@ pub(crate) fn collect_timeouts<'a>(
         }
     }
 
-    let close = match callbacks {
+    let close = match callbacks.as_deref() {
         Some(cb) if !idle.is_empty() => cb.without_pending(idle),
         _ => idle,
     };
     let mut sweep = Sweep {
         close,
         ping: Vec::new(),
+        replies,
     };
     if let Some(cb) = callbacks {
         sweep.close.retain(|&id| {
@@ -780,6 +793,9 @@ pub(crate) fn collect_timeouts<'a>(
     sweep
         .ping
         .retain(|id| sweep.close.binary_search(id).is_err());
+    sweep
+        .replies
+        .retain(|(id, _)| sweep.close.binary_search(id).is_err());
     sweep
 }
 

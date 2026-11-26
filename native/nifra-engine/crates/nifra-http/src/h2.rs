@@ -68,6 +68,7 @@ pub struct H2Config {
     pub oversize_window: usize,
     pub max_rst_streams: u32,
     pub max_empty_frames: u32,
+    pub request_timeout: Option<Duration>,
 }
 
 impl Default for H2Config {
@@ -79,6 +80,7 @@ impl Default for H2Config {
             oversize_window: 1_048_576,
             max_rst_streams: 100,
             max_empty_frames: 64,
+            request_timeout: None,
         }
     }
 }
@@ -256,13 +258,33 @@ impl H2Conn {
                 .count()
     }
 
-    /// When the oldest request still being received (its body unfinished) began, for the request deadline.
-    pub fn oldest_incomplete_request(&self) -> Option<Instant> {
-        self.active_streams
-            .values()
-            .map(|st| st.started)
-            .chain(self.continuation.iter().map(|cont| cont.started))
-            .min()
+    /// Cancel expired uploads. An incomplete HPACK block requires closing the connection.
+    pub fn expire_requests(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+        let Some(timeout) = self.cfg.request_timeout else {
+            return false;
+        };
+        if self
+            .continuation
+            .as_ref()
+            .is_some_and(|cont| now.saturating_duration_since(cont.started) >= timeout)
+        {
+            return true;
+        }
+        self.active_streams.retain(|&id, stream| {
+            if now.saturating_duration_since(stream.started) < timeout {
+                return true;
+            }
+            self.early_credit.remove(&id);
+            write_rst_stream(id, ERR_CANCEL, out);
+            false
+        });
+        false
+    }
+
+    fn request_expired(&self, started: Instant) -> bool {
+        self.cfg
+            .request_timeout
+            .is_some_and(|timeout| (self.clock)().saturating_duration_since(started) >= timeout)
     }
 
     /// When the oldest header block still arriving began: a partly received `HEADERS` frame, or one
@@ -679,7 +701,10 @@ impl H2Conn {
                             stream_id,
                             end_stream,
                             block: frag.to_vec(),
-                            started,
+                            started: self
+                                .active_streams
+                                .get(&stream_id)
+                                .map_or(started, |stream| stream.started),
                         });
                     } else if let Err(conn_err) = self.handle_header_block(
                         stream_id, end_stream, frag, started, write_buf, &mut res,
@@ -699,7 +724,7 @@ impl H2Conn {
                         res.close_after_write = true;
                         return res;
                     };
-                    if cont.stream_id != stream_id {
+                    if cont.stream_id != stream_id || self.request_expired(cont.started) {
                         self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
                         res.consumed = pos;
                         res.close_after_write = true;
@@ -767,7 +792,7 @@ impl H2Conn {
                     if !payload.is_empty() {
                         let inc = payload.len() as u32;
                         write_frame(FRAME_WINDOW_UPDATE, 0, 0, &inc.to_be_bytes(), write_buf);
-                        if !end_stream {
+                        if !end_stream && self.active_streams.contains_key(&stream_id) {
                             write_frame(
                                 FRAME_WINDOW_UPDATE,
                                 0,
@@ -831,7 +856,7 @@ impl H2Conn {
                             if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
                                 self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             } else {
-                                self.finalize_request(stream_id, st, &mut res);
+                                self.finalize_request(stream_id, st, write_buf, &mut res);
                             }
                         }
                     }
@@ -866,6 +891,13 @@ impl H2Conn {
             .hpack
             .decode(block)
             .map_err(|_| ERR_COMPRESSION_ERROR)?;
+        // Trailers already in flight when a stream was reset can still change the HPACK table.
+        if stream_id <= self.last_stream_id
+            && !self.active_streams.contains_key(&stream_id)
+            && !self.open_response_streams.contains_key(&stream_id)
+        {
+            return Ok(());
+        }
         // The table is now in step with the peer's whatever the bytes were. A target or name that is
         // not UTF-8 fails this request, not the connection and its streams.
         let decoded: Option<Vec<(String, String)>> = decoded
@@ -905,7 +937,7 @@ impl H2Conn {
                     if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
-                        self.finalize_request(stream_id, st, res);
+                        self.finalize_request(stream_id, st, write_buf, res);
                     }
                 }
                 return Ok(());
@@ -1085,7 +1117,7 @@ impl H2Conn {
             if st.declared_cl.is_some_and(|cl| cl != 0) {
                 self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             } else {
-                self.finalize_request(stream_id, st, res);
+                self.finalize_request(stream_id, st, write_buf, res);
             }
         } else {
             self.active_streams.insert(stream_id, st);
@@ -1093,7 +1125,17 @@ impl H2Conn {
         Ok(())
     }
 
-    fn finalize_request(&mut self, stream_id: u32, st: InStream, res: &mut H2FeedResult) {
+    fn finalize_request(
+        &mut self,
+        stream_id: u32,
+        st: InStream,
+        out: &mut Vec<u8>,
+        res: &mut H2FeedResult,
+    ) {
+        if self.request_expired(st.started) {
+            self.reset_stream(stream_id, ERR_CANCEL, out);
+            return;
+        }
         self.open_response_streams.insert(stream_id, ());
         let over_max_body = st.body.len() > self.cfg.max_body_size
             || st.declared_cl.is_some_and(|cl| cl > self.cfg.max_body_size);
@@ -2988,12 +3030,18 @@ mod tests {
 
     #[test]
     fn h2_an_unfinished_header_block_counts_toward_the_request_deadline() {
-        let mut conn = ready_conn(H2Config::default());
+        let timeout = Duration::from_secs(1);
+        let mut conn = ready_conn(H2Config {
+            request_timeout: Some(timeout),
+            ..H2Config::default()
+        });
         let mut wire = Vec::new();
         let mut out = Vec::new();
         write_frame(FRAME_HEADERS, 0, 1, &get_headers(&[]), &mut wire);
         conn.feed(&wire, &mut out);
-        assert!(conn.oldest_incomplete_request().is_some());
+        let started = conn.continuation.as_ref().unwrap().started;
+        assert!(!conn.expire_requests(started, &mut out));
+        assert!(conn.expire_requests(started + timeout, &mut out));
     }
 
     #[test]
@@ -3022,10 +3070,14 @@ mod tests {
     }
 
     #[test]
-    fn h2_the_oldest_unfinished_request_is_reported_until_it_ends() {
-        let mut conn = ready_conn(H2Config::default());
-        assert!(conn.oldest_incomplete_request().is_none());
+    fn h2_a_request_finishing_after_its_deadline_is_not_dispatched_between_sweeps() {
+        let timeout = Duration::from_secs(1);
+        let mut conn = ready_conn(H2Config {
+            request_timeout: Some(timeout),
+            ..H2Config::default()
+        });
         let mut wire = Vec::new();
+        let mut out = Vec::new();
         write_frame(
             FRAME_HEADERS,
             FLAG_END_HEADERS,
@@ -3033,11 +3085,51 @@ mod tests {
             &get_headers(&[]),
             &mut wire,
         );
-        conn.feed(&wire, &mut Vec::new());
-        assert!(conn.oldest_incomplete_request().is_some());
-        let mut end = Vec::new();
-        write_frame(FRAME_DATA, FLAG_END_STREAM, 1, &[], &mut end);
-        conn.feed(&end, &mut Vec::new());
-        assert!(conn.oldest_incomplete_request().is_none());
+        conn.feed(&wire, &mut out);
+        conn.active_streams.get_mut(&1).unwrap().started -= timeout;
+        wire.clear();
+        out.clear();
+        write_frame(FRAME_DATA, FLAG_END_STREAM, 1, &[], &mut wire);
+        let result = conn.feed(&wire, &mut out);
+        assert!(result.events.is_empty());
+        assert!(!result.close_after_write);
+        assert_eq!(
+            frames(&out),
+            vec![(FRAME_RST_STREAM, 0, 1, ERR_CANCEL.to_be_bytes().to_vec())]
+        );
+    }
+
+    #[test]
+    fn h2_late_trailers_on_a_timed_out_stream_do_not_close_the_connection() {
+        let timeout = Duration::from_secs(1);
+        let mut conn = ready_conn(H2Config {
+            request_timeout: Some(timeout),
+            ..H2Config::default()
+        });
+        let mut wire = Vec::new();
+        let mut out = Vec::new();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS,
+            1,
+            &get_headers(&[]),
+            &mut wire,
+        );
+        conn.feed(&wire, &mut out);
+        let started = conn.active_streams.get(&1).unwrap().started;
+        assert!(!conn.expire_requests(started + timeout, &mut out));
+        wire.clear();
+        out.clear();
+        write_frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            1,
+            &[],
+            &mut wire,
+        );
+        let result = conn.feed(&wire, &mut out);
+        assert!(result.events.is_empty());
+        assert!(!result.close_after_write);
+        assert!(out.is_empty());
     }
 }
