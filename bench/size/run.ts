@@ -415,7 +415,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-idempotency": 46.3,
   // The router's dynamic-match admission window: effect-ledger 44,167 B, mcp 42,403 B, sse 43,010 B and
   // typebox-t 71,587 B (Bun 1.4.4), each the next 0.1 KiB step. Interleaved hot dynamic paths: 10 -> 33 M finds/s.
-  "nifra-effect-ledger": 43.5,
+  // Linear-time JWT redaction pattern: effect-ledger 44,546 B (Bun 1.4.4), 2 B over the 43.5 cap.
+  "nifra-effect-ledger": 43.6,
   // The same `listen()` disposal crossed the mcp and sse caps (41,496 B and 42,097 B on the first cut,
   // Bun 1.4.4). Each takes the next 0.1 KiB step.
   "nifra-mcp": 41.8,

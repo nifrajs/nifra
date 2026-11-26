@@ -339,3 +339,18 @@ test("value scanning replaces oversized fields and messages and honors an empty 
   expect(JSON.parse(lines[0] ?? "")).toMatchObject({ message: "[REDACTED]", detail: "[REDACTED]" })
   expect(JSON.parse(lines[1] ?? "")).toMatchObject({ message: oversized, detail: oversized })
 })
+
+test("a JWT is redacted wherever its header holds another token start", () => {
+  const redacted = (detail: string) =>
+    redactLogFields({ detail }, { valuePatterns: commonSecretPatterns }).detail
+  for (const [written, kept] of [
+    ["eyJa.b.c", ""],
+    ["id=eyJa.b.c", "id="],
+    ["x-eyJa.b.c", "x-"],
+    ["eyJab-eyJ.b.c", ""],
+    // The match starts at the last viable `eyJ`; the payload and signature always go with it.
+    ["eyJ-eyJa.b.c", "eyJ-"],
+    ["eyJa-eyJb.c.d", "eyJa-"],
+  ] as const)
+    expect([written, redacted(written)]).toEqual([written, `${kept}[REDACTED]`])
+})

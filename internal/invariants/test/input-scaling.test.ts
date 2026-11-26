@@ -11,7 +11,7 @@
  * readers themselves, so it also catches loops and patterns the analysis cannot see.
  */
 import { describe, expect, test } from "bun:test"
-import { type StandardSchemaV1, server } from "@nifrajs/core"
+import { jsonLogger, type StandardSchemaV1, server } from "@nifrajs/core"
 import { parseCookies } from "@nifrajs/core/cookies"
 import { multipartBody } from "@nifrajs/core/multipart"
 import { parseByteRange } from "@nifrajs/core/range"
@@ -112,6 +112,7 @@ const localized = server()
 const guarded = server()
   .use(basicAuth({ username: "u", password: "p" }))
   .get("/", () => 1)
+const logger = jsonLogger(() => undefined)
 const schema = buildSchema("type Query { hello: String, me: Query }")
 
 const get = (url: string, headers?: Record<string, string>) =>
@@ -124,6 +125,22 @@ const BOUNDARY = "b0undary"
 const multipart = (body: string) => post("/mp", `multipart/form-data; boundary=${BOUNDARY}`, body)
 
 const READERS: readonly Reader[] = [
+  {
+    name: "default log redaction",
+    // A longer string is replaced whole, unscanned.
+    cap: 8192,
+    shapes: {
+      "JWT starts with no dot": fill("eyJ-"),
+      "JWT headers with no signature": fill("eyJa."),
+      "bearer words": fill("Bearer "),
+      "an address that never ends": fill("a.", "", "@"),
+      "dotted domain labels": fill("a.", "a@", "1"),
+      "Stripe key starts": fill("sk_live_-"),
+      "GitHub token starts": fill("ghp_-"),
+      "AWS key starts": fill("AKIA-"),
+    },
+    read: (message) => logger.info(message),
+  },
   {
     name: "route path",
     shapes: {

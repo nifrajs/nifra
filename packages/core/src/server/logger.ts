@@ -58,7 +58,9 @@ export interface RedactOptions {
  */
 export const commonSecretPatterns: ReadonlyArray<RegExp> = [
   /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, // Authorization: Bearer <token>
-  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, // JWT (header.payload.signature)
+  // JWT (header.payload.signature). The header stops before a `-eyJ` where a later attempt can start,
+  // so a run of them is not rescanned from every one.
+  /\beyJ(?:\w|-(?!eyJ[\w-]))+\.[\w-]+\.[\w-]+/g,
   // Email. The lookbehind starts a match only where a run of address characters starts; `\b` would
   // restart inside `a.a.a.` at every `a` and rescan the run each time, quadratic in its length.
   /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
