@@ -130,7 +130,7 @@ import {
   PLATFORM_PEER,
   PLATFORM_REQUEST,
   RequestContext,
-  readBodyFramed,
+  readBodyFramedNow,
 } from "./request-context.ts"
 import { recordRequestReplacement } from "./request-lineage.ts"
 import { carryToCopy } from "./request-local.ts"
@@ -5029,7 +5029,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
                 signal,
                 budget,
                 platform,
-                false,
+                nativeContext,
                 finalize,
                 wrapResponse,
               )
@@ -5467,8 +5467,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
-    ): Promise<T> =>
-      readBodyFramed(
+    ): MaybePromise<T> =>
+      readBodyFramedNow(
         source,
         maxBodyBytes,
         this.protoPoisoning,
@@ -6131,8 +6131,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ctx.body = validation.value
       return runAfterBody(source, ctx)
     }
-    const readBody = (source: RequestSource, ctx: RawContext): Promise<Response> =>
-      readBodyFramed(
+    const readBody = (source: RequestSource, ctx: RawContext): MaybePromise<Response> =>
+      readBodyFramedNow(
         source,
         maxBodyBytes,
         this.protoPoisoning,
@@ -6525,8 +6525,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
-    ): Promise<T> =>
-      readBodyFramed(
+    ): MaybePromise<T> =>
+      readBodyFramedNow(
         source,
         maxBodyBytes,
         this.protoPoisoning,
@@ -6717,7 +6717,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
-  ): Promise<Response | ResponseResult | undefined> {
+  ): MaybePromise<Response | ResponseResult | undefined> {
     const bodySchema = entry.program.bodySchema
     if (bodySchema === undefined) return Promise.resolve(plainError(415, "unsupported_media_type"))
     return this.readAndValidateBody(source, entry, ctx, bodySchema, entry.program.bodyLimit)
@@ -6773,8 +6773,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet, ctx?: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
-  ): Promise<T> {
-    return readBodyFramed(
+  ): MaybePromise<T> {
+    return readBodyFramedNow(
       source,
       entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
       this.protoPoisoning,
@@ -7336,7 +7336,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     ctx: RawContext,
     bodySchema: StandardSchemaV1 = entry.schema?.body as StandardSchemaV1,
     bodyLimit: number | undefined = entry.bodyLimit,
-  ): Promise<Response | ResponseResult | undefined> {
+  ): MaybePromise<Response | ResponseResult | undefined> {
     // Keep the generic lifecycle body stage on the same framed parser/continuation as the body-only
     // lane. This avoids an async wrapper that first awaits parsing and then starts validation in a
     // second continuation, while retaining the exact bounded-read, content-type, and poisoning
@@ -7352,7 +7352,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         return Promise.reject(error)
       }
     }
-    return readBodyFramed(
+    return readBodyFramedNow(
       req,
       bodyLimit ?? UNLIMITED_BODY_BYTES,
       this.protoPoisoning,
