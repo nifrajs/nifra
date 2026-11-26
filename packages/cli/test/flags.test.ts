@@ -91,6 +91,7 @@ test("manual dispatch commands reject unknown options and format --json errors",
     for (const [args, expectedError] of [
       [["sdk", "--lang", "python", "--lang", "--bogus"], "[nifra] --lang needs a value"],
       [["docs-mcp", "--port", "8787", "--port", "--bogus"], "[nifra] --port needs a value"],
+      [["docs-mcp", "--port", "abc"], "[nifra] invalid --port: abc"],
       [["verify", "--release=true", "--bogus"], "[nifra] unknown option: --bogus"],
     ] as const) {
       const missingOperand = Bun.spawnSync([process.execPath, "--no-env-file", cli, ...args], {

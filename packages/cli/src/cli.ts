@@ -1538,7 +1538,7 @@ async function main(): Promise<void> {
         manualFlagValue(argv, "--port") ?? manualFlagValue(argv, "-p") ?? Bun.env.PORT ?? "8787"
       const port = /^\d+$/.test(portArg) ? Number(portArg) : Number.NaN
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
-        throw new Error(`[nifra] invalid --port: ${port}`)
+        throw new Error(`[nifra] invalid --port: ${portArg}`)
       }
       const server = Bun.serve({ port, fetch: handleMcpHttp })
       console.log(`nifra docs MCP (HTTP) → ${server.url}`)
