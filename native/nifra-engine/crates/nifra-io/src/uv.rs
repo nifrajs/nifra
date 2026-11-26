@@ -22,7 +22,7 @@ use crate::sys::{
     free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_nosigpipe_if_supported,
     set_tcp_nodelay, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
     UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
-    SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE,
+    SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE, WS_PING_FRAME,
 };
 use crate::{ConnAction, SocketConfig};
 
@@ -59,6 +59,22 @@ pub trait UvCallbacks {
         _now: std::time::Instant,
         _out: &mut Vec<u8>,
     ) -> bool {
+        false
+    }
+    /// Whether `conn_id` is still speaking HTTP/1.1, so unread bytes are a request.
+    fn reads_http1(&self, _conn_id: u32) -> bool {
+        true
+    }
+    /// When a header block that is still arriving began, for protocols that parse it as it comes.
+    fn oldest_incomplete_head(&self, _conn_id: u32) -> Option<std::time::Instant> {
+        None
+    }
+    /// Since when response bytes held above the socket (HTTP/2 flow control) have not moved.
+    fn output_stalled_since(&self, _conn_id: u32) -> Option<std::time::Instant> {
+        None
+    }
+    /// An idle connection about to be closed. `true` sends it a Ping and gives it another window.
+    fn probe_idle(&self, _conn_id: u32) -> bool {
         false
     }
     fn on_writable(&mut self, conn_id: u32);
@@ -483,8 +499,8 @@ impl UvPollState {
         let action = write_bytes_or_queue(&mut conn.core, bytes);
         let armed = conn.core.writable_armed;
         let poll_handle = conn.poll_handle;
-        let read_ended = conn.core.read_ended;
-        apply_uv_flush_action(uv, poll_handle, read_ended, action);
+        let no_read = conn.core.read_ended || conn.core.read_paused;
+        apply_uv_flush_action(uv, poll_handle, no_read, action);
         if action == FlushAction::Close {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
@@ -571,15 +587,15 @@ impl UvPollState {
 }
 
 #[inline]
-fn apply_uv_flush_action(uv: &UvApi, handle: *mut c_void, read_ended: bool, action: FlushAction) {
+fn apply_uv_flush_action(uv: &UvApi, handle: *mut c_void, no_read: bool, action: FlushAction) {
     unsafe {
         match action {
             FlushAction::ArmWritable => {
-                let events = UV_WRITABLE | if read_ended { 0 } else { UV_READABLE };
+                let events = UV_WRITABLE | if no_read { 0 } else { UV_READABLE };
                 (uv.poll_start)(handle, events, on_client_event);
             }
             FlushAction::DisarmWritable => {
-                if read_ended {
+                if no_read {
                     (uv.poll_stop)(handle);
                 } else {
                     (uv.poll_start)(handle, UV_READABLE, on_client_event);
@@ -905,7 +921,12 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                         if fa == FlushAction::DisarmWritable {
                             fire_writable = true;
                         }
-                        apply_uv_flush_action(uv, conn.poll_handle, conn.core.read_ended, fa);
+                        apply_uv_flush_action(
+                            uv,
+                            conn.poll_handle,
+                            conn.core.read_ended || conn.core.read_paused,
+                            fa,
+                        );
                     }
                 }
             }
@@ -1017,13 +1038,18 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
             }
             if !remove && !cleartext_write.is_empty() {
                 let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write);
-                if fa == FlushAction::Close {
+                if fa == FlushAction::Close || conn.core.queued_bytes() > MAX_WRITE_BUF_BYTES {
                     remove = true;
                 } else if fa != FlushAction::None {
                     if fa == FlushAction::DisarmWritable {
                         fire_writable = true;
                     }
-                    apply_uv_flush_action(uv, conn.poll_handle, conn.core.read_ended, fa);
+                    apply_uv_flush_action(
+                        uv,
+                        conn.poll_handle,
+                        conn.core.read_ended || conn.core.read_paused,
+                        fa,
+                    );
                 }
             }
             if !remove
@@ -1038,7 +1064,12 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                     if fa == FlushAction::DisarmWritable {
                         fire_writable = true;
                     }
-                    apply_uv_flush_action(uv, conn.poll_handle, conn.core.read_ended, fa);
+                    apply_uv_flush_action(
+                        uv,
+                        conn.poll_handle,
+                        conn.core.read_ended || conn.core.read_paused,
+                        fa,
+                    );
                 }
             }
         }
@@ -1114,7 +1145,12 @@ unsafe extern "C" fn on_check_event(handle: *mut c_void) {
                             close_client_handle(uv, conn.poll_handle);
                         }
                     } else if fa != FlushAction::None {
-                        apply_uv_flush_action(uv, conn.poll_handle, conn.core.read_ended, fa);
+                        apply_uv_flush_action(
+                            uv,
+                            conn.poll_handle,
+                            conn.core.read_ended || conn.core.read_paused,
+                            fa,
+                        );
                     }
                 }
             }
@@ -1192,16 +1228,30 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     if !st.clock.on_timer_tick(uv_ms) {
         return;
     }
+    let now = st.clock.now();
     let sweep = {
         let st = &mut *st;
         collect_timeouts(
             st.conns.iter().map(|(id, c)| (id, &c.core)),
-            st.clock.now(),
+            now,
             st.cfg,
             st.callbacks.as_deref_mut(),
         )
     };
-    for id in sweep.closed {
+    let mut close = sweep.close;
+    for id in sweep.ping {
+        if let Some(conn) = st.conns.get_mut(id) {
+            conn.core.last_activity = now;
+            let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME);
+            if fa == FlushAction::Close {
+                close.push(id);
+            } else {
+                let no_read = conn.core.read_ended || conn.core.read_paused;
+                apply_uv_flush_action(uv, conn.poll_handle, no_read, fa);
+            }
+        }
+    }
+    for id in close {
         if let Some(conn) = st.conns.remove(id) {
             close_client_handle(uv, conn.poll_handle);
         }

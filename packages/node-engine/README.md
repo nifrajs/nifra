@@ -48,7 +48,7 @@ Resolves to an `EngineServer` once the port is bound. Invalid options throw befo
 | `wsMaxMessageSize` | Largest WebSocket message before the engine fails the connection with 1009. Default: see below. |
 | `allowedHosts`, `canonicalHost`, `normalizeTarget` | The same Host and target policy `@nifrajs/node` applies. |
 | `validateHost` | `true` checks every request's `Host`. Off by default, as on the Bun and Deno server; setting `allowedHosts` or `canonicalHost` turns it on. See below. |
-| `engine` | Engine limits: `idleTimeoutMs` (default 120 s), `requestTimeoutMs` (default 300 s, from a request's first byte), `maxConnections`, `reusePort` (off; `serveCluster` sets it). |
+| `engine` | Engine limits: `idleTimeoutMs` (default 30 s; also drops a peer that takes none of its response, and a quiet WebSocket is pinged first), `headersTimeoutMs` (default 60 s, request head and TLS handshake), `requestTimeoutMs` (default 300 s, from a request's first byte), `maxHeaderBytes` (default 16 KiB), `maxConnections`, `reusePort` (off; `serveCluster` sets it). |
 | `gracefulSignals` | `true`, or stop options: SIGTERM and SIGINT call `stop()`. Off by default. |
 
 `static` and `fastResponse` are not supported and throw a `TypeError`. Serve files from a route, or put a static host in front.
@@ -74,7 +74,7 @@ The engine hands headers over one call at a time or all at once, and the second 
 
 ### Host validation
 
-Off by default, as `validateHost` is on the Bun and Deno server. With it off, `Host` is read only when `req.url` is asked for, as sent. It never takes part in routing here, which comes from the request target the engine parsed, and the engine's own parser already refuses the grossest forms (a space, `@`, `/`, a non-numeric port). What gets through is a `Host` the URL parser refuses, such as an out-of-range port: the request is answered, and reading `req.url` then throws.
+Off by default, as `validateHost` is on the Bun and Deno server. With it off, `Host` is read only when `req.url` is asked for, as sent. It never takes part in routing here, which comes from the request target the engine parsed. A `Host` holding a path, query, fragment or userinfo delimiter is refused with a 400, and an empty one reads as `localhost`, so `req.url` never names a path the router did not see. What gets through is a `Host` the URL parser refuses, such as an out-of-range port: the request is answered, and reading `req.url` then throws.
 
 `validateHost: true` reads and checks every request's `Host` before the app runs: a malformed one is refused with a 400, and `req.url` is built from the normalized authority. It costs one engine call per request. Turn it on for a server that clients reach directly. Behind a proxy or CDN that already checks `Host`, leave it off. `allowedHosts` and `canonicalHost` need every `Host` read, so setting either turns it on, and `validateHost: false` beside them is refused. Fixed replies answered inside the engine are skipped while it is on, since they would not be checked.
 

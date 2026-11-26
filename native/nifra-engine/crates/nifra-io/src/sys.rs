@@ -34,6 +34,11 @@ pub(crate) const IDLE_SWEEP_INTERVAL_MS: u64 = 1_000;
 pub(crate) const HALF_CLOSE_GRACE: Duration = Duration::from_millis(250);
 pub(crate) const HANDLE_ALIGN: usize = 16;
 const SENT_PREFIX_COMPACT_BYTES: usize = 64 * 1024;
+/// Unsent output past this stops the connection being read, so a peer that does not read cannot
+/// make the server answer (and hold) more.
+const WRITE_PAUSE_BYTES: usize = 1024 * 1024;
+/// An unmasked, empty RFC 6455 Ping.
+pub(crate) const WS_PING_FRAME: [u8; 2] = [0x89, 0x00];
 
 /// Number of low bits reserved for the slot index inside a `conn_id`.
 ///
@@ -497,6 +502,11 @@ pub(crate) struct ConnCore {
     pub partial_since: Option<Instant>,
     /// When the connection is closed whether or not the peer has answered (a Close handshake's wait).
     pub close_deadline: Option<Instant>,
+    pub accepted_at: Instant,
+    /// Output is backed up far enough that the socket is not being read.
+    pub read_paused: bool,
+    /// When unsent output last stopped making progress.
+    pub stalled_since: Option<Instant>,
 }
 
 impl ConnCore {
@@ -527,6 +537,9 @@ impl ConnCore {
             last_activity: now,
             partial_since: None,
             close_deadline: None,
+            accepted_at: now,
+            read_paused: false,
+            stalled_since: None,
         }
     }
 
@@ -558,8 +571,25 @@ pub(crate) enum FlushAction {
 }
 
 /// Drain `core.write_buf` starting at `write_pos` directly to `core.fd`.
+/// The socket took less than was queued: arm writability, and stop or resume reading by how much
+/// is left. `ArmWritable` also tells the caller to re-apply the poll mask.
+fn backed_up(core: &mut ConnCore, progressed: bool) -> FlushAction {
+    if progressed || core.stalled_since.is_none() {
+        core.stalled_since = Some(Instant::now());
+    }
+    let pause = core.queued_bytes() > WRITE_PAUSE_BYTES;
+    let changed = pause != core.read_paused;
+    core.read_paused = pause;
+    if !core.writable_armed || changed {
+        core.writable_armed = true;
+        return FlushAction::ArmWritable;
+    }
+    FlushAction::None
+}
+
 #[inline]
 pub(crate) fn flush_write_buf_core(core: &mut ConnCore) -> FlushAction {
+    let mut progressed = false;
     while core.write_pos < core.write_buf.len() {
         let slice = &core.write_buf[core.write_pos..];
         match send_nonblock(core.fd, slice) {
@@ -569,20 +599,17 @@ pub(crate) fn flush_write_buf_core(core: &mut ConnCore) -> FlushAction {
             }
             SendOutcome::Partial(n) => {
                 core.write_pos += n;
+                progressed = true;
             }
-            SendOutcome::WouldBlock => {
-                if !core.writable_armed {
-                    core.writable_armed = true;
-                    return FlushAction::ArmWritable;
-                }
-                return FlushAction::None;
-            }
+            SendOutcome::WouldBlock => return backed_up(core, progressed),
             SendOutcome::Closed => return FlushAction::Close,
         }
     }
 
     core.write_buf.clear();
     core.write_pos = 0;
+    core.stalled_since = None;
+    core.read_paused = false;
     if core.write_buf.capacity() > SHRINK_THRESHOLD {
         core.write_buf.shrink_to(READ_SCRATCH_SIZE);
     }
@@ -630,22 +657,16 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
                 return FlushAction::None;
             }
             SendOutcome::Partial(n) => {
+                core.write_buf.clear();
                 core.write_buf.extend_from_slice(&bytes[n..]);
                 core.write_pos = 0;
-                if !core.writable_armed {
-                    core.writable_armed = true;
-                    return FlushAction::ArmWritable;
-                }
-                return FlushAction::None;
+                return backed_up(core, true);
             }
             SendOutcome::WouldBlock => {
+                core.write_buf.clear();
                 core.write_buf.extend_from_slice(bytes);
                 core.write_pos = 0;
-                if !core.writable_armed {
-                    core.writable_armed = true;
-                    return FlushAction::ArmWritable;
-                }
-                return FlushAction::None;
+                return backed_up(core, false);
             }
             SendOutcome::Closed => return FlushAction::Close,
         }
@@ -662,8 +683,12 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
     flush_write_buf_core(core)
 }
 
-pub(crate) struct TimeoutSweep {
-    pub closed: Vec<u32>,
+/// What one idle sweep decided.
+#[derive(Default)]
+pub(crate) struct Sweep {
+    pub close: Vec<u32>,
+    /// Quiet WebSockets to probe before judging them.
+    pub ping: Vec<u32>,
     pub replies: Vec<(u32, Vec<u8>)>,
 }
 
@@ -672,60 +697,108 @@ pub(crate) fn collect_timeouts<'a>(
     now: Instant,
     cfg: SocketConfig,
     mut callbacks: Option<&mut (dyn UvCallbacks + 'static)>,
-) -> TimeoutSweep {
-    let idle_limit = (cfg.idle_timeout_ms > 0).then(|| Duration::from_millis(cfg.idle_timeout_ms));
-    let request_limit =
-        (cfg.request_timeout_ms > 0).then(|| Duration::from_millis(cfg.request_timeout_ms));
+) -> Sweep {
+    let limit = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
+    let idle_limit = limit(cfg.idle_timeout_ms);
+    let request_limit = limit(cfg.request_timeout_ms);
+    // A request head (and a TLS handshake before it) gets the shorter of the two budgets.
+    let head_limit = limit(cfg.headers_timeout_ms)
+        .into_iter()
+        .chain(request_limit)
+        .min();
+    let past = |since: Instant, limit: Option<Duration>| {
+        limit.is_some_and(|l| now.saturating_duration_since(since) >= l)
+    };
 
     let mut idle = Vec::new();
-    let mut partial = Vec::new();
+    let mut overdue = Vec::new();
     let mut abandoned = Vec::new();
     let mut replies = Vec::new();
     let mut reply = Vec::new();
 
     for (id, c) in conns {
-        if idle_limit.is_some_and(|l| now.duration_since(c.last_activity) >= l) {
+        if past(c.last_activity, idle_limit) {
             idle.push(id);
         }
-        if let Some(limit) = request_limit {
-            if c.partial_since
-                .is_some_and(|started| now.saturating_duration_since(started) >= limit)
-                || callbacks
-                    .as_mut()
-                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply))
-            {
-                partial.push(id);
-                reply.clear();
-            } else if !reply.is_empty() {
-                replies.push((id, std::mem::take(&mut reply)));
-            }
+        if c.partial_since.is_some_and(|at| past(at, request_limit))
+            || (request_limit.is_some()
+                && callbacks
+                    .as_deref_mut()
+                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply)))
+        {
+            overdue.push(id);
+            reply.clear();
+        } else if !reply.is_empty() {
+            replies.push((id, std::mem::take(&mut reply)));
+        }
+        if c.tls.as_ref().is_some_and(|tls| tls.is_handshaking()) && past(c.accepted_at, head_limit)
+        {
+            overdue.push(id);
+        }
+        let head_pending = c.partial_since.is_some_and(|at| past(at, head_limit))
+            && callbacks.as_deref().is_some_and(|cb| cb.reads_http1(id))
+            && !c.read_buf.windows(4).any(|w| w == b"\r\n\r\n");
+        if head_pending
+            || callbacks
+                .as_deref()
+                .and_then(|cb| cb.oldest_incomplete_head(id))
+                .is_some_and(|at| past(at, head_limit))
+        {
+            overdue.push(id);
+        }
+        // A peer that takes none of what it asked for is gone, whatever is still owed to it.
+        let stalled = [
+            c.stalled_since,
+            callbacks
+                .as_deref()
+                .and_then(|cb| cb.output_stalled_since(id)),
+        ];
+        if stalled.into_iter().flatten().any(|at| past(at, idle_limit)) {
+            overdue.push(id);
         }
         if c.close_deadline.is_some_and(|d| now >= d) {
-            partial.push(id);
+            overdue.push(id);
         }
-        if c.eof_at
-            .is_some_and(|at| now.duration_since(at) >= HALF_CLOSE_GRACE)
-        {
+        if past_grace(c.eof_at, now) {
             abandoned.push(id);
         }
     }
 
-    let mut ids = match callbacks.as_deref() {
+    let close = match callbacks.as_deref() {
         Some(cb) if !idle.is_empty() => cb.without_pending(idle),
         _ => idle,
     };
-    ids.extend(partial);
+    let mut sweep = Sweep {
+        close,
+        ping: Vec::new(),
+        replies,
+    };
     if let Some(cb) = callbacks {
+        sweep.close.retain(|&id| {
+            let probe = cb.probe_idle(id);
+            if probe {
+                sweep.ping.push(id);
+            }
+            !probe
+        });
         for id in abandoned {
             if cb.unanswered_only(id) {
-                ids.push(id);
+                overdue.push(id);
             }
         }
     }
-    ids.sort_unstable();
-    ids.dedup();
-    TimeoutSweep {
-        closed: ids,
-        replies,
-    }
+    sweep.close.extend(overdue);
+    sweep.close.sort_unstable();
+    sweep.close.dedup();
+    sweep
+        .ping
+        .retain(|id| sweep.close.binary_search(id).is_err());
+    sweep
+        .replies
+        .retain(|(id, _)| sweep.close.binary_search(id).is_err());
+    sweep
+}
+
+fn past_grace(eof_at: Option<Instant>, now: Instant) -> bool {
+    eof_at.is_some_and(|at| now.duration_since(at) >= HALF_CLOSE_GRACE)
 }

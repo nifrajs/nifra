@@ -24,7 +24,7 @@ use crate::sys::{
     free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_tcp_nodelay,
     socket_incoming_cpu, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
     UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
-    SHRINK_THRESHOLD, UV_READABLE,
+    SHRINK_THRESHOLD, UV_READABLE, WS_PING_FRAME,
 };
 use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
@@ -91,7 +91,7 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, acti
         match action {
             FlushAction::ArmWritable => {
                 let events = (libc::EPOLLOUT as u32)
-                    | if core.read_ended {
+                    | if core.read_ended || core.read_paused {
                         0
                     } else {
                         libc::EPOLLIN as u32
@@ -949,7 +949,7 @@ unsafe fn handle_client_readable(
         }
         if !remove && !cleartext_write.is_empty() {
             let fa = write_bytes_or_queue(conn, &cleartext_write);
-            if fa == FlushAction::Close {
+            if fa == FlushAction::Close || conn.queued_bytes() > MAX_WRITE_BUF_BYTES {
                 remove = true;
             } else if fa != FlushAction::None {
                 apply_epoll_flush_action(epfd, conn, conn_id, fa);
@@ -1341,13 +1341,22 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
             return;
         }
         let st = &mut *st;
-        let sweep = collect_timeouts(
-            st.conns.iter(),
-            st.clock.now(),
-            st.cfg,
-            st.callbacks.as_deref_mut(),
-        );
-        for id in sweep.closed {
+        let now = st.clock.now();
+        let sweep = collect_timeouts(st.conns.iter(), now, st.cfg, st.callbacks.as_deref_mut());
+        let epfd = st.epfd;
+        let mut close = sweep.close;
+        for id in sweep.ping {
+            if let Some(conn) = st.conns.get_mut(id) {
+                conn.last_activity = now;
+                let fa = write_bytes_or_queue(conn, &WS_PING_FRAME);
+                if fa == FlushAction::Close {
+                    close.push(id);
+                } else {
+                    apply_epoll_flush_action(epfd, conn, id, fa);
+                }
+            }
+        }
+        for id in close {
             st.remove_and_close_conn(id);
         }
         sweep.replies

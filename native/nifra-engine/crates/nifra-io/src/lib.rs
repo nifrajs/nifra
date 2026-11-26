@@ -57,6 +57,8 @@ pub struct SocketConfig {
     /// Most time a request may take to arrive, from its first byte; unlike the idle timeout it does not
     /// reset when more bytes come, so a client dripping one byte at a time is bounded (`0` disables).
     pub request_timeout_ms: u64,
+    /// Budget for a request head, and for a TLS handshake. 0 leaves them to `request_timeout_ms`.
+    pub headers_timeout_ms: u64,
 }
 
 impl Default for SocketConfig {
@@ -70,6 +72,7 @@ impl Default for SocketConfig {
             idle_timeout_ms: 30_000,
             max_connections: 0,
             request_timeout_ms: 300_000,
+            headers_timeout_ms: 60_000,
         }
     }
 }

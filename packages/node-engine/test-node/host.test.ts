@@ -36,6 +36,19 @@ test("by default Host is left to the engine and to req.url", async () => {
   }
 })
 
+test("by default a Host cannot give req.url a path the router did not see", async () => {
+  const running = await serve(app(), { port: 0, hostname: "127.0.0.1" })
+  try {
+    for (const host of ["evil.test/public?", "evil.test/public#", "a\\b", "user@evil.test"]) {
+      assert.equal((await get(running.port, host, "/v")).status, 400, host)
+    }
+    const empty = await get(running.port, "", "/v")
+    assert.equal(JSON.parse(empty.body).url, "http://localhost/v")
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("validateHost: true refuses a malformed Host and normalizes a valid one", async () => {
   const running = await serve(app(), { port: 0, hostname: "127.0.0.1", validateHost: true })
   try {

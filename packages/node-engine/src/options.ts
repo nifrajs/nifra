@@ -41,8 +41,16 @@ export interface Http2Options {
 
 /** Engine limits and timeouts beyond the first-class options. */
 export interface EngineTuning {
-  /** Close a connection after this many ms with no bytes received while it owes no response. 0 disables. */
+  /**
+   * Close a connection after this many ms with no bytes moving while it owes no response, or with a
+   * response the peer takes none of. A quiet WebSocket is pinged first and closed only if the next
+   * window passes unanswered. 0 disables. Default 30 s.
+   */
   readonly idleTimeoutMs?: number
+  /** Budget in ms for a request head, and for a TLS handshake. 0 disables. Default 60 s. */
+  readonly headersTimeoutMs?: number
+  /** Largest request head, 431 beyond it. Default 16 KiB, as `node:http`. */
+  readonly maxHeaderBytes?: number
   /** Budget in ms for one complete request, from its first byte; does not reset on activity. 0 disables. */
   readonly requestTimeoutMs?: number
   /** Most simultaneous connections; accepts beyond it are dropped. */
@@ -95,11 +103,11 @@ export interface ServeOptions extends HostPolicyOptions {
    * Check every request's `Host` before the app runs: a malformed one is refused with a 400, and
    * `req.url` is built from its normalized form. Off by default, as `validateHost` is on the Bun and
    * Deno server: the check costs an engine call per request, and a server behind a proxy that already
-   * checks `Host` gains nothing from it. The engine's own parser refuses the grossest forms (a space,
-   * `@`, `/`, a non-numeric port), and `Host` never takes part in routing here, so what is left is a
-   * `Host` the URL parser refuses (an out-of-range port, say), which makes `req.url` throw when read.
-   * Turn it on for a server that clients reach directly. `allowedHosts` and `canonicalHost` need every
-   * `Host` read, so setting either turns it on.
+   * checks `Host` gains nothing from it. Off, a `Host` holding a path, query, fragment or userinfo
+   * delimiter is still refused (and an empty one read as `localhost`), so `req.url` never names a
+   * path the router did not see; anything else the URL parser refuses (an out-of-range port, say)
+   * makes `req.url` throw when read. Turn it on for a server that clients reach directly.
+   * `allowedHosts` and `canonicalHost` need every `Host` read, so setting either turns it on.
    */
   readonly validateHost?: boolean
   /**
