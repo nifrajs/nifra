@@ -2657,7 +2657,12 @@ mod tests {
             conn.write_response(id, 200, &[], Some(&body), &mut out);
         }
         assert!(conn.queued_response_bytes() <= CONN_BACKLOG_LIMIT * 2);
+        // Streams 1 and 3 still owe bytes; 5, past the limit, was reset and holds none.
         assert_eq!(conn.active_response_streams(), 2);
+        assert!(!conn.out_streams.contains_key(&5));
+        let mut reset = Vec::new();
+        write_rst_stream(5, ERR_ENHANCE_YOUR_CALM, &mut reset);
+        assert!(out.ends_with(&reset));
     }
 
     #[test]
