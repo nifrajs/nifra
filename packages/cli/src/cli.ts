@@ -1885,7 +1885,14 @@ function reexecCliArgv(): readonly string[] | undefined {
   ) {
     return undefined
   }
-  const command = parsed[0]
+  // commandArgv puts env-file flags ahead of the command.
+  let at = 0
+  while (at < parsed.length) {
+    if (parsed[at] === "--env-file") at += 2
+    else if (String(parsed[at]).startsWith("--env-file=")) at++
+    else break
+  }
+  const command = parsed[at]
   if (typeof command !== "string") return undefined
   return isCliCommandToken(command) ? (parsed as string[]) : undefined
 }

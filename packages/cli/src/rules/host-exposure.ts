@@ -31,7 +31,13 @@ const LABEL: Readonly<Record<Runtime, string>> = {
 
 function propertyKey(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): string | undefined {
   if (ts.isShorthandPropertyAssignment(prop)) return prop.name.text
-  if (!ts.isPropertyAssignment(prop) && !ts.isMethodDeclaration(prop)) return undefined
+  if (
+    !ts.isPropertyAssignment(prop) &&
+    !ts.isMethodDeclaration(prop) &&
+    !ts.isGetAccessorDeclaration(prop) &&
+    !ts.isSetAccessorDeclaration(prop)
+  )
+    return undefined
   const name = prop.name
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text
   return undefined
@@ -39,10 +45,6 @@ function propertyKey(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): st
 
 type Bindings = ReadonlyMap<string, readonly TSApi.Expression[]>
 
-/**
- * What a spread can copy from, `null` standing for a branch that writes nothing, or `undefined` when
- * one of them cannot be read.
- */
 /** `node` without the wrappers that change only its type: parentheses, `as`, `satisfies`, `!`. */
 function unwrapped(ts: typeof TSApi, node: TSApi.Expression): TSApi.Expression {
   let inner = node
@@ -85,6 +87,10 @@ function namesMember(ts: typeof TSApi, node: TSApi.Identifier): boolean {
   )
 }
 
+/**
+ * What a spread can copy from, `null` standing for a branch that writes nothing, or `undefined` when
+ * one of them cannot be read.
+ */
 function spreadSources(
   ts: typeof TSApi,
   from: TSApi.Expression,
@@ -220,9 +226,19 @@ function constantBindings(ts: typeof TSApi, tree: TSApi.SourceFile): Bindings {
   return bindings
 }
 
+/** Whether no scope between `node` and the file can declare a name that shadows a module one. */
 function isModuleScope(ts: typeof TSApi, node: TSApi.Node): boolean {
   for (let parent: TSApi.Node | undefined = node.parent; parent; parent = parent.parent) {
-    if (ts.isBlock(parent) || ts.isFunctionLike(parent)) return false
+    if (
+      ts.isBlock(parent) ||
+      ts.isFunctionLike(parent) ||
+      ts.isForStatement(parent) ||
+      ts.isForInStatement(parent) ||
+      ts.isForOfStatement(parent) ||
+      ts.isCaseBlock(parent) ||
+      ts.isModuleBlock(parent)
+    )
+      return false
   }
   return true
 }

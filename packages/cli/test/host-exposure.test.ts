@@ -302,3 +302,31 @@ describe("NF-S010 a guard traced through types and unrelated names", () => {
       expect([use, (await one(`${guarded}${use}${listen}`)).length]).toEqual([use, 1])
   })
 })
+
+describe("NF-S010 writes and scopes the guard trace must not miss", () => {
+  const listen = "await app.listen(443, { tls })"
+
+  test("an accessor named validateHost proves nothing, and another accessor changes nothing", async () => {
+    for (const accessor of ["get validateHost() { return false }", "set validateHost(v) {}"])
+      for (const options of [`{ ${accessor} }`, `{ validateHost: true, ...{ ${accessor} } }`]) {
+        const found = await one(`${CORE}const app = server(${options})\n${listen}`)
+        // A spread copies a setter-only property as `undefined`, which is no guarantee either.
+        expect([options, found.length]).toEqual([options, 1])
+      }
+    const other = "{ validateHost: true, ...{ get logger() { return log } } }"
+    expect(await one(`${CORE}const app = server(${other})\n${listen}`)).toEqual([])
+  })
+
+  test("a scope that can redeclare the app does not inherit the module app's guard", async () => {
+    const guarded = `${CORE}const app = server({ validateHost: true })\n`
+    for (const scope of [
+      `for (const app of [server()]) ${listen}`,
+      `for (const app in apps) ${listen}`,
+      `for (let app = server(); ; ) ${listen}`,
+      `switch (kind) { case 1: const app = server(); ${listen} }`,
+      `namespace N { export const app = server(); ${listen} }`,
+    ])
+      expect([scope, (await one(`${guarded}${scope}`)).length]).toEqual([scope, 1])
+    expect(await one(`${guarded}if (ready) ${listen}`)).toEqual([])
+  })
+})

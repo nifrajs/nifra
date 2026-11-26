@@ -305,7 +305,11 @@ test("formatCliError falls back to the message for a plain Error, and String for
   expect(formatCliError("just a string")).toBe("just a string")
 })
 
-test("a configured Bun child recovers its command vector when argv is empty", async () => {
+test.each([
+  [["--version"]],
+  [["--env-file=bunfig.toml", "--version"]],
+  [["--env-file", "bunfig.toml", "--env-file=bunfig.toml", "--version"]],
+])("a configured Bun child recovers its command vector when argv is empty: %j", async (vector) => {
   const cli = resolve(import.meta.dir, "../src/cli.ts")
   const config = resolve(import.meta.dir, "../../../bunfig.toml")
   const proc = Bun.spawn([process.execPath, `--config=${config}`, cli], {
@@ -316,7 +320,7 @@ test("a configured Bun child recovers its command vector when argv is empty", as
       ...process.env,
       NIFRA_BUN_DEV_TOKEN: "test-launch-token",
       NIFRA_BUN_DEV_DEPTH: "1",
-      NIFRA_BUN_DEV_ARGS: JSON.stringify(["--version"]),
+      NIFRA_BUN_DEV_ARGS: JSON.stringify(vector),
     },
   })
   const [stdout, stderr, code] = await Promise.all([
