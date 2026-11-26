@@ -24498,7 +24498,7 @@
     "name": "readBodyFramed",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function readBodyFramed<T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: unknown) => MaybePromise<T>, bodySchema?: object, formOrigins?: FormOrigins): Promise<T>;",
+    "signature": "export declare function readBodyFramed<T>(...args: Parameters<typeof readBodyFramedNow<T>>): Promise<T>;",
     "doc": "/**\n * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded\n * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep\n * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and\n * not one of `formOrigins`, is refused with `403` before the body is read.\n */"
   },
   {
