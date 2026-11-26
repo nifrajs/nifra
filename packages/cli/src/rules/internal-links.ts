@@ -1,12 +1,17 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { Glob } from "bun"
 import { CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
-import { IGNORED, stripComments } from "../check-scan.ts"
+import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { codeUnitOrder } from "../internal/code-unit-order.ts"
-import { toPosix } from "../internal/posix-path.ts"
+import { distance } from "../internal/edit-distance.ts"
 import { ANCHOR_HOLE } from "../internal/source-facts.ts"
+import {
+  lineLookup,
+  readAttributes,
+  scanTemplate,
+  templateFiles,
+} from "../internal/template-markup.ts"
 import { buildRouteTable } from "../introspect.ts"
 import { commentBlockExpectation } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -27,11 +32,6 @@ import { scanSources } from "./source-scan.ts"
 
 const TEST_DIR = /(?:^|\/)(?:tests?|__tests__)\//
 const FILE_EXTENSION = /\.[A-Za-z0-9]{1,8}$/
-// One attribute of a tag, matched where the previous one ended (sticky), so a tag is read in one pass:
-// `href="/x"`, `href='/x'`, `href={"/x"}` or `` href={`/x`} `` (Svelte), and Vue's `:href="'/x'"`. Any
-// other `{...}` value is an expression and names no path.
-const ATTRIBUTE =
-  /\s+([^\s=>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)\s*\}|\{[^}]*\}))?/y
 const BOUND_LITERAL = /^\s*(?:'([^']*)'|"([^"]*)"|`([^`$]*)`)\s*$/
 
 interface Judged {
@@ -51,22 +51,6 @@ interface PageRoutes {
 }
 
 const cache = new WeakMap<RuleContext, Promise<PageRoutes | undefined>>()
-
-function distance(a: string, b: string): number {
-  let row = Array.from({ length: b.length + 1 }, (_, i) => i)
-  for (let i = 1; i <= a.length; i++) {
-    const next = [i]
-    for (let j = 1; j <= b.length; j++) {
-      next[j] = Math.min(
-        (row[j] ?? 0) + 1,
-        (next[j - 1] ?? 0) + 1,
-        (row[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
-      )
-    }
-    row = next
-  }
-  return row[b.length] ?? 0
-}
 
 /** Read only literal mount exports, never import/evaluate the app's config. An unreadable field
  * leaves the dead-link verdict open, just like an unreadable backend registration. */
@@ -259,47 +243,6 @@ function report(
   })
 }
 
-interface HtmlComment {
-  readonly start: number
-  /** Where the text after `<!--` stops: before the closing delimiter. */
-  readonly bodyEnd: number
-  readonly end: number
-}
-
-// A comment ends at `-->` or `--!>`.
-const COMMENT_END = /--!?>/g
-
-/** The comment opened at `start`, which HTML ends at `-->` or `--!>`; `<!-->` and `<!--->` are empty. */
-function commentAt(text: string, start: number): HtmlComment {
-  const body = start + 4
-  if (text.startsWith(">", body)) return { start, bodyEnd: body, end: body + 1 }
-  if (text.startsWith("->", body)) return { start, bodyEnd: body, end: body + 2 }
-  COMMENT_END.lastIndex = body
-  const close = COMMENT_END.exec(text)
-  return close === null
-    ? { start, bodyEnd: text.length, end: text.length }
-    : { start, bodyEnd: close.index, end: close.index + close[0].length }
-}
-
-/** The end of a markup tag or `{expression}`, ignoring `>`/braces inside quoted values. */
-function markupEnd(text: string, start: number, expression = false): number {
-  let quote: string | undefined
-  let braces = expression ? 1 : 0
-  for (let at = start; at < text.length; at++) {
-    const char = text[at]
-    if (quote !== undefined) {
-      if (braces > 0 && char === "\\") at++
-      else if (char === quote) quote = undefined
-    } else if (char === '"' || char === "'" || (braces > 0 && char === "`")) quote = char
-    else if (char === "{") braces++
-    else if (char === "}") {
-      braces--
-      if (expression && braces === 0) return at + 1
-    } else if (!expression && braces === 0 && char === ">") return at + 1
-  }
-  return text.length
-}
-
 /** Scan markup, not script strings, HTML comments or other tags' quoted attributes. The existing
  * componentScripts scanner only extracts scripts and cannot distinguish these template regions. */
 function templateHrefs(
@@ -309,95 +252,24 @@ function templateHrefs(
   readonly hrefs: Array<{ readonly at: number; readonly tagAt: number; readonly value: string }>
   readonly expectationLines: readonly string[]
 } {
+  const { tags, expectationLines } = scanTemplate(text, vue)
   const hrefs: Array<{ at: number; tagAt: number; value: string }> = []
-  const comments: HtmlComment[] = []
-  let templateDepth = 0
-  for (let at = 0; at < text.length; ) {
-    if (text.startsWith("<!--", at)) {
-      const comment = commentAt(text, at)
-      comments.push(comment)
-      at = comment.end
-      continue
-    }
-    if (text[at] === "{" && (!vue || text.startsWith("{{", at))) {
-      at = markupEnd(text, at + 1, true)
-      continue
-    }
-    if (text[at] !== "<") {
-      at++
-      continue
-    }
-    const tag = /^<(\/?)([\w-]+)(?=[\s/>])/.exec(text.slice(at))
-    if (tag === null) {
-      at++
-      continue
-    }
-    const tagAt = at
-    const end = markupEnd(text, at + tag[0].length)
-    const name = tag[2]?.toLowerCase()
-    const closing = tag[1] === "/"
-    at = end
-    if (!closing && (name === "script" || name === "style")) {
-      const close = name === "script" ? /<\/script\s*>/gi : /<\/style\s*>/gi
-      close.lastIndex = end
-      const match = close.exec(text)
-      at = match === null ? text.length : close.lastIndex
-      continue
-    }
-    if (name === "template") templateDepth += closing ? -1 : 1
-    if (closing || name !== "a" || (vue && templateDepth <= 0)) continue
-    ATTRIBUTE.lastIndex = tagAt + tag[0].length
-    for (let match = ATTRIBUTE.exec(text); match !== null; match = ATTRIBUTE.exec(text)) {
-      const [whole, attribute, doubled, single, braceDouble, braceSingle, braceTemplate] = match
-      if (attribute !== "href" && attribute !== ":href" && attribute !== "v-bind:href") continue
-      const raw = doubled ?? single
+  for (const tag of tags) {
+    if (tag.name !== "a" || !tag.inTemplate) continue
+    for (const attribute of readAttributes(text, tag)) {
+      const { name, quoted } = attribute
+      if (name !== "href" && name !== ":href" && name !== "v-bind:href") continue
       const value =
-        attribute === "href"
-          ? (raw ?? braceDouble ?? braceSingle ?? braceTemplate)
-          : raw
+        name === "href"
+          ? (quoted ?? attribute.braceString)
+          : quoted
               ?.match(BOUND_LITERAL)
               ?.slice(1)
               .find((part) => part !== undefined)
-      if (value !== undefined)
-        hrefs.push({
-          at: ATTRIBUTE.lastIndex - whole.length + whole.indexOf(attribute),
-          tagAt,
-          value,
-        })
+      if (value !== undefined) hrefs.push({ at: attribute.at, tagAt: tag.at, value })
     }
   }
-  // Adapt only real HTML comments to the shared directive parser. Non-comment code stays a block
-  // boundary; quoted marker text cannot suppress anything. Line counts are unchanged.
-  const code = (part: string): string => part.replace(/[^\s]/g, "x")
-  let expectations = ""
-  let previous = 0
-  for (const comment of comments) {
-    expectations += code(text.slice(previous, comment.start))
-    expectations += text
-      .slice(comment.start + 4, comment.bodyEnd)
-      .split("\n")
-      .map((line) => `// ${line}`)
-      .join("\n")
-    previous = comment.end
-  }
-  expectations += code(text.slice(previous))
-  return { hrefs, expectationLines: expectations.split("\n") }
-}
-
-/** The 1-based line of an offset in `text`: a search over the line starts, so a file with thousands of links is not re-split for each. */
-function lineLookup(text: string): (offset: number) => number {
-  const starts = [0]
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) starts.push(at + 1)
-  return (offset) => {
-    let low = 0
-    let high = starts.length - 1
-    while (low < high) {
-      const mid = (low + high + 1) >> 1
-      if ((starts[mid] ?? 0) <= offset) low = mid
-      else high = mid - 1
-    }
-    return low + 1
-  }
+  return { hrefs, expectationLines }
 }
 
 async function templateFindings(
@@ -408,13 +280,8 @@ async function templateFindings(
   severity: "warn" | "info",
 ): Promise<Diagnostic[]> {
   const findings: Diagnostic[] = []
-  const files: string[] = []
-  for await (const entry of new Glob("**/*.{vue,svelte}").scan({ cwd: ctx.root, dot: false })) {
-    // Bun yields `\` paths on Windows, which IGNORED and TEST_DIR (and the reported location) expect as `/`.
-    const file = toPosix(entry)
-    if (!IGNORED.test(file) && !TEST_DIR.test(file)) files.push(file)
-  }
-  for (const file of files.sort()) {
+  const files = await templateFiles(ctx.root)
+  for (const file of files) {
     // The source index holds only a component's script blocks; the links are in its template.
     const text = readFileSync(join(ctx.root, file), "utf8")
     if (!text.includes("href")) continue

@@ -1,4 +1,5 @@
 import type * as TSApi from "typescript"
+import { type A11yFinding, a11yFindings } from "./a11y-jsx.ts"
 import { importedNames } from "./named-imports.ts"
 import { scriptKindOf } from "./script-kind.ts"
 import type { TypeScriptApi } from "./typescript-import.ts"
@@ -166,6 +167,8 @@ export interface SourceFacts {
   routeHookCalls(source: TSApi.SourceFile): readonly RouteHookCall[]
   /** The casts of a value to `Href`, imported from `@nifrajs/web` or a `@nifrajs/web-<framework>` package. */
   hrefCasts(source: TSApi.SourceFile): readonly HrefCast[]
+  /** The accessibility findings in the JSX of `source`: roles, `aria-*` attributes, `alt`, `tabindex`, `<html lang>`. */
+  a11yFindings(source: TSApi.SourceFile): readonly A11yFinding[]
   /** Whether the function `source` exports as `name` returns a raw `Response` on some path. */
   exportReturnsResponse(source: TSApi.SourceFile, name: string): boolean
   /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
@@ -1175,6 +1178,7 @@ export function createSourceFacts(
     internalAnchors,
     routeHookCalls,
     hrefCasts,
+    a11yFindings: (source) => a11yFindings(ts, source),
     serverFunctionMounts,
     exportReturnsResponse,
     isDynamicImportAt,

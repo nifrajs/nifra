@@ -60,6 +60,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C059": "Route hook names another route than its page's",
   "NF-C060": "Value cast to Href",
   "NF-C061": "SSE stream with no heartbeat under Bun's idle timeout",
+  "NF-C062": "ARIA markup assistive technology cannot read",
+  "NF-C063": "Markup assistive technology reads worse than it could",
   "NF-D001": "Doctor check",
   "NF-D002": "Mixed nifra versions",
   "NF-D003": "Stale file: dependencies in bun.lock",
