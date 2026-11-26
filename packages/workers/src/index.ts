@@ -123,9 +123,9 @@ export function createWebSocketHub<Env = unknown>(
       }
       try {
         const outcome = app.resolveWebSocketUpgrade(request, platform)
-        if (outcome instanceof Promise) return outcome.then(finish)
-        const response = finish(outcome)
-        return response instanceof Promise ? response : Promise.resolve(response)
+        return "then" in outcome
+          ? Promise.resolve(outcome).then(finish)
+          : Promise.resolve(finish(outcome))
       } catch (err) {
         return Promise.reject(err)
       }
