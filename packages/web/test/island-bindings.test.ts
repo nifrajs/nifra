@@ -80,10 +80,60 @@ describe("bindScope - the closed attribute set", () => {
       "java\tscript:x",
       "data:text/html,x",
       "vbscript:x",
+      "//other.example/image",
+      "/\\other.example/image",
+      "/\t/other.example/image",
     ]) {
       link.set(unsafe)
       expect(el.getAttribute("href")).toBeNull()
     }
+  })
+
+  test("attr: a URL attribute is never bound on an element that loads code or rebases the page", () => {
+    const url = signal<unknown>("https://cdn.example/x.js")
+    for (const [tagName, attr] of [
+      ["SCRIPT", "src"],
+      ["iframe", "src"],
+      ["Object", "data"],
+      ["EMBED", "src"],
+      ["LINK", "href"],
+      ["BASE", "href"],
+    ] as const) {
+      const el = Object.assign(new FakeElement({ "data-bind-attr": `${attr}:url,title:url` }), {
+        tagName,
+      })
+      bindScope(new FakeRoot([el]), scopeOf({ url }))
+      expect(el.getAttribute(attr)).toBeNull()
+      // Only the URL attribute is refused: the element's other bindings still run.
+      expect(el.getAttribute("title")).toBe("https://cdn.example/x.js")
+    }
+    for (const tagName of ["A", "IMG", "FORM", "SOURCE"]) {
+      const el = Object.assign(new FakeElement({ "data-bind-attr": "href:url,src:url" }), {
+        tagName,
+      })
+      bindScope(new FakeRoot([el]), scopeOf({ url }))
+      expect(el.getAttribute("href")).toBe("https://cdn.example/x.js")
+    }
+  })
+
+  test("attr: no attribute of an SVG animation element is bound, so no link is animated to a script URL", () => {
+    const url = signal<unknown>("javascript:alert(1)")
+    for (const tagName of ["set", "animate", "animateMotion", "ANIMATETRANSFORM"]) {
+      const el = Object.assign(
+        new FakeElement({
+          "data-bind-attr": "to:url,from:url,by:url,values:url,attributeName:url,dur:url",
+        }),
+        { tagName },
+      )
+      bindScope(new FakeRoot([el]), scopeOf({ url }))
+      for (const refused of ["to", "from", "by", "values", "attributeName", "dur"])
+        expect(el.getAttribute(refused)).toBeNull()
+    }
+    const other = Object.assign(new FakeElement({ "data-bind-attr": "to:url,values:url" }), {
+      tagName: "div",
+    })
+    bindScope(new FakeRoot([other]), scopeOf({ url }))
+    expect(other.getAttribute("to")).toBe("javascript:alert(1)")
   })
 
   test("value: two-way - signal → input, input event → signal, no caret-jumping rewrite", () => {

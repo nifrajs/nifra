@@ -12,7 +12,8 @@
  *   data-bind-class="active:isOpen,b:sigB"  classList.toggle per pair
  *   data-bind-attr="aria-expanded:isOpen"   setAttribute / removeAttribute (false/null remove);
  *                                           never an `on*` handler or `srcdoc`, and a URL attribute
- *                                           takes only an http(s)/mailto/tel or relative URL
+ *                                           accepts explicit http(s)/mailto/tel and relative URLs;
+ *                                           active elements and SVG animation bindings are refused
  *   data-bind-value="query"                 two-way <input>/<select>/<textarea> (input and change)
  *   data-bind-on="click:inc,submit:save"    addEventListener per pair
  *
@@ -65,10 +66,20 @@ function pairs(spec: string): Array<[string, string]> {
 const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
 const URL_ATTRIBUTE =
   /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
-const SAFE_URL = /^(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
+// HTTP(S) URL parsers strip leading controls and read backslashes as slashes.
+const SAFE_URL =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: reject browser-normalized network paths
+  /^(?![\x00-\x1f]|[\\/][\t\r\n]*[\\/])(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
+// Elements whose URL attribute loads code or restyles and rebases the page: a bound value never
+// reaches them, whatever its scheme.
+const URL_BLOCKED_TAG = /^(?:script|iframe|object|embed|link|base)$/i
+// An SVG animation sets an attribute of its parent from its own attributes: a bound `to` or `values`
+// can animate a link's `href` to a script URL, which the link then follows. No attribute of one binds.
+const SMIL_TAG = /^(?:set|animate|animatemotion|animatetransform)$/i
 
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
+  readonly tagName?: string
   getAttribute(name: string): string | null
   setAttribute(name: string, value: string): void
   removeAttribute(name: string): void
@@ -140,13 +151,14 @@ export function bindScope(
 
   for (const [el, spec] of each("attr")) {
     for (const [attr, name] of pairs(spec)) {
-      if (CODE_ATTRIBUTE.test(attr)) {
+      const isUrl = URL_ATTRIBUTE.test(attr)
+      const tag = el.tagName ?? ""
+      if (CODE_ATTRIBUTE.test(attr) || (isUrl && URL_BLOCKED_TAG.test(tag)) || SMIL_TAG.test(tag)) {
         warnOnce("attribute", attr)
         continue
       }
       const s = named("signal", scope.signals, name)
       if (s) {
-        const isUrl = URL_ATTRIBUTE.test(attr)
         stops.push(
           watch(s, (v) => {
             if (v === false || v == null || (isUrl && !SAFE_URL.test(String(v).trim())))

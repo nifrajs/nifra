@@ -142,7 +142,7 @@ export const vitePlugins = [svelte()]`
 
 const PIPELINE_BANNER = `# doc-check: skip - fragment: terminal output, not source.
 $ nifra dev
-nifra dev (bun) → http://localhost:3000
+nifra dev (bun) → http://localhost:4321
   bundler: bun (default; --vite to switch)
 
 $ nifra build
@@ -448,11 +448,11 @@ export default function Dev() {
       </p>
       <p>
         <strong>
-          Server functions and <code>*.server</code> modules work under <code>--bun</code>
+          Server functions and backend-only modules under <code>--bun</code>
         </strong>{" "}
-        - and the plumbing is worth knowing. The client build strips them: a <code>*.fn</code> module
-        is replaced with an RPC stub and a <code>*.server</code> module is emptied, so their bodies
-        (DB handles, secrets, imports) never reach a browser. Bun's dev-server bundling accepts
+        - the client build replaces a <code>*.fn.ts</code> module with an RPC stub and rejects
+        browser imports that reach <code>backend/</code>, a route's <code>x.backend.ts</code>, or
+        a module marked with <code>@nifrajs/web/backend-only</code>. Bun's dev-server bundling accepts
         plugins only through <code>bunfig.toml</code> (<code>[serve.static] plugins</code>) - not
         programmatically, and a runtime <code>Bun.plugin</code> never reaches it (upstream ask:
         oven-sh/bun#36830). So <code>nifra dev --bun</code> generates a config under{" "}

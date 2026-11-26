@@ -1,4 +1,5 @@
-import { existsSync, realpathSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   type WorkflowEvent,
@@ -306,7 +307,8 @@ export class ExtensionHost {
     providers: Map<string, ExtensionProvider>,
     handlers: Map<string, ExtensionEventHandler[]>,
   ): Promise<CodingAgentExtension> {
-    const module = (await import(`${path}?revision=${Date.now()}-${Math.random()}`)) as {
+    const revision = createHash("sha256").update(readFileSync(path)).digest("hex")
+    const module = (await import(`${path}?revision=${revision}`)) as {
       default?: ExtensionFactory
       id?: string
       capabilities?: readonly string[]

@@ -9,7 +9,6 @@ import { loadRuleTypeScript } from "./typescript.ts"
 const EXPECTATION = ["NF-S010", "host-exposure"]
 /** The one option a Deno or Bun listener reads: core has no `allowedHosts` or `canonicalHost`, those are the Node adapters'. */
 const HOST_OPTION = "validateHost"
-const HOST_OPTION_HINT = /\bvalidateHost\b/
 const LISTENER_HINT = /\b(?:serve|listen)\b/
 const SCRIPT_FILE = /\.[cm]?[jt]sx?$/
 /** Options that mean the listener terminates TLS itself, so no proxy in front is handling Host. */
@@ -80,7 +79,7 @@ function spreadSources(
 
 /**
  * What an object literal leaves `validateHost` at, the last writer winning: `true` for a value that
- * is not the literal `false`, `undefined` when nothing writes it. A spread that cannot be read may
+ * is the literal `true`, `undefined` when nothing writes it. A spread that cannot be read may
  * write it, so it is no guarantee.
  */
 function hostSetting(
@@ -102,50 +101,13 @@ function hostSetting(
       )
       if (results.includes(false)) setting = false
       else if (results.every((result) => result === true)) setting = true
+    } else if (prop.name !== undefined && ts.isComputedPropertyName(prop.name)) {
+      setting = false
     } else if (propertyKey(ts, prop) === HOST_OPTION) {
-      setting = !(
-        ts.isPropertyAssignment(prop) && prop.initializer.kind === ts.SyntaxKind.FalseKeyword
-      )
+      setting = ts.isPropertyAssignment(prop) && prop.initializer.kind === ts.SyntaxKind.TrueKeyword
     }
   }
   return setting
-}
-
-/** The object literals that reach a server only by being spread into another. */
-function spreadLiterals(
-  ts: typeof TSApi,
-  tree: TSApi.SourceFile,
-  bindings: Bindings,
-): ReadonlySet<TSApi.Node> {
-  const found = new Set<TSApi.Node>()
-  const collect = (node: TSApi.Node): void => {
-    if (ts.isSpreadAssignment(node)) {
-      for (const source of spreadSources(ts, node.expression, bindings, new Set()) ?? []) {
-        if (source !== null) found.add(source)
-      }
-    }
-    ts.forEachChild(node, collect)
-  }
-  collect(tree)
-  return found
-}
-
-/**
- * Whether code in `tree` puts a Host check on a server. A comment or a string that names the option
- * configures nothing, and a spread literal is judged where it lands, where it can be overwritten.
- */
-function configuresHost(ts: typeof TSApi, tree: TSApi.SourceFile, bindings: Bindings): boolean {
-  const spread = spreadLiterals(ts, tree, bindings)
-  const visit = (node: TSApi.Node): boolean => {
-    if (
-      ts.isObjectLiteralExpression(node) &&
-      !spread.has(node) &&
-      hostSetting(ts, node, bindings) === true
-    )
-      return true
-    return ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) === true
-  }
-  return visit(tree)
 }
 
 /** The local names `@nifrajs/deno` exports `serve` under in this file. */
@@ -189,6 +151,72 @@ function bindingsIn(ts: typeof TSApi, tree: TSApi.SourceFile): Bindings {
   return bindings
 }
 
+function isServerFactory(ts: typeof TSApi, callee: TSApi.Expression, names: CoreNames): boolean {
+  return ts.isIdentifier(callee)
+    ? names.factories.has(callee.text)
+    : ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        names.namespaces.has(callee.expression.text) &&
+        callee.name.text === "server"
+}
+
+function constantBindings(ts: typeof TSApi, tree: TSApi.SourceFile): Bindings {
+  const bindings = new Map<string, TSApi.Expression[]>()
+  for (const statement of tree.statements) {
+    if (
+      !ts.isVariableStatement(statement) ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+    )
+      continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined)
+        bindings.set(declaration.name.text, [declaration.initializer])
+    }
+  }
+  return bindings
+}
+
+function hasHostGuard(
+  ts: typeof TSApi,
+  listener: TSApi.CallExpression,
+  app: TSApi.Expression,
+  names: CoreNames,
+  constants: Bindings,
+): boolean {
+  // A nested scope may shadow a module-level app, option, or factory.
+  for (let parent: TSApi.Node | undefined = listener.parent; parent; parent = parent.parent) {
+    if (ts.isBlock(parent) || ts.isFunctionLike(parent)) return false
+  }
+  const seen = new Set<TSApi.Expression>()
+  let receiver: TSApi.Expression | undefined = app
+  while (receiver !== undefined && !seen.has(receiver)) {
+    seen.add(receiver)
+    if (ts.isIdentifier(receiver)) receiver = constants.get(receiver.text)?.[0]
+    else if (ts.isParenthesizedExpression(receiver) || ts.isSatisfiesExpression(receiver))
+      receiver = receiver.expression
+    else if (ts.isCallExpression(receiver)) {
+      const callee = receiver.expression
+      if (isServerFactory(ts, callee, names)) {
+        const options = receiver.arguments[0]
+        if (options === undefined) return false
+        return (
+          spreadSources(ts, options, constants, new Set())?.every(
+            (source) => source !== null && hostSetting(ts, source, constants) === true,
+          ) === true
+        )
+      }
+      receiver =
+        ts.isPropertyAccessExpression(callee) &&
+        /^(?:get|post|put|patch|delete|head|options|route|use|derive|decorate|group|guard)$/.test(
+          callee.name.text,
+        )
+          ? callee.expression
+          : undefined
+    } else return false
+  }
+  return false
+}
+
 /**
  * Whether `receiver` can be a Nifra server: a `server(...)` call or a chain from one, or a name this
  * file binds to one. A name it does not bind (an import, a parameter) is given the benefit of the
@@ -217,14 +245,8 @@ function isNifraServer(
   }
   if (ts.isCallExpression(receiver)) {
     const callee = receiver.expression
-    if (ts.isIdentifier(callee)) return names.factories.has(callee.text)
+    if (isServerFactory(ts, callee, names)) return true
     if (ts.isPropertyAccessExpression(callee)) {
-      if (
-        ts.isIdentifier(callee.expression) &&
-        names.namespaces.has(callee.expression.text) &&
-        callee.name.text === "server"
-      )
-        return true
       // A method call on a name this file does not bind (`net.createServer()`) proves nothing.
       return isNifraServer(ts, callee.expression, names, false, hops)
     }
@@ -248,6 +270,7 @@ interface Kind {
   readonly surface: Surface
   /** Which argument holds the listener's options: an adapter or `listen()` takes them second, the runtime's own call first. */
   readonly optionsAt: "second" | "first"
+  readonly app?: TSApi.Expression | undefined
 }
 
 function listenerKind(
@@ -259,7 +282,8 @@ function listenerKind(
   const name = calleeName(ts, call.expression)
   if (name !== undefined) {
     const imported = imports.get(name)
-    if (imported !== undefined) return { runtime: imported, surface: "app", optionsAt: "second" }
+    if (imported !== undefined)
+      return { runtime: imported, surface: "app", optionsAt: "second", app: call.arguments[0] }
     if (name === "Deno.serve") return { runtime: "deno", surface: "native", optionsAt: "first" }
     if (name === "Bun.serve") return { runtime: "bun", surface: "native", optionsAt: "first" }
   }
@@ -269,7 +293,7 @@ function listenerKind(
     (names.factories.size > 0 || names.namespaces.size > 0) &&
     isNifraServer(ts, call.expression.expression, names)
   )
-    return { runtime: "bun", surface: "app", optionsAt: "second" }
+    return { runtime: "bun", surface: "app", optionsAt: "second", app: call.expression.expression }
   return undefined
 }
 
@@ -314,11 +338,16 @@ function listenersIn(
 ): readonly Listener[] {
   const imports = serveImports(ts, tree)
   const names = coreNames(ts, tree)
+  const constants = constantBindings(ts, tree)
   const found: Listener[] = []
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
       const kind = listenerKind(ts, node, imports, names)
-      if (kind !== undefined && (topology === "direct" || terminatesTls(ts, node, kind)))
+      if (
+        kind !== undefined &&
+        (topology === "direct" || terminatesTls(ts, node, kind)) &&
+        (kind.app === undefined || !hasHostGuard(ts, node, kind.app, names, constants))
+      )
         found.push({
           position: node.expression.getStart(tree),
           runtime: kind.runtime,
@@ -340,8 +369,8 @@ function listenersIn(
  * The rule never infers a proxy: a Dockerfile, an `nginx.conf` or a `fly.toml` says little about the
  * network a server runs in. It fires on evidence of direct exposure (the listener terminates TLS
  * itself) or on `"hostTopology": "direct"` in `nifra.check.json`, and stays silent on
- * `"hostTopology": "proxied"`. A project that sets `validateHost` in code anywhere is left alone
- * (`allowedHosts` and `canonicalHost` belong to the Node adapters; a Deno or Bun listener ignores them).
+ * `"hostTopology": "proxied"`. A guard exempts the listener whose app can be traced to a local
+ * server factory with `validateHost: true`.
  *
  * `parsedFile` is the security rules' shared parse cache, so a file is read once for all of them.
  */
@@ -359,21 +388,11 @@ export function createHostExposureRule(
       const ts = loaded.compiler
       if (ts === undefined) return []
       const sources = ctx.project.source
-      const parsed: ParsedSource[] = []
+      const findings: Diagnostic[] = []
       for (const file of sources.files) {
         if (!SCRIPT_FILE.test(file)) continue
         const source = parsedFile(ts, sources, file)
-        if (source === undefined) continue
-        if (
-          HOST_OPTION_HINT.test(source.tree.text) &&
-          configuresHost(ts, source.tree, bindingsIn(ts, source.tree))
-        )
-          return []
-        parsed.push(source)
-      }
-      const findings: Diagnostic[] = []
-      for (const source of parsed) {
-        if (!LISTENER_HINT.test(source.tree.text)) continue
+        if (source === undefined || !LISTENER_HINT.test(source.tree.text)) continue
         const { tree, lines } = source
         for (const listener of listenersIn(ts, tree, topology)) {
           const line = tree.getLineAndCharacterOfPosition(listener.position).line + 1
@@ -396,7 +415,7 @@ export function createHostExposureRule(
                 topology === "direct"
                   ? 'nifra.check.json declares "hostTopology": "direct"'
                   : "the listener terminates TLS itself",
-                "no validateHost is set anywhere in the project",
+                "this listener has no provable Host guard",
               ],
               verify: "nifra check --lints-only",
             }),

@@ -57,14 +57,24 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
     expect(denoServe).toHaveLength(1)
   })
 
-  test("a Host check anywhere in the project leaves it alone", async () => {
-    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
-    expect(
-      await scan([
-        listener,
-        { file: "app.ts", content: `${CORE}export const app = server({ validateHost: true })` },
-      ]),
-    ).toEqual([])
+  test("one guarded app cannot suppress another listener", async () => {
+    const findings = await scan([
+      {
+        file: "serve.ts",
+        content: `${CORE}${DENO}const checked = server({ validateHost: true })
+const unchecked = server()
+await serve(checked, { port: 1, tls })
+await serve(unchecked, { port: 2, tls })`,
+      },
+      { file: "unrelated.ts", content: "const settings = { validateHost: true }" },
+    ])
+    expect(findings.map(({ line }) => line)).toEqual([6])
+  })
+
+  test("an unconnected guard cannot suppress a raw listener", async () => {
+    const found = await one(`${CORE}server({ validateHost: true })
+Bun.serve({ port: 443, tls, fetch })`)
+    expect(found).toHaveLength(1)
   })
 
   test("allowedHosts and canonicalHost are the Node adapters' options: a Deno or Bun listener ignores them", async () => {
@@ -79,11 +89,12 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
   })
 
   test("a validateHost a later spread may switch off is not a guarantee", async () => {
-    const listener = { file: "serve.ts", content: `${DENO}await serve(app, { port: 1, tls })` }
-    const content = `${CORE}server({ validateHost: true, ...(disabled ? { validateHost: false } : {}) })`
-    expect(await scan([listener, { file: "app.ts", content }])).toHaveLength(1)
-    const unrelated = `${CORE}server({ validateHost: true, ...(more ? { port: 1 } : {}) })`
-    expect(await scan([listener, { file: "app.ts", content: unrelated }])).toEqual([])
+    const listener = "await serve(app, { port: 1, tls })"
+    const ambiguous =
+      "const app = server({ validateHost: true, ...(disabled ? { validateHost: false } : {}) })"
+    expect(await one(`${CORE}${DENO}${ambiguous}\n${listener}`)).toHaveLength(1)
+    const unrelated = "const app = server({ validateHost: true, ...(more ? { port: 1 } : {}) })"
+    expect(await one(`${CORE}${DENO}${unrelated}\n${listener}`)).toEqual([])
   })
 
   test("validateHost: false, a comment or a string that names it configures nothing", async () => {
@@ -181,33 +192,33 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
 })
 
 describe("what counts as configuring or serving", () => {
-  const listen = 'import { server } from "@nifrajs/core"\nawait server().listen(443, { tls })\n'
+  const listen = (options: string): string =>
+    `${CORE}${options}\nawait server(o).listen(443, { tls })`
 
   test("a later writer wins over a spread, and an unreadable spread proves nothing", async () => {
     for (const options of [
       "{ ...{ validateHost: true }, validateHost: false }",
       "{ validateHost: true, ...overrides }",
+      "{ validateHost: toggle }",
     ]) {
-      expect(await one(`${listen}export const options = ${options}`)).toHaveLength(1)
+      expect(await one(listen(`const o = ${options}`))).toHaveLength(1)
     }
     expect(
-      await one(
-        `const base = { port: 1 }\n${listen}export const o = { validateHost: true, ...base }`,
-      ),
+      await one(listen("const base = { port: 1 }\nconst o = { validateHost: true, ...base }")),
     ).toEqual([])
   })
 
-  test("a source is judged where it is spread, and `&&` may write nothing", async () => {
+  test("a source is judged where it is spread, and && may write nothing", async () => {
     for (const code of [
-      "const defaults = { validateHost: true }\nexport const o = { ...defaults, validateHost: false }",
-      "export const o = { validateHost: false, ...(enabled && { validateHost: true }) }",
-      "export const o = { ...(flag ? { validateHost: true } : undefined) }",
+      "const defaults = { validateHost: true }\nconst o = { ...defaults, validateHost: false }",
+      "const o = { validateHost: false, ...(enabled && { validateHost: true }) }",
+      "const o = { ...(flag ? { validateHost: true } : undefined) }",
     ]) {
-      expect(await one(`${listen}${code}`)).toHaveLength(1)
+      expect(await one(listen(code))).toHaveLength(1)
     }
-    expect(
-      await one(`${listen}const base = { validateHost: true }\nexport const o = { ...base }`),
-    ).toEqual([])
+    expect(await one(listen("const base = { validateHost: true }\nconst o = { ...base }"))).toEqual(
+      [],
+    )
   })
 
   test("a long route chain is still a server", async () => {

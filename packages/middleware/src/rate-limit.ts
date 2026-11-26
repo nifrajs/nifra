@@ -5,7 +5,7 @@ import type {
   NodeResponseContext,
   Platform,
 } from "@nifrajs/core/server"
-import { ipBucket, ipBucketForAddress } from "./_ip.ts"
+import { forwardedClient, ipBucket, ipBucketForAddress } from "./_ip.ts"
 import { guardName, setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
@@ -265,15 +265,9 @@ function defaultKey(
     if (key !== null) return key
   }
   if (trustedProxies > 0) {
-    const xff = req.headers.get("x-forwarded-for")
-    if (xff !== null) {
-      const parts = xff.split(",")
-      // The leftmost of the trusted suffix (your proxies append on the right) = the address your edge
-      // proxy observed = the real client. A client can only prepend fakes further left, which this
-      // index skips. A chain shorter than `trustedProxies` (misconfig) → undefined → fall through.
-      const ip = parts[parts.length - trustedProxies]?.trim()
-      if (ip !== undefined && ip !== "") return ipBucket(ip)
-    }
+    const ip = forwardedClient(req.headers.get("x-forwarded-for"), trustedProxies)
+    const key = ip === null ? null : ipBucketForAddress(ip)
+    if (key !== null) return key
   }
   // No trusted proxy (or XFF absent/too-short): XFF isn't trustworthy, so don't derive a per-client key
   // from it. A shared bucket is only safe when the app deliberately asked for a global throttle.
@@ -298,12 +292,9 @@ function nativeKey(
     if (key !== null) return key
   }
   if (trustedProxies > 0) {
-    const xff = req.header("x-forwarded-for")
-    if (xff !== null) {
-      const parts = xff.split(",")
-      const ip = parts[parts.length - trustedProxies]?.trim()
-      if (ip !== undefined && ip !== "") return ipBucket(ip)
-    }
+    const ip = forwardedClient(req.header("x-forwarded-for"), trustedProxies)
+    const key = ip === null ? null : ipBucketForAddress(ip)
+    if (key !== null) return key
   }
   return allowGlobalKey ? "global" : null
 }

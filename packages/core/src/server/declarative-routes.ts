@@ -64,7 +64,7 @@ export interface ServerView {
 
 /** One fixed-reply route handed to a transport that answers it natively. */
 export interface DeclarativeRoute {
-  /** A POST also runs the cross-site form check, so a transport must keep any request carrying an `Origin` header. */
+  /** A transport must keep POSTs with browser origin information on the ordinary path for the form check. */
   readonly method: "GET" | "POST"
   readonly path: string
   readonly status: number
@@ -195,8 +195,7 @@ function mountMayTake(mountPath: string, path: string): boolean {
 
 /**
  * The routes a transport that matches exact raw paths itself (uWebSockets.js) can answer natively.
- * A fixed POST is listed too, but the transport must still run that check, which refuses a request
- * only when it carries an `Origin` header: such a request goes to the router, one without is answered.
+ * A fixed POST is listed too, but the transport must route browser origin information to the form check.
  * A route stays out when anything that route-level or app-level could observe the request applies,
  * when the transport could read its path as a pattern or the router would decode it, when a mount ahead
  * of the routes or a WebSocket handshake may share it, or, for an echoed parameter, when another route

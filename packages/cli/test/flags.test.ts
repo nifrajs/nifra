@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
@@ -16,6 +16,33 @@ const savedPort = Bun.env.PORT
 afterEach(() => {
   if (savedPort === undefined) delete Bun.env.PORT
   else Bun.env.PORT = savedPort
+})
+
+test("manual command help prints usage before dispatching", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nifra-cli-help-"))
+  try {
+    const cli = resolve(import.meta.dir, "../src/cli.ts")
+    for (const command of [
+      "mcp",
+      "docs-mcp",
+      "learn",
+      "frontend",
+      "runtime",
+      "verify",
+      "init-agents",
+      "sdk",
+    ]) {
+      const result = Bun.spawnSync([process.execPath, "--no-env-file", cli, command, "--help"], {
+        cwd,
+        timeout: 3000,
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.toString()).toStartWith(`  nifra ${command} `)
+    }
+    expect(readdirSync(cwd)).toEqual([])
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test("parseFlags defaults to the shared uncommon DEFAULT_DEV_PORT (no flag, no env)", () => {

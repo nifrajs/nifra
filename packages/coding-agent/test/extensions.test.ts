@@ -49,6 +49,26 @@ describe("ExtensionHost", () => {
     expect(result.error).toContain("untrusted capability")
   })
 
+  test("reuses the imported module when reloading unchanged extension code", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    await writeFile(
+      join(cwd, "extension.ts"),
+      `const id = crypto.randomUUID()
+       export default ({ registerProvider }) => registerProvider({ name: "example", description: id })`,
+    )
+    const host = new ExtensionHost({ cwd, roots: ["extension.ts"] })
+    try {
+      expect((await host.reload()).rolledBack).toBe(false)
+      const before = host.availableProviders[0]?.description
+      expect(typeof before).toBe("string")
+      expect((await host.reload()).rolledBack).toBe(false)
+      expect(host.availableProviders[0]?.description).toBe(before)
+    } finally {
+      await host.close()
+    }
+  })
+
   test("rejects extension roots outside the project", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)

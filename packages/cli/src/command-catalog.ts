@@ -340,12 +340,14 @@ interface RoutesInput {
 }
 
 interface ContextInput {
+  readonly json?: boolean | undefined
   readonly path?: string | undefined
   readonly kind?: "api" | "pages" | undefined
   readonly dir?: string | undefined
 }
 
 interface OpenApiInput {
+  readonly json?: boolean | undefined
   readonly format?: "json" | "yaml" | undefined
   readonly path?: string | undefined
   readonly dir?: string | undefined
@@ -482,6 +484,7 @@ interface ProveInput {
 }
 
 interface ReplayInput {
+  readonly json?: boolean | undefined
   readonly file: string
   readonly dir?: string | undefined
 }
@@ -734,6 +737,7 @@ const ROUTES_SCHEMA = input<RoutesInput>(
 
 const CONTEXT_SCHEMA = input<ContextInput>(
   objectSchema({
+    json: { type: "boolean" },
     path: { type: "string" },
     kind: { type: "string", enum: ["api", "pages"] },
     dir: { type: "string" },
@@ -743,6 +747,7 @@ const CONTEXT_SCHEMA = input<ContextInput>(
     if (raw.kind !== undefined && raw.kind !== "api" && raw.kind !== "pages")
       throw new TypeError("kind must be api or pages")
     return {
+      ...parseBooleanFlags(raw, ["json"]),
       path: optionalString(raw.path, "path"),
       kind: raw.kind as "api" | "pages" | undefined,
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
@@ -752,6 +757,7 @@ const CONTEXT_SCHEMA = input<ContextInput>(
 
 const OPENAPI_SCHEMA = input<OpenApiInput>(
   objectSchema({
+    json: { type: "boolean" },
     format: { type: "string", enum: ["json", "yaml"] },
     path: { type: "string" },
     dir: { type: "string" },
@@ -761,6 +767,7 @@ const OPENAPI_SCHEMA = input<OpenApiInput>(
     if (raw.format !== undefined && raw.format !== "json" && raw.format !== "yaml")
       throw new TypeError("format must be json or yaml")
     return {
+      ...parseBooleanFlags(raw, ["json"]),
       format: (raw.format ?? "json") as "json" | "yaml",
       path: optionalString(raw.path, "path"),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
@@ -1038,12 +1045,18 @@ const PROVE_SCHEMA = input<ProveInput>(
 )
 
 const REPLAY_SCHEMA = input<ReplayInput>(
-  objectSchema({ file: { type: "string" }, dir: { type: "string" } }, ["file"]),
+  objectSchema({ file: { type: "string" }, dir: { type: "string" }, json: { type: "boolean" } }, [
+    "file",
+  ]),
   (value) => {
     const raw = withDir(record(value))
     const file = optionalString(raw.file, "file")
     if (file === undefined || file.trim() === "") throw new TypeError("file is required")
-    return { file, ...(raw.dir === undefined ? {} : { dir: raw.dir }) }
+    return {
+      file,
+      ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
   },
 )
 
@@ -1461,10 +1474,12 @@ const contextSpec: CommandSpec<ContextInput, ContextCommandOutput> = {
   }),
   transports: ["cli", "mcp"],
   stability: "stable",
+  cliOnlyFields: ["json"],
   argv: {
     flags: [
       { name: "path", field: "path", type: "string" },
       { name: "kind", field: "kind", type: "string" },
+      { name: "json", field: "json", type: "boolean" },
     ],
   },
   async run(value, ctx) {
@@ -1495,12 +1510,13 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
     flags: [
       { name: "format", field: "format", type: "string" },
       { name: "path", field: "path", type: "string" },
+      { name: "json", field: "json", type: "boolean" },
     ],
   },
   async run(value, ctx) {
     const app = await backendAppFor(ctx)
     const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
-    const format = value.format ?? "json"
+    const format = value.json === true ? "json" : (value.format ?? "json")
     return {
       ok: true,
       format,
@@ -2219,7 +2235,8 @@ const replaySpec: CommandSpec<ReplayInput, ReplayResult> = {
   output: output({ type: "object" }),
   transports: ["cli", "mcp"],
   stability: "stable",
-  argv: { positionals: ["file"] },
+  cliOnlyFields: ["json"],
+  argv: { positionals: ["file"], flags: [{ name: "json", field: "json", type: "boolean" }] },
   async run(value, ctx) {
     const { runReplay } = await import("./replay.ts")
     return runReplay(ctx.cwd, value.file)

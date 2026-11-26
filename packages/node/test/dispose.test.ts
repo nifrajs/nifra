@@ -2,6 +2,18 @@ import { expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { serve } from "../src/index.ts"
 
+test("serve rejects when a listener cannot bind its port", async () => {
+  const app = server().get("/", () => "ready")
+  const first = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    await expect(serve(app, { port: first.port, hostname: "127.0.0.1" })).rejects.toMatchObject({
+      code: "EADDRINUSE",
+    })
+  } finally {
+    await first.stop({ drainMs: 0 })
+  }
+})
+
 test("await using a serve() handle runs the app's stop hooks when the scope ends", async () => {
   const log: string[] = []
   const app = server()
@@ -33,6 +45,7 @@ test("disposing during a shutdown that is under way waits for it", async () => {
     })
   const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const stopping = running.stop()
+  expect(running.stop()).toBe(stopping)
   const disposed = running[Symbol.asyncDispose]()
   try {
     expect(await Promise.race([disposed.then(() => "done"), Promise.resolve("pending")])).toBe(

@@ -48,9 +48,11 @@ export function isSameOriginRequest(origin: string, request: { readonly url: str
  * `Sec-Fetch-Site: same-origin`, a header page script cannot set.
  */
 export function isSameOriginForm(
-  origin: string,
+  origin: string | null,
   secFetchSite: string | null,
   request: { readonly url: string },
 ): boolean {
+  // Non-browser callers usually send neither header. Explicit browser metadata still applies.
+  if (origin === null) return secFetchSite !== "cross-site" && secFetchSite !== "same-site"
   return origin === "null" ? secFetchSite === "same-origin" : isSameOriginRequest(origin, request)
 }

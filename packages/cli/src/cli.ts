@@ -1370,8 +1370,46 @@ export function frontendCommandInput(
 }
 
 /** Dispatch a CLI invocation, including project-independent agent and documentation commands. */
+const MANUAL_HELP_COMMANDS = new Set([
+  "mcp",
+  "docs-mcp",
+  "learn",
+  "frontend",
+  "runtime",
+  "verify",
+  "init-agents",
+  "sdk",
+])
+
+function manualHelp(command: string): string {
+  return HELP.split(/\n(?= {2}nifra )/)
+    .filter((section) => section.startsWith(`  nifra ${command} `))
+    .map((section) => section.trimEnd())
+    .join("\n")
+}
+
+function manualFlagValue(argv: readonly string[], name: string): string | undefined {
+  for (const [index, arg] of argv.entries()) {
+    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1)
+    if (arg === name) {
+      const value = argv[index + 1]
+      return value === undefined || value.startsWith("-") ? "" : value
+    }
+  }
+  return undefined
+}
+
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
+  const helpCommand = rawArgv[0]
+  if (
+    helpCommand !== undefined &&
+    MANUAL_HELP_COMMANDS.has(helpCommand) &&
+    (rawArgv.includes("--help") || rawArgv.includes("-h"))
+  ) {
+    console.log(manualHelp(helpCommand))
+    return
+  }
   // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
   // `--env-file`s below, which the caller names explicitly and which stay.
   const forgotten =
@@ -1440,8 +1478,8 @@ async function main(): Promise<void> {
   // it self-hosts anywhere Bun runs (a VPS behind a reverse proxy, a container). Long-lived; no loadApp.
   if (command === "docs-mcp") {
     const { handleMcpHttp } = await import("./mcp-http.ts")
-    const portArg = argv[argv.indexOf("--port") + 1]
-    const port = Number(portArg && argv.includes("--port") ? portArg : (Bun.env.PORT ?? 8787))
+    const portArg = manualFlagValue(argv, "--port") ?? Bun.env.PORT ?? "8787"
+    const port = /^\d+$/.test(portArg) ? Number(portArg) : Number.NaN
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       throw new Error(`[nifra] invalid --port: ${port}`)
     }
@@ -1521,7 +1559,11 @@ async function main(): Promise<void> {
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)
       const asRecord = output as Record<string, unknown>
-      const wantsJson = asRecord.json === true || argv.includes("--json")
+      const jsonFlag =
+        typeof input === "object" && input !== null ? Reflect.get(input, "json") : undefined
+      const wantsJson =
+        asRecord.json === true ||
+        (typeof jsonFlag === "boolean" ? jsonFlag : argv.includes("--json"))
       if (wantsJson) {
         const value = catalogSpec.json?.(output, input) ?? output
         console.log(typeof value === "string" ? value : JSON.stringify(value, null, 2))
@@ -1575,16 +1617,14 @@ async function main(): Promise<void> {
     return
   }
   if (command === "sdk") {
-    const languageIndex = argv.indexOf("--lang")
-    const language = languageIndex === -1 ? undefined : argv[languageIndex + 1]
-    const outIndex = argv.indexOf("--out")
-    const out = outIndex === -1 ? undefined : argv[outIndex + 1]
+    const language = manualFlagValue(argv, "--lang")
+    const out = manualFlagValue(argv, "--out")
     if (language !== "python" && language !== "go") {
       console.error("[nifra] sdk needs --lang python or --lang go")
       process.exitCode = 1
       return
     }
-    if (outIndex !== -1 && (out === undefined || out.startsWith("-"))) {
+    if (out === "") {
       console.error("[nifra] --out needs a file path")
       process.exitCode = 1
       return
@@ -1754,8 +1794,7 @@ function isCliCommandToken(value: string): boolean {
     value === "dev" ||
     value === "build" ||
     value === "start" ||
-    value === "mcp" ||
-    value === "init-agents" ||
+    MANUAL_HELP_COMMANDS.has(value) ||
     value === "upgrade" ||
     value === "db" ||
     value === "help" ||

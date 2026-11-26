@@ -33,7 +33,7 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 
 ## Footguns
 
-- `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.
+- `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + backend code in the browser graph (with the import chain) + raw-`Response`-from-a-route + undeclared dependency.
 - One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cloudflare/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
 - `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.
 
@@ -46,8 +46,8 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra capabilities <action> <method> <path> [--config <value>] [--out <value>] [--lockfile <value>] [--json] - Snapshot, check, or explain token-only capability provenance and lockfile drift.
 - nifra manifest <action> <before> <after> [--config <value>] [--out <value>] [--sign <value>] [--json] - Emit or diff the hash-verified route trust manifest.
 - nifra routes [--json] [--graph] [--modes] [--hooks] [--since <value>] [--target <value>] - List, graph, or target-check every page and API route the app serves, or the hooks each runs.
-- nifra context [--path <value>] [--kind <value>] - Print the project route index and framework conventions for an agent.
-- nifra openapi [--format <value>] [--path <value>] - Generate the backend OpenAPI document, including supported build-time response inference.
+- nifra context [--path <value>] [--kind <value>] [--json] - Print the project route index and framework conventions for an agent.
+- nifra openapi [--format <value>] [--path <value>] [--json] - Generate the backend OpenAPI document, including supported build-time response inference.
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
 - nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--zones] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
@@ -61,7 +61,7 @@ _…and 70 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.
 - nifra sync-manifest [--json] - Regenerate generated server-manifest route tables without a full build.
 - nifra prove [--file <value>] [--min <value>] [--run] [--json] - Plan cumulative verification gates and optionally run them against the current source and build.
-- nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
+- nifra replay <file> [--json] - Validate a token-only verification metadata file and dispatch it against its gate.
 - nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.
 - nifra port [--target <value>] [--json] [--ci] [--strict] - Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.
 - nifra i18n <action> <entry> [--json] [--strict] - Check i18n catalogs (imports the module exporting `locales` and `catalogs`): coverage, missing and unused keys, ICU syntax, placeholder and tag parity, plural cases, script purity, untranslated messages.

@@ -470,13 +470,44 @@ function timingSafeHelper(file: string): string {
     'import { timingSafeEqual as nifraTimingSafeEqualBytes } from "node:crypto"',
     "",
     typed
-      ? "function nifraTimingSafeEqual(left: string, right: string): boolean {"
+      ? "function nifraTimingSafeEqual(left: unknown, right: unknown): boolean {"
       : "function nifraTimingSafeEqual(left, right) {",
-    "  const leftBytes = Buffer.from(left)",
-    "  const rightBytes = Buffer.from(right)",
-    "  return leftBytes.length === rightBytes.length && nifraTimingSafeEqualBytes(leftBytes, rightBytes)",
+    '  if (typeof left !== "string" || typeof right !== "string") return left === right',
+    "  if (left.length !== right.length) return false",
+    "  const leftUnits = new Uint16Array(left.length)",
+    "  const rightUnits = new Uint16Array(right.length)",
+    "  for (let index = 0; index < left.length; index++) {",
+    "    leftUnits[index] = left.charCodeAt(index)",
+    "    rightUnits[index] = right.charCodeAt(index)",
+    "  }",
+    "  return nifraTimingSafeEqualBytes(leftUnits, rightUnits)",
     "}",
   ].join("\n")
+}
+
+function canRewriteSecretComparison(
+  ts: typeof TSApi,
+  tree: TSApi.SourceFile,
+  browser: boolean,
+): boolean {
+  return (
+    !browser &&
+    !/(?:^|[/\\])shared[/\\]|\.shared\.[^.]+$/i.test(tree.fileName) &&
+    tree.statements.some(
+      (statement) =>
+        ts.isImportDeclaration(statement) &&
+        statement.importClause?.isTypeOnly !== true &&
+        ts.isStringLiteralLike(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text === "node:crypto",
+    )
+  )
+}
+
+function isStrictSecretComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): boolean {
+  return (
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+  )
 }
 
 /**
@@ -492,9 +523,12 @@ export function rewriteSecretComparisons(
   browser: boolean,
 ): string {
   const tree = parse(ts, file, source)
+  if (!canRewriteSecretComparison(ts, tree, browser)) return source
   const lines = tree.text.split("\n")
   const sites = secretComparisons(ts, tree, browser).filter(
-    (site) => expectedReason(lines, site.line, "NF-S002") === undefined,
+    (site) =>
+      isStrictSecretComparison(ts, site.node) &&
+      expectedReason(lines, site.line, "NF-S002") === undefined,
   )
   // A comparison nested inside another (`(token === a) === flag`) is left for the next run, so every
   // edit below covers a disjoint range and applying them from the end keeps earlier offsets valid.
@@ -536,7 +570,8 @@ export const secretComparisonRule: CheckRule = {
       "Non-constant-time secret comparison scan",
       (ts, { file, tree, lines }, findings) => {
         const browser = provenBrowserFile(ctx.root, file, webDirs)
-        for (const { left, right, line } of secretComparisons(ts, tree, browser)) {
+        const canRewrite = canRewriteSecretComparison(ts, tree, browser)
+        for (const { node, left, right, line } of secretComparisons(ts, tree, browser)) {
           const reviewed = expectedReason(lines, line, "NF-S002") !== undefined
           findings.push(
             diagnostic({
@@ -556,7 +591,7 @@ export const secretComparisonRule: CheckRule = {
                 left ?? right ?? "secret comparison",
                 ...expectationEvidence(lines, line, "NF-S002"),
               ],
-              ...(reviewed
+              ...(reviewed || !canRewrite || !isStrictSecretComparison(ts, node)
                 ? {}
                 : {
                     fix: {

@@ -82,8 +82,7 @@ export function createActionHandler<Env = unknown>(
       // cookies, so an action is a CSRF target unless its route names the origins it accepts.
       const origin = c.req.headers.get("origin")
       const allowedOrigins = mod.allowedOrigins
-      const sameOrigin =
-        origin === null || isSameOriginForm(origin, c.req.headers.get("sec-fetch-site"), c.req)
+      const sameOrigin = isSameOriginForm(origin, c.req.headers.get("sec-fetch-site"), c.req)
       const allowed =
         allowedOrigins === undefined
           ? sameOrigin

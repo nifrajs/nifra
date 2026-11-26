@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware, Platform } from "@nifrajs/core/server"
-import { type ParsedIp, parseIp } from "./_ip.ts"
+import { forwardedClient, type ParsedIp, parseIp } from "./_ip.ts"
 import { guardName, jsonError, type MaybePromise } from "./_utils.ts"
 
 export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise<boolean>)
@@ -56,14 +56,6 @@ function matchRange(ip: ParsedIp, range: Range): boolean {
   return ip.version === range.version && (ip.value & range.mask) === range.network
 }
 
-function xForwardedClient(req: Request, trustedProxies: number): string | null {
-  if (trustedProxies <= 0) return null
-  const xff = req.headers.get("x-forwarded-for")
-  if (xff === null) return null
-  const parts = xff.split(",")
-  return parts[parts.length - trustedProxies]?.trim() || null
-}
-
 async function resolveClientIp(
   req: Request,
   platform: Platform | undefined,
@@ -80,8 +72,10 @@ async function resolveClientIp(
   ) {
     return platform?.clientIp || null
   }
-  const fromXff = xForwardedClient(req, options.trustedProxies ?? 0)
-  if (fromXff !== null) return fromXff
+  if ((options.trustedProxies ?? 0) > 0) {
+    const fromXff = forwardedClient(req.headers.get("x-forwarded-for"), options.trustedProxies ?? 0)
+    if (fromXff !== null) return fromXff
+  }
   if (options.header !== undefined) {
     const value = req.headers.get(options.header)
     if (value !== null && !value.includes(",")) return value.trim()

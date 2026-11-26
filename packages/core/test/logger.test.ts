@@ -87,6 +87,25 @@ describe("redactLogFields", () => {
 })
 
 describe("jsonLogger", () => {
+  test("scrubs values by default and serializes error records and big integers", () => {
+    const lines: string[] = []
+    const fields = Object.fromEntries([
+      ["__proto__", { label: "literal field" }],
+      ["error", new Error("Delivery failed for example@example.invalid")],
+      ["count", 9007199254740993n],
+    ])
+    jsonLogger((line) => lines.push(line)).warn(
+      "Delivery to example@example.invalid failed",
+      fields,
+    )
+    expect(lines[0]).toContain('"message":"Delivery to [REDACTED] failed"')
+    expect(lines[0]).toContain('"__proto__":{"label":"literal field"}')
+    expect(lines[0]).toContain(
+      '"error":{"name":"Error","message":"Delivery failed for [REDACTED]"}',
+    )
+    expect(lines[0]).toContain('"count":"9007199254740993"')
+  })
+
   test("emits one redacted JSON line per call, across all levels", () => {
     const lines: string[] = []
     const logger = jsonLogger((line) => lines.push(line))

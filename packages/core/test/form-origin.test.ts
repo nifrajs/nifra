@@ -133,6 +133,16 @@ describe("a form body from another site", () => {
     expect((await app.fetch(sandboxed)).status).toBe(403)
   })
 
+  test("browser metadata can reject a form with no Origin on every body lane", async () => {
+    for (const site of ["cross-site", "same-site"]) {
+      const { out, ran } = await statuses({}, () =>
+        post(FORM, "name=Ada", { "sec-fetch-site": site }),
+      )
+      expect(Object.values(out).flat()).toEqual(everyLane(403))
+      expect(ran).toBe(0)
+    }
+  })
+
   test("passes from an origin listed in formOrigins, exactly", async () => {
     const listed = await statuses({ formOrigins: ["https://idp.test"] }, () =>
       post(FORM, "name=Ada", { origin: "https://idp.test" }),
@@ -263,6 +273,9 @@ describe("a form post from another site to a route without a body schema", () =>
     expect((await bare.fetch(send("POST", FORM, { origin: "https://app.test" }))).status).toBe(200)
     const attacker = { ...crossSite, "sec-fetch-site": "cross-site" }
     expect((await bare.fetch(send("POST", FORM, attacker))).status).toBe(403)
+    expect((await bare.fetch(send("POST", FORM, { "sec-fetch-site": "cross-site" }))).status).toBe(
+      403,
+    )
     expect(ran()).toBe(2)
   })
 

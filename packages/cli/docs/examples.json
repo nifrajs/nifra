@@ -825,7 +825,7 @@
     "name": "LOGGING",
     "topic": "Nifra - security & hardening",
     "slug": "security",
-    "code": "import { server, jsonLogger, commonSecretPatterns } from \"@nifrajs/core/server\"\n\n// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.\nconst app = server({\n  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),\n})\n\n// logger.error(\"auth failed for user@example.com with Bearer abc.def\")\n//   → { ...,\"message\":\"auth failed for [REDACTED] with [REDACTED]\" }\n// Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }"
+    "code": "import { server, jsonLogger, commonSecretPatterns } from \"@nifrajs/core/server\"\n\n// The default logger redacts sensitive keys and scans string values and messages.\nconst app = server({\n  logger: jsonLogger(),\n})\n\n// logger.error(\"auth failed for user@example.com with Bearer abc.def\")\n//   → { ...,\"message\":\"auth failed for [REDACTED] with [REDACTED]\" }\n// Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }"
   },
   {
     "name": "PROTO",

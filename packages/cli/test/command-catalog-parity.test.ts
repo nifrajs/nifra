@@ -146,6 +146,18 @@ test("check SARIF is a projection of the structured diagnostics output", () => {
   expect(spec.render(result, input).join("\n")).toContain('"ruleId": "NF-X001"')
 })
 
+test("context, openapi and replay bind their JSON flags", () => {
+  for (const [command, args] of [
+    ["context", []],
+    ["openapi", []],
+    ["replay", ["gate.json"]],
+  ] as const) {
+    const spec = findCommandSpec(command)!
+    expect(bindCommandArgv(spec, [...args, "--json"])).toMatchObject({ json: true })
+    expect(bindCommandArgv(spec, [...args, "--json=false"])).toMatchObject({ json: false })
+  }
+})
+
 test("catalog projections are frozen and output readers tolerate the versioned envelope", () => {
   const spec = commandSpecs[0]
   const entry = toCommandCatalogEntry(spec)
