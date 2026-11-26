@@ -6886,6 +6886,13 @@
     "signature": "export interface FormatterOptions<M extends object = RegisteredMessages> {\n    /** Catalogs to try, in order, for a key `messages` lacks: typically the base language's, then the\n     * default locale's (`locales.chain(key)` gives that order). The formatter's locale still formats a\n     * fallback message's numbers, dates and plurals. */\n    readonly fallback?: readonly CatalogFor<M>[] | undefined;\n    /** Called with a key no catalog has, once per key per formatter, before the key is returned. Pass a\n     * stable function (module scope): formatters are cached per handler, so a new function on every\n     * render builds a new formatter every render. */\n    readonly onMissing?: ((key: string, locale: string) => void) | undefined;\n    /** Default `timeZone` for `d()`. An invalid zone throws here, like `Intl.DateTimeFormat`. */\n    readonly timeZone?: string | undefined;\n    /** Default `numberingSystem` (`\"deva\"`, `\"arab\"`, ...) for `n()`, `d()` and plural `#`. */\n    readonly numberingSystem?: string | undefined;\n}"
   },
   {
+    "name": "FramedBodyArgs",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type FramedBodyArgs<T> = [\n    source: RequestSource,\n    maxBodyBytes: number,\n    protoPoisoning: ProtoPoisoning,\n    onParsed: (parsed: unknown) => MaybePromise<T>,\n    wrapResponse: (response: Response | ResponseResult) => T,\n    onError: (err: unknown) => MaybePromise<T>,\n    bodySchema?: object,\n    formOrigins?: FormOrigins\n];",
+    "doc": "/**\n * The arguments of {@link readBodyFramed}: the request, the byte cap and the prototype-poisoning\n * policy; the continuation for a parsed body, the wrapper for a refusal and the one for an error;\n * then the route's body schema and the origins a form may come from.\n */"
+  },
+  {
     "name": "Framework",
     "kind": "type",
     "package": "create-nifra",
@@ -24498,7 +24505,7 @@
     "name": "readBodyFramed",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function readBodyFramed<T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: unknown) => MaybePromise<T>, bodySchema?: object, formOrigins?: FormOrigins): Promise<T>;",
+    "signature": "export declare function readBodyFramed<T>(...args: FramedBodyArgs<T>): Promise<T>;",
     "doc": "/**\n * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded\n * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep\n * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and\n * not one of `formOrigins`, is refused with `403` before the body is read.\n */"
   },
   {

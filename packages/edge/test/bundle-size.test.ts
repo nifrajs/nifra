@@ -22,10 +22,11 @@ import { fileURLToPath } from "node:url"
  * with no body schema refuses a cross-site form post, 10,196 B with core's refusal of a post that has no
  * content type; 10,243 B (from 10,196) once that refusal also tells a browser-managed `Authorization`
  * scheme from a script-set one; 10,321 B with the router's dynamic-match admission window, which
- * caches interleaved hot dynamic paths (10 -> 33 M finds/s on eight alternating paths). The ceiling has headroom for honest
+ * caches interleaved hot dynamic paths (10 -> 33 M finds/s on eight alternating paths); 10,442 B (from 10,321) with
+ * the synchronous JSON body lane that lets a native engine answer a POST without a promise, unused on edge. The ceiling has headroom for honest
  * growth; a jump past it means something big got pulled in - investigate, don't just bump the number.
  */
-const CEILING_GZIP_BYTES = 10_350
+const CEILING_GZIP_BYTES = 10_470
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({

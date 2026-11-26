@@ -1,0 +1,95 @@
+name: Engine compare
+
+# Rotated, serial wrk comparison of the Rust engine (@nifrajs/node-engine) against uWebSockets.js
+# (@nifrajs/node-uws), node:http (@nifrajs/node) and Moro: the Moro framework and `@morojs/engine`
+# written straight on its API. Moro is installed here only, from the lockfile in
+# packages/node-engine/bench/moro; no nifra package depends on it. The numbers that go in a report
+# come from this run, not a laptop.
+on:
+  # TEMPORARY: lets the benchmark run from the PR branch before this file is on main. Remove with
+  # the next commit once a run has produced its report; the dispatch trigger below stays.
+  push:
+    branches: [feat/node-engine]
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rotations per workload (each target runs once per rotation)
+        type: number
+        default: 5
+      duration:
+        description: Seconds per wrk run
+        type: number
+        default: 6
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: engine compare
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    env:
+      ROUNDS: ${{ inputs.rounds || '5' }}
+      DURATION: ${{ inputs.duration || '6' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install wrk
+        run: sudo apt-get update && sudo apt-get install -y wrk
+
+      - name: Runner identity
+        run: |
+          mkdir -p bench-out
+          {
+            printf 'commit=%s\nrun_id=%s\nattempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            date -u +%FT%TZ
+            node --version
+            rustc --version
+            wrk --version 2>&1 | head -1
+            uname -srm
+            lscpu
+          } | tee bench-out/metadata.txt
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      # The root build leaves out private packages; the benchmark loads this one from dist.
+      - name: Build node-engine
+        run: bun run build
+        working-directory: packages/node-engine
+
+      - name: Build the Rust addon
+        run: cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml
+
+      - name: Install the competitors
+        run: npm ci --prefix packages/node-engine/bench/moro --ignore-scripts --no-audit --no-fund
+
+      - name: Compare
+        env:
+          ROOT: ${{ github.workspace }}
+          OUT: bench-out
+        run: |
+          cp native/nifra-engine/target/release/libnifra_napi.so "$RUNNER_TEMP/nifra_napi.node"
+          export NIFRA_RUST_ENGINE_PATH="$RUNNER_TEMP/nifra_napi.node" MORO_DIR="$PWD/packages/node-engine/bench/moro"
+          node packages/node-engine/bench/compare.mjs
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: engine-compare
+          path: bench-out
+          if-no-files-found: error
+          retention-days: 90

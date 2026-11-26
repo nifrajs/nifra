@@ -1,0 +1,17 @@
+[package]
+name = "nifra-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Zero-hop socket and event-loop layer for @nifrajs/node-engine (libuv poll, Linux io_uring, mio)."
+
+[dependencies]
+libc.workspace = true
+mio.workspace = true
+nifra-http = { path = "../nifra-http" }
+nifra-tls = { path = "../nifra-tls" }
+socket2.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"

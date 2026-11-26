@@ -27,6 +27,12 @@ type FramedJsonSource = RequestSource & {
     readonly value: unknown
     readonly byteLength: number
   }>
+  /**
+   * A source that already holds the whole body (a transport that buffered it before dispatch) parses
+   * it on the spot: the parsed value and the delivered byte count, or `undefined` when the body is
+   * not in hand yet. Throws on malformed JSON. It lets the lane run to the handler with no promise.
+   */
+  readonly jsonNow?: () => { readonly value: unknown; readonly byteLength: number } | undefined
 }
 
 // Every lane calls `onResult` outside its parse guard: a throw from the continuation is the app's,
@@ -42,6 +48,29 @@ const fromBuffer =
 // other runtime's `json()` drop, so it refuses a body they parse. Deno uses `text()` for an
 // untouched, runtime-framed request, or decodes the checked bytes below for other sources.
 const nativeJsonKeepsBom = "Deno" in globalThis
+
+/** The shared tail of the parsed-JSON lanes: the byte-count refusal, the poisoning guard, then the
+ * continuation. Explicit parameters, not a closure, so a POST allocates nothing for it. */
+function settleParsed<T>(
+  value: unknown,
+  byteLength: number,
+  length: number,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onResult: JsonResultContinuation<T> | undefined,
+): unknown {
+  if (byteLength > length || byteLength > maxBytes) {
+    const refused = plainError(413, "payload_too_large")
+    return onResult === undefined ? refused : onResult(refused)
+  }
+  let guarded: unknown
+  try {
+    guarded = guardParsedValue(value, protoPoisoning)
+  } catch {
+    guarded = INVALID_JSON()
+  }
+  return onResult === undefined ? guarded : onResult(guarded)
+}
 
 /** Read a JSON source with the declared-length precheck, delivered-byte recheck, streaming cap, and
  * prototype-poisoning guard in one lane. */
@@ -64,6 +93,42 @@ export function readBoundedJsonSource<T>(
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
 ): Promise<unknown | ResponseResult | T> {
+  let settled: MaybePromise<unknown | ResponseResult | T>
+  try {
+    settled = readBoundedJsonNow(req, maxBytes, protoPoisoning, onResult, onError)
+  } catch (error) {
+    // The continuation ran synchronously on a ready body: its throw is still this promise's rejection.
+    return Promise.reject(error)
+  }
+  return settled instanceof Promise ? settled : Promise.resolve(settled)
+}
+
+/**
+ * {@link readBoundedJsonSource} for a caller that takes its answer synchronously when the source can
+ * give it: a source that already holds its whole body (`jsonNow`) runs the lane, the continuation
+ * included, with no promise. Every other source answers with a promise, as before.
+ */
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onResult: JsonResultContinuation<T>,
+  onError: JsonErrorContinuation<T>,
+): MaybePromise<T>
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning?: ProtoPoisoning,
+  onResult?: JsonResultContinuation<T>,
+  onError?: JsonErrorContinuation<T>,
+): MaybePromise<unknown | ResponseResult | T>
+export function readBoundedJsonNow<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning = "reject",
+  onResult?: JsonResultContinuation<T>,
+  onError?: JsonErrorContinuation<T>,
+): MaybePromise<unknown | ResponseResult | T> {
   const preDecoded = preDecodedBody(req)
   if (preDecoded !== undefined) {
     const value =
@@ -124,23 +189,35 @@ export function readBoundedJsonSource<T>(
     }
 
     if (headerOf(req, "transfer-encoding") === null) {
+      const now = raw.jsonNow
+      if (now !== undefined) {
+        let ready: { readonly value: unknown; readonly byteLength: number } | undefined
+        let malformed = false
+        try {
+          ready = now.call(raw)
+        } catch {
+          malformed = true
+        }
+        if (malformed) {
+          return onResult === undefined ? Promise.resolve(INVALID_JSON()) : onResult(INVALID_JSON())
+        }
+        if (ready !== undefined) {
+          const settled = settleParsed(
+            ready.value,
+            ready.byteLength,
+            length,
+            maxBytes,
+            protoPoisoning,
+            onResult,
+          )
+          return onResult === undefined ? Promise.resolve(settled) : settled
+        }
+      }
       const jsonWithByteLength = raw.jsonWithByteLength
       if (jsonWithByteLength !== undefined) {
         return jsonWithByteLength.call(raw).then(
-          ({ value, byteLength }) => {
-            if (byteLength > length || byteLength > maxBytes) {
-              return onResult === undefined
-                ? plainError(413, "payload_too_large")
-                : onResult(plainError(413, "payload_too_large"))
-            }
-            let guarded: unknown
-            try {
-              guarded = guardParsedValue(value, protoPoisoning)
-            } catch {
-              guarded = INVALID_JSON()
-            }
-            return onResult === undefined ? guarded : onResult(guarded)
-          },
+          ({ value, byteLength }) =>
+            settleParsed(value, byteLength, length, maxBytes, protoPoisoning, onResult),
           () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
         )
       }
@@ -277,7 +354,23 @@ export const crossSiteFormRefused = (
  * their lanes whatever the schema carries. A form media type whose `Origin` is another site's, and
  * not one of `formOrigins`, is refused with `403` before the body is read.
  */
-export function readBodyFramed<T>(
+export function readBodyFramed<T>(...args: FramedBodyArgs<T>): Promise<T> {
+  let settled: MaybePromise<T>
+  try {
+    settled = readBodyFramedNow<T>(...args)
+  } catch (error) {
+    // A continuation that throws after a synchronous read still reaches `.catch` as a rejection.
+    return Promise.reject(error)
+  }
+  return settled instanceof Promise ? settled : Promise.resolve(settled)
+}
+
+/**
+ * The arguments of {@link readBodyFramed}: the request, the byte cap and the prototype-poisoning
+ * policy; the continuation for a parsed body, the wrapper for a refusal and the one for an error;
+ * then the route's body schema and the origins a form may come from.
+ */
+export type FramedBodyArgs<T> = [
   source: RequestSource,
   maxBodyBytes: number,
   protoPoisoning: ProtoPoisoning,
@@ -286,7 +379,21 @@ export function readBodyFramed<T>(
   onError: (err: unknown) => MaybePromise<T>,
   bodySchema?: object,
   formOrigins?: FormOrigins,
-): Promise<T> {
+]
+
+/** {@link readBodyFramed} that answers synchronously when the source already holds its body. */
+export function readBodyFramedNow<T>(
+  ...[
+    source,
+    maxBodyBytes,
+    protoPoisoning,
+    onParsed,
+    wrapResponse,
+    onError,
+    bodySchema,
+    formOrigins,
+  ]: FramedBodyArgs<T>
+): MaybePromise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
   // A body a transport codec decoded keeps its media type; the JSON lane below takes its value.
   if (!isJsonMediaType(contentType) && preDecodedBody(source) === undefined) {
@@ -317,7 +424,7 @@ export function readBodyFramed<T>(
     return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
   }
   try {
-    return readBoundedJsonSource(
+    return readBoundedJsonNow(
       source,
       maxBodyBytes,
       protoPoisoning,

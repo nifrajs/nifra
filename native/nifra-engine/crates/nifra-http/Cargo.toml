@@ -1,0 +1,13 @@
+[package]
+name = "nifra-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Zero-alloc HTTP/1.1 parser, smuggling guards, native fast-path routes, and batched response encoder."
+
+[dependencies]
+bytes.workspace = true
+httparse.workspace = true
+itoa.workspace = true
+memchr.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "nifra-napi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Thin NAPI-RS bridge exposing Nifra's batched shared-memory ABI to Node.js."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bytes.workspace = true
+napi.workspace = true
+napi-derive.workspace = true
+nifra-http = { path = "../nifra-http" }
+nifra-io = { path = "../nifra-io" }
+nifra-tls = { path = "../nifra-tls" }
+nifra-ws = { path = "../nifra-ws" }
+
+[build-dependencies]
+napi-build.workspace = true

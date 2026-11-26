@@ -1,0 +1,11 @@
+{
+  "name": "nifra-engine-bench-competitors",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Benchmark-only competitors for packages/node-engine/bench. No nifra package depends on these.",
+  "dependencies": {
+    "@morojs/engine": "1.2.1",
+    "@morojs/moro": "1.9.1",
+    "zod": "4.6.7"
+  }
+}

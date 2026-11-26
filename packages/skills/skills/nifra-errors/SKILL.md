@@ -1445,6 +1445,16 @@ WebSocket frames parsed without a messageSchema
 
 Docs: https://nifra.dev/docs/websockets
 
+### NF-S010
+
+Server answers requests with Host unchecked
+
+**Why:** A Deno or Bun listener answers every request without checking Host, and the project does not say a proxy does. Deno builds the request URL from Host, so a Host such as `evil.test/admin?` routes a `/pub/x` request to `/admin`, past a path rule in front of the app; Bun leaves `req.url` relative, or built on a Host the URL parser refuses.
+
+**Fix:** Set `validateHost: true` on the Nifra server (one header read per request); a bare `Deno.serve` or `Bun.serve` handler has no such option, so check Host there before routing on it. Behind a proxy that checks Host, say so instead: `"hostTopology": "proxied"` in nifra.check.json, or `// nifra-expect NF-S010: <reason>` above the listener.
+
+Docs: https://nifra.dev/docs/security
+
 ## Verify
 
 - A `nifra check` finding (`NF-...`): re-run `nifra check`; the fix is done when the code is gone from its output.

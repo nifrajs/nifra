@@ -412,4 +412,9 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: "Declare messageSchema (a discriminated union for several frame kinds): message() receives the parsed, validated value and invalid frames go to onInvalidMessage.",
     docs: "/docs/websockets",
   },
+  "NF-S010": {
+    why: "A Deno or Bun listener answers every request without checking Host, and the project does not say a proxy does. Deno builds the request URL from Host, so a Host such as `evil.test/admin?` routes a `/pub/x` request to `/admin`, past a path rule in front of the app; Bun leaves `req.url` relative, or built on a Host the URL parser refuses.",
+    fix: 'Set `validateHost: true` on the Nifra server (one header read per request); a bare `Deno.serve` or `Bun.serve` handler has no such option, so check Host there before routing on it. Behind a proxy that checks Host, say so instead: `"hostTopology": "proxied"` in nifra.check.json, or `// nifra-expect NF-S010: <reason>` above the listener.',
+    docs: "/docs/security",
+  },
 })

@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/nifra-io",
+  "crates/nifra-tls",
+  "crates/nifra-http",
+  "crates/nifra-ws",
+  "crates/nifra-napi",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.88"
+repository = "https://github.com/nifrajs/nifra"
+
+[workspace.dependencies]
+arc-swap = "1"
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys"] }
+bytes = "1"
+fastwebsockets = "0.10"
+httparse = "1.9"
+itoa = "1"
+libc = "0.2"
+memchr = "2"
+mio = { version = "1", features = ["os-poll", "net"] }
+napi = { version = "2", default-features = false, features = ["napi9"] }
+napi-build = "2"
+napi-derive = "2"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-pemfile = "2"
+socket2 = { version = "0.5", features = ["all"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "symbols"

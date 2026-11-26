@@ -35,7 +35,7 @@ import {
 } from "./runtime-core.ts"
 import type { CtxSet, RawContext, RequestSource } from "./server.ts"
 
-export { readBodyFramed, readBoundedJsonSource } from "./body-lane.ts"
+export { readBodyFramed, readBodyFramedNow, readBoundedJsonSource } from "./body-lane.ts"
 
 /** A fixed past instant for cookie deletion (`Expires`). A literal epoch - deterministic, unlike an
  * argless `new Date()`. */

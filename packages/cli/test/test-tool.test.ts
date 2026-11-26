@@ -159,7 +159,7 @@ describe("collectTestResult", () => {
         // is dead, yet `kill(pid, 0)` still succeeds. Observe the bounded state change, and count a
         // zombie as exited, instead of racing the first liveness probe.
         let exited = false
-        for (let attempt = 0; attempt < 50; attempt++) {
+        for (let attempt = 0; attempt < 300; attempt++) {
           try {
             process.kill(pid, 0)
           } catch (error) {

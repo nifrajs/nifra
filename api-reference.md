@@ -2373,6 +2373,8 @@ Every public export of every package and documented subpath - name, kind, signat
   How much of a thrown error's own text reaches the log sink. Mirrors `Server`'s option.
 - **FormOrigins** _(type)_ - `type FormOrigins = ReadonlyArray<string> | ((origin: string) => boolean)`
   Origins besides the request's own whose HTML forms may post a body: exact origins, or a function that receives the request's `Origin`.
+- **FramedBodyArgs** _(type)_ - `type FramedBodyArgs<T>`
+  The arguments of {@link readBodyFramed}: the request, the byte cap and the prototype-poisoning policy; the continuation for a parsed body, the wrapper for a refusal and the one for an error; then the route's body schema and the origins a form may come from.
 - **JsonByteLimitError** _(class)_ - `class JsonByteLimitError`
   A JSON value would exceed the caller's UTF-8 byte budget.
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`

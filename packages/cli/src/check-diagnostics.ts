@@ -106,6 +106,8 @@ export interface CheckResult {
   readonly externalMounts?: readonly string[]
   /** The tsconfigs `nifra.check.json` names for the typecheck, echoed so a narrowed program is visible. */
   readonly tsconfigs?: readonly string[]
+  /** The `hostTopology` `nifra.check.json` declares, echoed so a silenced or widened NF-S010 stays visible. */
+  readonly hostTopology?: HostTopology
   /** Mounts declared `opaque` - outside capability assurance on purpose, each with its stated reason.
    * Listed on every run so the report states its own boundary; never a failure. */
   readonly knownGaps?: readonly CapabilityGap[]
@@ -175,7 +177,13 @@ export interface CheckConfig {
   /** The tsconfigs the typecheck runs, each its own program, project-relative. Unset: `tsconfig.json`
    * and every project it references. */
   readonly tsconfigs?: readonly string[]
+  /** How the deployment is reached, as `nifra.check.json` declares it: `"proxied"` when a proxy in
+   * front checks `Host`, `"direct"` when clients reach the server itself. Read by NF-S010. */
+  readonly hostTopology?: HostTopology
 }
+
+/** `nifra.check.json` `hostTopology`. */
+export type HostTopology = "direct" | "proxied"
 
 /**
  * One entry of `nifra.check.json` `rules`, keyed by legacy rule name (`response-route`) or stable
@@ -724,6 +732,7 @@ export async function collectCheckDiagnostics(
       ? {}
       : { externalMounts: checkConfig.externalMounts }),
     ...(checkConfig.tsconfigs === undefined ? {} : { tsconfigs: checkConfig.tsconfigs }),
+    ...(checkConfig.hostTopology === undefined ? {} : { hostTopology: checkConfig.hostTopology }),
     ...(knownGaps.length === 0 ? {} : { knownGaps }),
     ...(hooks === undefined ? {} : { hooks }),
     ...(Object.keys(checkConfig.rules).length === 0 ? {} : { ruleOverrides: checkConfig.rules }),

@@ -27,6 +27,7 @@ import {
   type CheckDiagnostic,
   type CheckResult,
   collectCheckDiagnostics,
+  type HostTopology,
   type RuleOverride,
   safeIgnoreGlobMatch,
 } from "./check-diagnostics.ts"
@@ -283,6 +284,7 @@ async function loadCheckConfig(
       externalMounts?: unknown
       rules?: unknown
       tsconfigs?: unknown
+      hostTopology?: unknown
     }
     const raw = Array.isArray(parsed.externalMounts) ? parsed.externalMounts : []
     const externalMounts = raw
@@ -351,8 +353,15 @@ async function loadCheckConfig(
           '`tsconfigs` must be a non-empty array of tsconfig paths relative to the project, such as ["tsconfig.json"] - ignored',
         )
     }
-    const config: CheckConfig =
+    let hostTopology: HostTopology | undefined
+    if (parsed.hostTopology !== undefined) {
+      if (parsed.hostTopology === "direct" || parsed.hostTopology === "proxied")
+        hostTopology = parsed.hostTopology
+      else warnings.push('`hostTopology` must be "direct" or "proxied" - ignored')
+    }
+    const config: { -readonly [K in keyof CheckConfig]: CheckConfig[K] } =
       tsconfigs === undefined ? { externalMounts, rules } : { externalMounts, rules, tsconfigs }
+    if (hostTopology !== undefined) config.hostTopology = hostTopology
     return { config, warnings }
   } catch (error) {
     return {
