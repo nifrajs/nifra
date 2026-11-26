@@ -491,6 +491,8 @@ pub(crate) struct ConnCore {
     pub eof_at: Option<Instant>,
     pub dispatching: bool,
     pub close_after_write: bool,
+    /// The close waits for the peer's EOF, for at most `LINGER`.
+    pub linger: bool,
     pub last_activity: Instant,
     pub partial_since: Option<Instant>,
     /// When the connection is closed whether or not the peer has answered (a Close handshake's wait).
@@ -521,6 +523,7 @@ impl ConnCore {
             eof_at: None,
             dispatching: false,
             close_after_write: false,
+            linger: false,
             last_activity: now,
             partial_since: None,
             close_deadline: None,
@@ -538,6 +541,9 @@ impl ConnCore {
             .and_then(|t| t.alpn_protocol().map(|p| p.to_vec()))
     }
 }
+
+/// How long a refused peer has to read its answer and stop sending.
+const LINGER: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FlushAction {
@@ -581,7 +587,13 @@ pub(crate) fn flush_write_buf_core(core: &mut ConnCore) -> FlushAction {
         core.write_buf.shrink_to(READ_SCRATCH_SIZE);
     }
     if core.close_after_write {
-        return FlushAction::Close;
+        if !core.linger || core.read_ended {
+            return FlushAction::Close;
+        }
+        if core.close_deadline.is_none() {
+            unsafe { libc::shutdown(core.fd, libc::SHUT_WR) };
+            core.close_deadline = Some(Instant::now() + LINGER);
+        }
     }
     if core.writable_armed {
         core.writable_armed = false;
@@ -609,7 +621,7 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
         match send_nonblock(core.fd, bytes) {
             SendOutcome::All => {
                 if core.close_after_write {
-                    return FlushAction::Close;
+                    return flush_write_buf_core(core);
                 }
                 if core.writable_armed {
                     core.writable_armed = false;

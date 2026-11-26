@@ -64,6 +64,40 @@ test("a chunked upload over the cap is refused with 413 as it passes the cap, no
   }
 })
 
+test("a refusal reaches a client that is still sending when it is written", async () => {
+  const running = await serve(echoLength(), {
+    port: 0,
+    hostname: "127.0.0.1",
+    maxBodySize: 1_000_000,
+  })
+  try {
+    // The client reads only after its writes: a close with unread input resets the connection and
+    // takes the answer with it.
+    const text = await new Promise<string>((resolve) => {
+      let received = ""
+      let rounds = 0
+      const socket = connect(running.port, "127.0.0.1", () => {
+        socket.pause()
+        socket.write("POST /echo-length HTTP/1.1\r\nHost: x\r\ncontent-length: 8000000\r\n\r\n")
+        const timer = setInterval(() => {
+          if (++rounds <= 20 && !socket.destroyed) return void socket.write(CHUNK)
+          clearInterval(timer)
+          socket.resume()
+        }, 5)
+      })
+      socket.on("data", (data) => {
+        received += data.toString("latin1")
+      })
+      socket.on("error", () => {})
+      socket.on("close", () => resolve(received))
+      setTimeout(() => socket.destroy(), 4000).unref()
+    })
+    assert.equal(parseHead(text).status, 413)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a declared length over the cap is refused before any of the body is read", async () => {
   const running = await serve(echoLength(), {
     port: 0,

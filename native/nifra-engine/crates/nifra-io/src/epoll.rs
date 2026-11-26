@@ -888,6 +888,7 @@ unsafe fn handle_client_readable(
     let mut drained_from_bp = false;
     if let Some(conn) = st.conns.get_mut(conn_id) {
         conn.dispatching = false;
+        conn.linger |= matches!(action, ConnAction::Refuse { .. });
         if direct_len > 0 {
             let mut progressed = false;
             let leftover_start = match action {
@@ -895,7 +896,7 @@ unsafe fn handle_client_readable(
                     progressed = consumed > 0;
                     consumed.min(direct_len)
                 }
-                ConnAction::CloseAfterWrite { consumed } => {
+                ConnAction::CloseAfterWrite { consumed } | ConnAction::Refuse { consumed } => {
                     conn.close_after_write = true;
                     progressed = consumed > 0;
                     consumed.min(direct_len)
@@ -923,7 +924,7 @@ unsafe fn handle_client_readable(
                         progressed = true;
                     }
                 }
-                ConnAction::CloseAfterWrite { consumed } => {
+                ConnAction::CloseAfterWrite { consumed } | ConnAction::Refuse { consumed } => {
                     if consumed > 0 {
                         read_buf.drain(..consumed);
                         progressed = true;

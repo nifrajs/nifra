@@ -44,7 +44,6 @@ try {
     },
   )
   if (node.role === "primary") {
-    say({ event: "ready", workers: node.workers() })
     process.on("SIGUSR2", () => {
       node.restart({ drainMs: 500 }).then(
         () => say({ event: "restarted", workers: node.workers() }),
@@ -69,6 +68,8 @@ try {
         (error: Error) => say({ event: "reload-failed", message: error.message }),
       )
     })
+    // Last: the tests signal as soon as they read this, and an unhandled SIGUSR2 kills the process.
+    say({ event: "ready", workers: node.workers() })
   }
 } catch (error) {
   say({ event: "failed", message: error instanceof Error ? error.message : String(error) })

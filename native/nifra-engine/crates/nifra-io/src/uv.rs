@@ -952,6 +952,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
         st.turn_dirty = true;
         if let Some(conn) = st.conns.get_mut(conn_id) {
             conn.core.dispatching = false;
+            conn.core.linger |= matches!(action, ConnAction::Refuse { .. });
             if direct_len > 0 {
                 let mut progressed = false;
                 let leftover_start = match action {
@@ -959,7 +960,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                         progressed = consumed > 0;
                         consumed.min(direct_len)
                     }
-                    ConnAction::CloseAfterWrite { consumed } => {
+                    ConnAction::CloseAfterWrite { consumed } | ConnAction::Refuse { consumed } => {
                         conn.core.close_after_write = true;
                         progressed = consumed > 0;
                         consumed.min(direct_len)
@@ -990,7 +991,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                             progressed = true;
                         }
                     }
-                    ConnAction::CloseAfterWrite { consumed } => {
+                    ConnAction::CloseAfterWrite { consumed } | ConnAction::Refuse { consumed } => {
                         if consumed > 0 {
                             read_buf.drain(..consumed);
                             progressed = true;

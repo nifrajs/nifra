@@ -863,7 +863,9 @@ fn refuse_request(
         return ConnAction::Continue { consumed };
     }
     st.templates.write_prepared(template, body, write_buf);
-    ConnAction::CloseAfterWrite { consumed }
+    // What the peer sends from here on is not another request.
+    st.conn_meta.ensure(conn_id).refuse_input = true;
+    ConnAction::Refuse { consumed }
 }
 
 /// Direct-indexed O(1) free-list slab replacing `HashMap<u32, PendingReq>` on the hot path.

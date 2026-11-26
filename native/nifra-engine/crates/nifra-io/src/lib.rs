@@ -156,6 +156,9 @@ pub enum ConnAction {
     Continue { consumed: usize },
     /// Close after flushing `write_buf`; `consumed` bytes were processed.
     CloseAfterWrite { consumed: usize },
+    /// As `CloseAfterWrite`, with the peer possibly still sending: finish the write side and discard
+    /// what arrives until it closes. Closing over unread input resets the connection and loses the answer.
+    Refuse { consumed: usize },
     /// Close immediately (e.g., protocol error / smuggling attempt).
     CloseNow,
 }
@@ -234,7 +237,8 @@ where
                                             conn.read_buf.drain(..consumed);
                                         }
                                     }
-                                    ConnAction::CloseAfterWrite { consumed } => {
+                                    ConnAction::CloseAfterWrite { consumed }
+                                    | ConnAction::Refuse { consumed } => {
                                         if consumed > 0 {
                                             conn.read_buf.drain(..consumed);
                                         }
