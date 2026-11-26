@@ -13,17 +13,51 @@ import {
 // minimal stub stands in for the DOM (Bun's test env has no `document`). Casts are test-only.
 function island(
   id: string,
-  opts: { strategy?: string; media?: string; props?: string } = {},
+  opts: {
+    strategy?: string
+    media?: string
+    props?: string
+    /** Give the host listener methods that record into this map, keyed by event type. */
+    on?: Map<string, Array<() => void>>
+  } = {},
 ): HTMLElement {
   const dataset: Record<string, string> = { island: id }
   if (opts.strategy !== undefined) dataset.islandStrategy = opts.strategy
   if (opts.media !== undefined) dataset.islandMedia = opts.media
   if (opts.props !== undefined) dataset.islandProps = opts.props
-  return { dataset } as unknown as HTMLElement
+  const { on } = opts
+  const listening =
+    on === undefined
+      ? {}
+      : {
+          addEventListener: (type: string, listener: () => void) => {
+            on.set(type, [...(on.get(type) ?? []), listener])
+          },
+          removeEventListener: (type: string, listener: () => void) => {
+            on.set(
+              type,
+              (on.get(type) ?? []).filter((l) => l !== listener),
+            )
+          },
+        }
+  return { dataset, ...listening } as unknown as HTMLElement
+}
+const emit = (on: Map<string, Array<() => void>>, type: string): void => {
+  for (const listener of [...(on.get(type) ?? [])]) listener()
 }
 const rootOf = (els: HTMLElement[]): ParentNode =>
   ({ querySelectorAll: () => els }) as unknown as ParentNode
 
+// An enhancer that only counts its runs.
+const counting = (): { enhancer: IslandEnhancer; runs: () => number } => {
+  let n = 0
+  return {
+    enhancer: () => {
+      n++
+    },
+    runs: () => n,
+  }
+}
 describe("mountIslands", () => {
   test("load: runs the matching enhancer synchronously with the parsed props", () => {
     let seen: unknown
@@ -219,6 +253,40 @@ describe("mountIslands", () => {
     } finally {
       g.IntersectionObserver = original
     }
+  })
+
+  test("interaction: waits for the first hover, press, focus or click on the host, then runs once", () => {
+    for (const type of ["pointerover", "pointerdown", "focusin", "click"]) {
+      const on = new Map<string, Array<() => void>>()
+      const { enhancer, runs } = counting()
+      const dispose = mountIslands(
+        { c: enhancer },
+        { root: rootOf([island("c", { strategy: "interaction", on })]) },
+      )
+      expect(runs()).toBe(0)
+      emit(on, type)
+      emit(on, "pointerdown")
+      expect(runs()).toBe(1)
+      expect([...on.values()].flat()).toHaveLength(0)
+      dispose()
+    }
+  })
+
+  test("interaction: disposing before the first interaction leaves the enhancer unrun", () => {
+    const on = new Map<string, Array<() => void>>()
+    const { enhancer, runs } = counting()
+    mountIslands(
+      { c: enhancer },
+      { root: rootOf([island("c", { strategy: "interaction", on })]) },
+    )()
+    emit(on, "pointerdown")
+    expect(runs()).toBe(0)
+  })
+
+  test("interaction: a host that cannot take listeners runs at once", () => {
+    const { enhancer, runs } = counting()
+    mountIslands({ c: enhancer }, { root: rootOf([island("c", { strategy: "interaction" })]) })
+    expect(runs()).toBe(1)
   })
 
   test("media: waits for the first match, then runs once and removes its listener", () => {

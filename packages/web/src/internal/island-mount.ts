@@ -28,7 +28,10 @@ export function mountIsland(
   const strategyAttr = el.dataset.islandStrategy
   const media = el.dataset.islandMedia
   const strategy: IslandStrategy | undefined =
-    strategyAttr === "idle" || strategyAttr === "visible" || strategyAttr === "load"
+    strategyAttr === "idle" ||
+    strategyAttr === "visible" ||
+    strategyAttr === "load" ||
+    strategyAttr === "interaction"
       ? strategyAttr
       : strategyAttr === "media" &&
           media !== undefined &&

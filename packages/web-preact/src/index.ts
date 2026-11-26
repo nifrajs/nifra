@@ -95,7 +95,7 @@ export const preactAdapter: RenderAdapter = {
   },
   // A partially prerendered hole's HTML: rendered alone, its `useId`s prefixed so they never collide
   // with the page's, which the client root it hydrates into repeats.
-  async renderFragment(ui, options) {
+  renderFragment(ui, options) {
     return withStringRenderer(({ renderToString }) =>
       // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a hole's render returns Preact output; the seam erases it to unknown.
       renderToString(idScope(ui() as ComponentChildren, options.idPrefix)),

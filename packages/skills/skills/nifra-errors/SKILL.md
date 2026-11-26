@@ -1289,6 +1289,36 @@ Markup assistive technology reads worse than it could
 
 Docs: https://nifra.dev/docs/errors
 
+### NF-C064
+
+Island host with no enhancer
+
+**Why:** A data-island host names an id that no mountIslands or enableSwap call in the project lists, so no enhancer ever runs on it. The server-rendered markup stays as it is and nothing warns at runtime.
+
+**Fix:** Add the id to the mountIslands map, or fix the id in the markup (the check lists the ids the project mounts). A host mounted from outside the project takes `// nifra-expect NF-C064: <reason>` above it (`<!-- nifra-expect NF-C064: <reason> -->` inside an html template).
+
+Docs: https://nifra.dev/docs/islands
+
+### NF-C065
+
+Island props differ from the enhancer's props type
+
+**Why:** The props a host passes in data-island-props do not match the props type the enhancer declares: a required prop is missing, a prop is not declared, or a literal has another primitive type. The props travel as JSON in an attribute, so TypeScript never compares the two.
+
+**Fix:** Pass what the enhancer's props type declares, or change the type. Both sides are read only from a type literal on `defineIsland<{...}>` or `bindIsland<{...}>` and an object literal in `islandProps({...})`. A difference kept on purpose takes `// nifra-expect NF-C065: <reason>` above the host.
+
+Docs: https://nifra.dev/docs/islands
+
+### NF-C066
+
+Island attribute binding the runtime refuses
+
+**Why:** A data-bind-attr pair names an attribute the binding runtime refuses to set: an event-handler or srcdoc attribute, a URL attribute on a script, iframe, object, embed, link or base element, or any attribute of an SVG animation element (set, animate, animateMotion, animateTransform: an animation can set a link's href to a script URL). The binding is skipped with a console warning, so the attribute never changes.
+
+**Fix:** Bind a different attribute. A URL that must change on such an element is set by the server render, or by an enhancer you review.
+
+Docs: https://nifra.dev/docs/islands
+
 ### NF-D001
 
 Doctor check

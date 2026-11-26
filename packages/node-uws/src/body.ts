@@ -8,6 +8,13 @@ import type { HttpResponse } from "./uws.ts"
 export const BODY_HIGH_WATER = 1 << 20
 
 const EMPTY = Buffer.alloc(0)
+const identity = (body: Buffer): Buffer => body
+
+/** A pending whole-body read: `run` maps the complete body inside the one promise it settles. */
+interface Reader {
+  run(body: Buffer): void
+  readonly reject: (reason: unknown) => void
+}
 const UNREAD = "Body is unusable: the response was already being sent"
 
 /**
@@ -23,8 +30,9 @@ export class BodyChannel {
   private ended = false
   private failure: unknown
   private paused = false
-  private waiters: Array<() => void> = []
-  private all: Promise<Buffer> | undefined
+  private waiters: Array<() => void> | undefined
+  private readers: Reader[] | undefined
+  private whole: Buffer | undefined
   private streamValue: ReadableStream<Uint8Array> | undefined
   private pulled = false
   private discarded = false
@@ -93,8 +101,7 @@ export class BodyChannel {
    * first takes back the normal flow control.
    */
   unthrottle(): void {
-    if (this.gone || this.aborted || this.collecting || this.pulled || this.all !== undefined)
-      return
+    if (this.gone || this.aborted || this.collecting || this.pulled) return
     if (this.streamValue === undefined) {
       this.discarded = true
       this.chunks = []
@@ -124,27 +131,49 @@ export class BodyChannel {
   }
 
   private wakeAll(): void {
+    const readers = this.readers
+    if (readers !== undefined && (this.ended || this.gone)) {
+      this.readers = undefined
+      for (const reader of readers) this.deliver(reader)
+    }
     const waiting = this.waiters
-    if (waiting.length === 0) return
-    this.waiters = []
+    if (waiting === undefined) return
+    this.waiters = undefined
     for (const resolve of waiting) resolve()
   }
 
   private waitForData(): Promise<void> {
     return new Promise<void>((resolve) => {
-      this.waiters.push(resolve)
+      if (this.waiters === undefined) this.waiters = [resolve]
+      else this.waiters.push(resolve)
     })
+  }
+
+  private deliver(reader: Reader): void {
+    if (this.failure !== undefined) {
+      reader.reject(this.failure)
+      return
+    }
+    if (!this.ended) {
+      reader.reject(new Error("request closed before body completed"))
+      return
+    }
+    reader.run(this.bodyOnce())
   }
 
   /** The whole body. Unusable once the {@link stream} has been read from, as a read `Request` is. */
   bytes(): Promise<Buffer> {
-    if (this.discarded) return Promise.reject(new TypeError(UNREAD))
-    if (this.pulled) return Promise.reject(new TypeError("Body is unusable: it was already read"))
-    this.all ??= this.collect()
-    return this.all
+    return this.read(identity)
   }
 
-  private async collect(): Promise<Buffer> {
+  /**
+   * The whole body passed through `map`, in one promise: a body that is already complete is mapped on
+   * the spot, and one still arriving is mapped by the `onData` callback that completes it, so a JSON
+   * read costs no promise beyond the one the caller awaits. A `map` that throws rejects that promise.
+   */
+  read<T>(map: (body: Buffer) => T): Promise<T> {
+    if (this.discarded) return Promise.reject(new TypeError(UNREAD))
+    if (this.pulled) return Promise.reject(new TypeError("Body is unusable: it was already read"))
     // A reader that wants every byte has no use for the throttle; the cap on how much it may take
     // is the caller's (core checks Content-Length before it reads, and caps a chunked body itself).
     this.collecting = true
@@ -153,9 +182,37 @@ export class BodyChannel {
       this.paused = false
       this.res.resume()
     }
-    while (!this.ended && !this.gone) await this.waitForData()
-    if (this.failure !== undefined) throw this.failure
-    if (!this.ended) throw new Error("request closed before body completed")
+    if (this.ended || this.gone) {
+      if (this.failure !== undefined) return Promise.reject(this.failure)
+      if (!this.ended) return Promise.reject(new Error("request closed before body completed"))
+      try {
+        return Promise.resolve(map(this.bodyOnce()))
+      } catch (error) {
+        return Promise.reject(error)
+      }
+    }
+    return new Promise<T>((resolve, reject) => {
+      const reader: Reader = {
+        run: (body) => {
+          try {
+            resolve(map(body))
+          } catch (error) {
+            reject(error)
+          }
+        },
+        reject,
+      }
+      if (this.readers === undefined) this.readers = [reader]
+      else this.readers.push(reader)
+    })
+  }
+
+  private bodyOnce(): Buffer {
+    if (this.whole === undefined) this.whole = this.takeBody()
+    return this.whole
+  }
+
+  private takeBody(): Buffer {
     const [only] = this.chunks
     const body =
       only === undefined
@@ -187,8 +244,8 @@ export class BodyChannel {
 
   /** The body as a pull-driven stream; cancelling it drops the rest of the upload. */
   stream(): ReadableStream<Uint8Array> {
-    if (this.all !== undefined) {
-      const replay = this.all
+    if (this.collecting) {
+      const replay = this.bytes()
       return new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {

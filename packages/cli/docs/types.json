@@ -8265,15 +8265,15 @@
     "name": "IslandStrategy",
     "kind": "type",
     "package": "@nifrajs/island-trigger",
-    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
-    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
+    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | \"interaction\" | {\n    readonly media: string;\n};",
+    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element: the first three come before the click they lead to, and a click mounts\n * the island before it reaches its target, so the enhancer is in place for each. An object strategy\n * is intentionally limited to media queries.\n */"
   },
   {
     "name": "IslandStrategy",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
-    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
+    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | \"interaction\" | {\n    readonly media: string;\n};",
+    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element: the first three come before the click they lead to, and a click mounts\n * the island before it reaches its target, so the enhancer is in place for each. An object strategy\n * is intentionally limited to media queries.\n */"
   },
   {
     "name": "IsolatedExtensionSnapshot",
@@ -17698,7 +17698,7 @@
     "name": "TriggerOptions",
     "kind": "interface",
     "package": "@nifrajs/island-trigger",
-    "signature": "export interface TriggerOptions {\n    /** Target used by the `visible` strategy. Missing targets degrade to immediate activation. */\n    readonly target?: object;\n}"
+    "signature": "export interface TriggerOptions {\n    /** Target used by the `visible` and `interaction` strategies. A missing target, or one that cannot\n     * take listeners, degrades to immediate activation. */\n    readonly target?: object;\n}"
   },
   {
     "name": "TrustedHtml",
@@ -22756,7 +22756,7 @@
     "name": "joinCollections",
     "kind": "function",
     "package": "@nifrajs/content",
-    "signature": "export declare function joinCollections<Left extends Record<string, unknown>, Right extends Record<string, unknown>, LeftBy extends ContentFieldKey<Left>, RightBy extends ContentFieldKey<Right>, On extends SharedKey<Left, Right>>(left: IndexedCollection<Left, LeftBy>, right: IndexedCollection<Right, RightBy>, on: On, options: {\n    readonly cardinality: \"one-to-one\";\n}): IndexedJoin<Left, Right, On, \"one-to-one\">;"
+    "signature": "export declare function joinCollections<Left extends Record<string, unknown>, Right extends Record<string, unknown>, LeftBy extends ContentFieldKey<Left>, RightBy extends ContentFieldKey<Right>, On extends SharedKey<Left, Right>>(...args: JoinArguments<[\n    options: {\n        readonly cardinality: \"one-to-one\";\n    }\n], Left, Right, LeftBy, RightBy, On>): IndexedJoin<Left, Right, On, \"one-to-one\">;"
   },
   {
     "name": "jsonLd",

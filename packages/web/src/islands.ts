@@ -15,7 +15,7 @@
  *
  * Server side: `<div data-island="counter" data-island-props="${islandProps({ start: 0 })}">`, or
  * `@nifrajs/web-react`'s `<Island>`. Optional `data-island-strategy` (`load` | `idle` | `visible` |
- * `media`, with `data-island-media`). Props travel as JSON in the attribute - no central registry, so
+ * `interaction` | `media`, with `data-island-media`). Props travel as JSON in the attribute - no central registry, so
  * concurrent SSR renders never share state. Nothing inside a `data-island-ignore` element mounts or
  * binds: render user HTML there.
  */

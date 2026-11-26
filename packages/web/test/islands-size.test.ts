@@ -5,6 +5,8 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { gzipSync } from "bun"
 
+// A production build defines NODE_ENV, which drops the development-only warnings from the bundle.
+const PRODUCTION = { "process.env.NODE_ENV": JSON.stringify("production") }
 const ISLANDS = JSON.stringify(fileURLToPath(new URL("../src/islands.ts", import.meta.url)))
 const SWAP = JSON.stringify(fileURLToPath(new URL("../src/islands-swap.ts", import.meta.url)))
 
@@ -59,12 +61,15 @@ const ALL =
 
 // Measured on Bun 1.4.4 + 2%. Raise a cap only in the commit that explains the new bytes.
 const fixtures = {
-  // Per-host disposal adds ~30 B gz; the updated imperative/JS caps retain the 2% margin.
-  imperative: { budget: 1168, source: `${IMPERATIVE}mountIslands({ counter })` },
-  // Blocking active elements and network-path URLs adds checks to the markup binding runtime.
-  markup: { budget: 2810, source: `${MARKUP}mountIslands({ compare })` },
-  js: { budget: 2462, source: `${JS}mountIslands({ todos })` },
-  everything: { budget: 3629, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
+  // Per-host disposal adds ~30 B gz; the updated imperative/JS caps retain the 2% margin. The
+  // `interaction` trigger adds +79 B gz to every fixture (imperative 1144 -> 1223).
+  imperative: { budget: 1240, source: `${IMPERATIVE}mountIslands({ counter })` },
+  // The markup walker refuses a URL binding on script-like elements (+41 B gz, 2651 -> 2692) and any
+  // binding on an SVG animation element (+33 B gz, 2771 -> 2804 with the interaction trigger).
+  // Rejecting browser-normalized network paths puts the markup fixture at 2836 B gz.
+  markup: { budget: 2856, source: `${MARKUP}mountIslands({ compare })` },
+  js: { budget: 2537, source: `${JS}mountIslands({ todos })` },
+  everything: { budget: 3662, source: `${MARKUP}${JS}mountIslands({ compare, todos })` },
   // `@nifrajs/web/islands/swap` in place of `mountIslands`: what a page pays for slot swaps.
   swap: {
     budget: 2996,
@@ -78,7 +83,12 @@ for (const [name, { budget, source }] of Object.entries(fixtures)) {
     const entry = join(dir, "entry.js")
     writeFileSync(entry, `import { ${ALL} } from ${ISLANDS}\n${BUS}${source}`)
     try {
-      const built = await Bun.build({ entrypoints: [entry], target: "browser", minify: true })
+      const built = await Bun.build({
+        entrypoints: [entry],
+        target: "browser",
+        minify: true,
+        define: PRODUCTION,
+      })
       expect(built.success).toBe(true)
       let src = ""
       for (const o of built.outputs) src += await o.text()
@@ -90,3 +100,29 @@ for (const [name, { budget, source }] of Object.entries(fixtures)) {
     }
   })
 }
+
+test("a production build carries none of the development warnings; a development build does", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "islands-dev-"))
+  const entry = join(dir, "entry.js")
+  writeFileSync(entry, `import { ${ALL} } from ${ISLANDS}\n${MARKUP}mountIslands({ compare })`)
+  try {
+    const bundle = async (define: Record<string, string>) => {
+      const built = await Bun.build({
+        entrypoints: [entry],
+        target: "browser",
+        minify: true,
+        define,
+      })
+      expect(built.success).toBe(true)
+      let src = ""
+      for (const o of built.outputs) src += await o.text()
+      return src
+    }
+    expect(await bundle(PRODUCTION)).not.toContain("the server rendered")
+    expect(await bundle({ "process.env.NODE_ENV": JSON.stringify("development") })).toContain(
+      "the server rendered",
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

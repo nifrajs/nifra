@@ -312,7 +312,26 @@ export default function Islands() {
         - render user HTML there. Because both sides are literal, <code>nifra check</code> matches
         them: <code>NF-C047</code> warns when a name has no <code>state(&quot;...&quot;)</code> key
         or returned handler, and <code>NF-C048</code> when a binding sits where no{" "}
-        <code>bindIsland</code> host will ever walk it.
+        <code>bindIsland</code> host will ever walk it. <code>NF-C066</code> warns when a{" "}
+        <code>data-bind-attr</code> names an attribute the runtime refuses.
+      </p>
+      <p>
+        The same check reads the host. <code>NF-C064</code> warns when a <code>data-island</code>{" "}
+        id appears in no <code>mountIslands</code> map (it stays quiet once a map is held in a
+        variable, spread or aliased, since the ids are then unknowable). <code>NF-C065</code>{" "}
+        compares the props a host passes with the enhancer's type: a missing required prop, an
+        undeclared one, or a literal of another primitive type. It reads a type literal on{" "}
+        <code>defineIsland&lt;&#123; ... &#125;&gt;</code> or <code>bindIsland</code> (or an
+        annotated second parameter) and an object literal in <code>islandProps(&#123;...&#125;)</code>,{" "}
+        <code>JSON.stringify(&#123;...&#125;)</code> or JSX <code>props</code>; the props are still
+        JSON in an attribute at runtime, so nothing is validated in the browser.
+      </p>
+      <p>
+        In development a <code>data-bind-text</code> whose server-rendered text, or a{" "}
+        <code>data-bind-show</code> whose hidden state, differs from the signal&apos;s first value
+        logs one console warning: the page would change on mount. An empty text slot is not a
+        mismatch. The check sits behind <code>process.env.NODE_ENV</code>, so a production build
+        that defines it carries none of that code; one that does not define it keeps the warning.
       </p>
 
       <h2>Signals</h2>
@@ -418,8 +437,12 @@ export default function Islands() {
       <h2>Load strategies</h2>
       <p>
         A host&apos;s <code>data-island-strategy</code> defers its enhancer: <code>load</code>{" "}
-        (default), <code>idle</code>, <code>visible</code> (mount when it scrolls into view), or{" "}
-        <code>media</code> with the query in <code>data-island-media</code>. A host with no matching
+        (default), <code>idle</code>, <code>visible</code> (mount when it scrolls into view),{" "}
+        <code>interaction</code> (mount on the first hover, press, focus or click on the host: the
+        first three come before the click they lead to, and a click mounts the island before it
+        reaches its target, so the enhancer receives that same click), or <code>media</code> with
+        the query in{" "}
+        <code>data-island-media</code>. A host with no matching
         enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
         never a runtime error. The scheduling itself is <code>@nifrajs/island-trigger</code>'s{" "}
         <code>scheduleTrigger</code>, which has no DOM or framework dependency, for a runtime of

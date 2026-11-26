@@ -79,10 +79,10 @@ export function commentBlockExpectation(
     found = true
     const rest = (match[1] ?? "").trimStart()
     if (!rest.startsWith(":")) return undefined
-    // A block comment's `*/` closer is not part of the reason.
+    // A block comment's `*/` closer, and the `}` that ends a JSX comment, are not part of the reason.
     const reason = rest
       .slice(1)
-      .replace(/\*\/\s*$/, "")
+      .replace(/\*\/\}?\s*$/, "")
       .trim()
     return reason.length > 0 ? reason : undefined
   }

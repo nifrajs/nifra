@@ -123,6 +123,15 @@ export interface UseQueryResult<T> extends QueryState<T> {
   readonly refetch: () => Promise<T>
 }
 
+function useQueryState<T>(handle: QueryHandle<T>, enabled: boolean): QueryState<T> {
+  // The handle also supplies the server snapshot so a hydrated provider renders its seeded data.
+  const state = useSyncExternalStore(handle.subscribe, handle.snapshot, handle.snapshot)
+  useEffect(() => {
+    if (enabled) handle.fetch().catch(() => {})
+  }, [handle, enabled])
+  return state
+}
+
 /**
  * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,
  * updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share
@@ -150,17 +159,7 @@ export function useQuery<T>(
   // A disabled query still binds a handle (so it re-renders when re-enabled), but never fetches.
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the public overloads checked the key against the data type; this signature has erased it to `unknown`
   const handle: QueryHandle<T> = client.query<T>(key as QueryKey<T>, fn, options)
-  // Server snapshot = the handle's own snapshot: without a provider the client is the NOOP one (idle),
-  // but WITH a hydrated provider client it returns the server-seeded data - so a HydrationBoundary-fed
-  // query renders its data during SSR and the first client render matches (no loading flash, no drift).
-  const state = useSyncExternalStore<QueryState<T>>(
-    handle.subscribe,
-    handle.snapshot,
-    handle.snapshot,
-  )
-  useEffect(() => {
-    if (enabled) handle.fetch().catch(() => {})
-  }, [handle, enabled])
+  const state = useQueryState(handle, enabled)
   return {
     ...state,
     isPending: state.status === "pending",
@@ -246,10 +245,7 @@ export function useInfiniteQuery<T, P>(
   const client = useQueryClient()
   const enabled = options.enabled !== false
   const handle = client.infiniteQuery<T, P>(key, fn, options)
-  const state = useSyncExternalStore(handle.subscribe, handle.snapshot, handle.snapshot)
-  useEffect(() => {
-    if (enabled) handle.fetch().catch(() => {})
-  }, [handle, enabled])
+  const state = useQueryState(handle, enabled)
   return {
     ...state,
     isPending: state.status === "pending",

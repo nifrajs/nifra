@@ -4,15 +4,37 @@
  * registries, signals, or UI frameworks.
  */
 
-/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */
-export type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string }
+/**
+ * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on
+ * the island's own element: the first three come before the click they lead to, and a click mounts
+ * the island before it reaches its target, so the enhancer is in place for each. An object strategy
+ * is intentionally limited to media queries.
+ */
+export type IslandStrategy =
+  | "load"
+  | "idle"
+  | "visible"
+  | "interaction"
+  | { readonly media: string }
+
+// The earliest signals of intent: a pointer arriving, a press (touch included), keyboard focus. A
+// click covers assistive technology that activates a control with no pointer or focus event first.
+// Each is listened for in the capture phase: a click mounts the island before the event reaches the
+// element it was aimed at, so a handler the enhancer adds there still receives that same click.
+const INTERACTION_EVENTS = ["pointerover", "pointerdown", "focusin", "click"] as const
 
 /** The maximum media-query length accepted from an HTML data attribute. */
 export const MAX_MEDIA_QUERY_LENGTH = 256
 
 export interface TriggerOptions {
-  /** Target used by the `visible` strategy. Missing targets degrade to immediate activation. */
+  /** Target used by the `visible` and `interaction` strategies. A missing target, or one that cannot
+   * take listeners, degrades to immediate activation. */
   readonly target?: object
+}
+
+interface EventTargetLike {
+  addEventListener?: (type: string, listener: () => void, capture: boolean) => void
+  removeEventListener?: (type: string, listener: () => void, capture: boolean) => void
 }
 
 /** Structural event shape used instead of a DOM lib type so this package stays runtime-neutral. */
@@ -109,6 +131,19 @@ export function scheduleTrigger(
     })
     observer.observe(options.target)
     cleanup = () => observer.disconnect()
+    return stop
+  }
+
+  if (strategy === "interaction") {
+    const target: EventTargetLike | undefined = options.target
+    if (target?.addEventListener === undefined) {
+      fire()
+      return stop
+    }
+    for (const type of INTERACTION_EVENTS) target.addEventListener(type, fire, true)
+    cleanup = () => {
+      for (const type of INTERACTION_EVENTS) target.removeEventListener?.(type, fire, true)
+    }
     return stop
   }
 

@@ -15,6 +15,13 @@ function detached(bytes: Uint8Array): ArrayBuffer {
   return new Uint8Array(bytes).buffer
 }
 
+const jsonWithLength = (
+  bytes: Buffer,
+): { readonly value: unknown; readonly byteLength: number } => ({
+  value: parseJson(bytes),
+  byteLength: bytes.byteLength,
+})
+
 // Fetch's `json()` decodes UTF-8 without a leading byte order mark; `Buffer#toString` keeps one, and
 // `JSON.parse` then refuses a body every other runtime parses.
 const utf8Text = (body: Buffer): string =>
@@ -162,22 +169,19 @@ export class UwsSource {
 
   arrayBuffer(): Promise<ArrayBuffer> {
     if (this.channel === null) return Promise.resolve(new ArrayBuffer(0))
-    return this.channel.bytes().then(detached)
+    return this.channel.read(detached)
   }
 
   json(): Promise<unknown> {
     if (this.channel === null)
       return Promise.reject(new SyntaxError("Unexpected end of JSON input"))
-    return this.channel.bytes().then(parseJson)
+    return this.channel.read(parseJson)
   }
 
   jsonWithByteLength(): Promise<{ readonly value: unknown; readonly byteLength: number }> {
     if (this.channel === null)
       return Promise.reject(new SyntaxError("Unexpected end of JSON input"))
-    return this.channel.bytes().then((bytes) => ({
-      value: parseJson(bytes),
-      byteLength: bytes.byteLength,
-    }))
+    return this.channel.read(jsonWithLength)
   }
 
   /**
