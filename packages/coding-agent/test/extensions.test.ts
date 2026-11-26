@@ -52,6 +52,31 @@ describe("ExtensionHost", () => {
     await expect(Bun.file(marker).exists()).resolves.toBe(false)
   })
 
+  test("denies untrusted capabilities before top-level code even after block-followed regex literals", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    const marker = join(cwd, "executed-after-regex.txt")
+    await mkdir(join(cwd, "extensions"))
+    await writeFile(
+      join(cwd, "extensions", "regex-after-block.ts"),
+      [
+        `import { writeFileSync } from "node:fs"`,
+        `function helper() {}`,
+        `/"([^"]*)"/.test('""')`,
+        `type Config = { flag?: boolean }`,
+        `if (false) /'/g.test("")`,
+        `writeFileSync(${JSON.stringify(marker)}, "ran")`,
+        `export const capabilities = ["network"]`,
+        `export default () => {}`,
+      ].join("\n"),
+    )
+    const host = new ExtensionHost({ cwd, roots: ["extensions/regex-after-block.ts"] })
+    const result = await host.reload()
+    expect(result.rolledBack).toBe(true)
+    expect(result.error).toContain("untrusted capability")
+    await expect(Bun.file(marker).exists()).resolves.toBe(false)
+  })
+
   test("ignores string, template, and regex literals matching capabilities syntax", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)

@@ -478,7 +478,12 @@ export class ExtensionHost {
 type CapabilityToken =
   | { readonly kind: "word"; readonly text: string; readonly depth: number }
   | { readonly kind: "string"; readonly value: string; readonly depth: number }
-  | { readonly kind: "punct"; readonly text: string; readonly depth: number }
+  | {
+      readonly kind: "punct"
+      readonly text: string
+      readonly depth: number
+      readonly regexNext?: boolean
+    }
   | { readonly kind: "other"; readonly text: string; readonly depth: number }
 
 const REGEX_PREFIX_KEYWORDS = new Set([
@@ -500,7 +505,41 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "do",
 ])
 
-const NON_REGEX_PUNCT = new Set([")", "]", "}", "++", "--"])
+const NON_REGEX_PUNCT = new Set(["]", "++", "--"])
+const REGEX_AFTER_PAREN_KEYWORDS = new Set(["if", "while", "for", "with"])
+const EXPR_BRACE_PREFIX_WORDS = new Set([
+  "return",
+  "throw",
+  "yield",
+  "await",
+  "typeof",
+  "void",
+  "delete",
+  "in",
+  "of",
+  "instanceof",
+  "new",
+  "case",
+])
+const EXPR_BRACE_PREFIX_PUNCT = new Set([
+  "=",
+  ":",
+  "(",
+  "[",
+  ",",
+  "?",
+  "!",
+  "~",
+  "+",
+  "-",
+  "*",
+  "%",
+  "&",
+  "|",
+  "^",
+  "<",
+  ">",
+])
 const EXPORT_DECL_KEYWORDS = new Set(["const", "let", "var"])
 
 function isWordStartCode(code: number): boolean {
@@ -661,16 +700,32 @@ function scanRegexLiteral(source: string, start: number): number {
 function canStartRegex(prev: CapabilityToken | undefined): boolean {
   if (prev === undefined) return true
   if (prev.kind === "word") return REGEX_PREFIX_KEYWORDS.has(prev.text)
-  if (prev.kind === "punct") return !NON_REGEX_PUNCT.has(prev.text)
+  if (prev.kind === "punct") {
+    if (prev.regexNext !== undefined) return prev.regexNext
+    return !NON_REGEX_PUNCT.has(prev.text)
+  }
+  return false
+}
+
+function isExpressionOpeningBrace(
+  prev: CapabilityToken | undefined,
+  inTypeAlias: boolean,
+): boolean {
+  if (inTypeAlias || prev === undefined) return false
+  if (prev.kind === "word") return EXPR_BRACE_PREFIX_WORDS.has(prev.text)
+  if (prev.kind === "punct") return EXPR_BRACE_PREFIX_PUNCT.has(prev.text)
   return false
 }
 
 function tokenizeModuleSource(source: string): CapabilityToken[] {
   const tokens: CapabilityToken[] = []
   const templateBraceDepths: number[] = []
+  const braceExprStack: boolean[] = []
+  const parenRegexStack: boolean[] = []
   let braceDepth = 0
   let bracketDepth = 0
   let parenDepth = 0
+  let inTypeAlias = false
   const depth = (): number => braceDepth + bracketDepth + parenDepth
   let idx = 0
 
@@ -711,6 +766,7 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
         continue
       }
       templateBraceDepths.push(braceDepth)
+      braceExprStack.push(false)
       braceDepth++
       tokens.push({ kind: "other", text: "`${", depth: d })
       idx = seg.nextIndex
@@ -719,11 +775,14 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
     if (ch === "}" && braceDepth > 0) {
       braceDepth--
       const d = depth()
+      const exprBrace = braceExprStack.pop() ?? false
+      if (d === 0) inTypeAlias = false
       if (templateBraceDepths.at(-1) === braceDepth) {
         templateBraceDepths.pop()
         const seg = scanTemplateSegment(source, idx + 1)
         if (seg.interpolated) {
           templateBraceDepths.push(braceDepth)
+          braceExprStack.push(false)
           braceDepth++
           tokens.push({ kind: "other", text: "${", depth: d })
         } else {
@@ -732,12 +791,14 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
         idx = seg.nextIndex
         continue
       }
-      tokens.push({ kind: "punct", text: "}", depth: d })
+      tokens.push({ kind: "punct", text: "}", depth: d, regexNext: !exprBrace })
       idx++
       continue
     }
     if (ch === "{") {
-      tokens.push({ kind: "punct", text: "{", depth: depth() })
+      const d = depth()
+      braceExprStack.push(isExpressionOpeningBrace(tokens.at(-1), inTypeAlias))
+      tokens.push({ kind: "punct", text: "{", depth: d })
       braceDepth++
       idx++
       continue
@@ -755,6 +816,8 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
       continue
     }
     if (ch === "(") {
+      const prev = tokens.at(-1)
+      parenRegexStack.push(prev?.kind === "word" && REGEX_AFTER_PAREN_KEYWORDS.has(prev.text))
       tokens.push({ kind: "punct", text: "(", depth: depth() })
       parenDepth++
       idx++
@@ -762,7 +825,8 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
     }
     if (ch === ")") {
       if (parenDepth > 0) parenDepth--
-      tokens.push({ kind: "punct", text: ")", depth: depth() })
+      const regexNext = parenRegexStack.pop() ?? false
+      tokens.push({ kind: "punct", text: ")", depth: depth(), regexNext })
       idx++
       continue
     }
@@ -770,7 +834,19 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
       const start = idx
       idx++
       while (idx < source.length && isWordContinueCode(source.charCodeAt(idx))) idx++
-      tokens.push({ kind: "word", text: source.slice(start, idx), depth: depth() })
+      const word = source.slice(start, idx)
+      const d = depth()
+      if (d === 0 && (word === "type" || word === "interface")) {
+        const prev = tokens.at(-1)
+        if (
+          prev === undefined ||
+          (prev.kind === "punct" && (prev.text === ";" || prev.text === "}")) ||
+          (prev.kind === "word" && prev.text === "export")
+        ) {
+          inTypeAlias = true
+        }
+      }
+      tokens.push({ kind: "word", text: word, depth: d })
       continue
     }
     if (code >= 48 && code <= 57) {
@@ -791,6 +867,7 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
       tokens.push({ kind: "other", text: source.slice(start, idx), depth: depth() })
       continue
     }
+    if (ch === ";" && depth() === 0) inTypeAlias = false
     const two = source.slice(idx, idx + 2)
     if (two === "=>" || two === "==" || two === "++" || two === "--" || two === "?.") {
       tokens.push({ kind: "punct", text: two, depth: depth() })
