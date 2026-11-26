@@ -1135,8 +1135,21 @@ function tokenizeModuleSource(source: string): CapabilityToken[] {
       continue
     }
     if (ch === ";" && depth() === 0) inTypeAlias = false
+    const three = source.slice(idx, idx + 3)
+    if (three === "===" || three === "!==") {
+      tokens.push({ kind: "punct", text: three, depth: depth(), line })
+      idx += 3
+      continue
+    }
     const two = source.slice(idx, idx + 2)
-    if (two === "=>" || two === "==" || two === "++" || two === "--" || two === "?.") {
+    if (
+      two === "=>" ||
+      two === "==" ||
+      two === "!=" ||
+      two === "++" ||
+      two === "--" ||
+      two === "?."
+    ) {
       tokens.push({ kind: "punct", text: two, depth: depth(), line })
       idx += 2
       continue
@@ -1267,21 +1280,185 @@ function isAllowedTypeSuffixOnly(
   return first?.kind === "word" && (first.text === "as" || first.text === "satisfies")
 }
 
+const DECL_BINDING_KEYWORDS = new Set(["const", "let", "var"])
+
+function patternContainsName(
+  tokens: readonly CapabilityToken[],
+  start: number,
+  end: number,
+  name: string,
+): boolean {
+  for (let i = start; i < end; i++) {
+    const tok = tokens[i]
+    if (tok?.kind !== "word" || tok.text !== name) continue
+    const next = tokens[i + 1]
+    // `{ Object: alias }` renames property `Object` into `alias`; it does not bind `Object`.
+    if (next?.kind === "punct" && next.text === ":") continue
+    return true
+  }
+  return false
+}
+
+function scanMatchingParenEnd(tokens: readonly CapabilityToken[], openIndex: number): number {
+  const open = tokens[openIndex]
+  if (open?.kind !== "punct" || open.text !== "(") return openIndex
+  const targetDepth = open.depth
+  for (let i = openIndex + 1; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok?.kind === "punct" && tok.text === ")" && tok.depth === targetDepth) return i
+  }
+  return tokens.length - 1
+}
+
 function isObjectGlobalShadowed(tokens: readonly CapabilityToken[]): boolean {
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]
-    if (tok?.kind !== "word" || tok.text !== "Object") continue
-    const next = tokens[i + 1]
-    const next2 = tokens[i + 2]
-    if (
-      next?.kind === "punct" &&
-      next.text === "." &&
-      next2?.kind === "word" &&
-      next2.text === "freeze"
-    ) {
-      continue
+    if (tok === undefined) continue
+    if (tok.kind === "word" && tok.text === "Object") {
+      const prev = tokens[i - 1]
+      const next = tokens[i + 1]
+      const next2 = tokens[i + 2]
+      const next3 = tokens[i + 3]
+      // Direct reassignment: `Object = ...`, `globalThis.Object = ...`, or `Object.freeze = ...`.
+      if (next?.kind === "punct" && next.text === "=") return true
+      if (
+        !(prev?.kind === "punct" && (prev.text === "." || prev.text === "?.")) &&
+        next?.kind === "punct" &&
+        next.text === "." &&
+        next2?.kind === "word" &&
+        next2.text === "freeze" &&
+        next3?.kind === "punct" &&
+        next3.text === "="
+      ) {
+        return true
+      }
+      if (
+        prev?.kind === "word" &&
+        (prev.text === "function" || prev.text === "class" || prev.text === "catch")
+      ) {
+        return true
+      }
+      const genPrev = tokens[i - 2]
+      if (
+        prev?.kind === "punct" &&
+        prev.text === "*" &&
+        genPrev?.kind === "word" &&
+        genPrev.text === "function"
+      ) {
+        return true
+      }
     }
-    return true
+    if (tok.kind === "word" && tok.text === "import") {
+      for (let j = i + 1; j < tokens.length; j++) {
+        const cur = tokens[j]
+        if (cur === undefined) break
+        if (cur.kind === "word" && cur.text === "from") break
+        if (cur.kind === "punct" && cur.text === ";") break
+        if (cur.kind === "word" && cur.text === "Object") {
+          const after = tokens[j + 1]
+          if (!(after?.kind === "word" && after.text === "as")) return true
+        }
+      }
+    }
+    if (tok.kind === "word" && DECL_BINDING_KEYWORDS.has(tok.text)) {
+      const baseDepth = tok.depth
+      let pos = i + 1
+      while (pos < tokens.length) {
+        const cur = tokens[pos]
+        if (cur === undefined || cur.depth < baseDepth) break
+        // Pattern spans until top-level `:`, `=`, `,`, `;`, or statement boundary.
+        let patEnd = pos
+        while (patEnd < tokens.length) {
+          const t = tokens[patEnd]
+          if (t === undefined || t.depth < baseDepth) break
+          if (
+            t.depth === baseDepth &&
+            t.kind === "punct" &&
+            (t.text === "=" || t.text === ":" || t.text === "," || t.text === ";")
+          ) {
+            break
+          }
+          const prevPat = patEnd > pos ? tokens[patEnd - 1] : undefined
+          if (
+            prevPat !== undefined &&
+            t.depth === baseDepth &&
+            t.line > prevPat.line &&
+            !continuesExpressionAcrossNewline(prevPat, t)
+          ) {
+            break
+          }
+          patEnd++
+        }
+        if (patternContainsName(tokens, pos, patEnd, "Object")) return true
+        pos = patEnd
+        const colonTok = tokens[pos]
+        if (colonTok?.depth === baseDepth && colonTok.kind === "punct" && colonTok.text === ":") {
+          pos++
+          while (pos < tokens.length) {
+            const t = tokens[pos]
+            if (t === undefined || t.depth < baseDepth) break
+            if (
+              t.depth === baseDepth &&
+              t.kind === "punct" &&
+              (t.text === "=" || t.text === "," || t.text === ";")
+            ) {
+              break
+            }
+            pos++
+          }
+        }
+        const assignTok = tokens[pos]
+        if (
+          assignTok?.depth === baseDepth &&
+          assignTok.kind === "punct" &&
+          assignTok.text === "="
+        ) {
+          pos++
+          while (pos < tokens.length) {
+            const t = tokens[pos]
+            if (t === undefined || t.depth < baseDepth) break
+            if (t.depth === baseDepth && t.kind === "punct" && (t.text === "," || t.text === ";")) {
+              break
+            }
+            const prevInit = tokens[pos - 1]
+            if (
+              t.depth === baseDepth &&
+              prevInit !== undefined &&
+              t.line > prevInit.line &&
+              !continuesExpressionAcrossNewline(prevInit, t)
+            ) {
+              break
+            }
+            pos++
+          }
+        }
+        const nextDeclTok = tokens[pos]
+        if (
+          nextDeclTok?.depth === baseDepth &&
+          nextDeclTok.kind === "punct" &&
+          nextDeclTok.text === ","
+        ) {
+          pos++
+          continue
+        }
+        break
+      }
+    }
+    if (tok.kind === "punct" && tok.text === "(") {
+      const prev = tokens[i - 1]
+      const beforePrev = tokens[i - 2]
+      const closeIdx = scanMatchingParenEnd(tokens, i)
+      const afterClose = tokens[closeIdx + 1]
+      const isFunctionOrArrow =
+        (prev?.kind === "word" &&
+          (prev.text === "function" ||
+            prev.text === "catch" ||
+            (beforePrev?.kind === "word" && beforePrev.text === "function"))) ||
+        (afterClose?.kind === "punct" && afterClose.text === "=>")
+      if (isFunctionOrArrow && patternContainsName(tokens, i + 1, closeIdx, "Object")) {
+        return true
+      }
+    }
   }
   return false
 }

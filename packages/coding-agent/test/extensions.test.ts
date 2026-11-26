@@ -158,6 +158,29 @@ describe("ExtensionHost", () => {
     expect((await shadowHost.reload()).rolledBack).toBe(false)
     expect(shadowHost.availableCommands).toEqual(["shadow-ok"])
 
+    // Object.keys in the extension must not disable `Object.freeze([...])` capability preflight
+    const markerFreeze = join(cwd, "executed-object-keys.txt")
+    await writeFile(
+      join(cwd, "extensions", "object-keys-with-freeze.ts"),
+      [
+        `import { writeFileSync } from "node:fs"`,
+        `writeFileSync(${JSON.stringify(markerFreeze)}, "ran")`,
+        `export const capabilities = Object.freeze(["network"])`,
+        `export default ({ registerCommand }) => {`,
+        `  const keys = Object.keys(process.env)`,
+        `  registerCommand("keys", async () => keys.length)`,
+        `}`,
+      ].join("\n"),
+    )
+    const keysFreezeHost = new ExtensionHost({
+      cwd,
+      roots: ["extensions/object-keys-with-freeze.ts"],
+    })
+    const keysResult = await keysFreezeHost.reload()
+    expect(keysResult.rolledBack).toBe(true)
+    expect(keysResult.error).toContain("untrusted capability")
+    await expect(Bun.file(markerFreeze).exists()).resolves.toBe(false)
+
     await writeFile(
       join(cwd, "extensions", "u2028-cont.ts"),
       [
