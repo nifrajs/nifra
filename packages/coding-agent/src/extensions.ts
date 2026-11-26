@@ -134,6 +134,8 @@ interface ExtensionActivation {
   readonly extension: CodingAgentExtension
   readonly digest: string
   readonly registrations: ExtensionRegistrations
+  /** What this extension's callbacks register through: kept in `registrations`, so a reload replays it. */
+  readonly context: ExtensionContext
   /** The host's live registry while this activation is committed: where a late registration also goes. */
   live: ExtensionContext | undefined
 }
@@ -344,15 +346,20 @@ export class ExtensionHost {
   }
 
   async runWorkflow(name: string, options: WorkflowRunOptions = {}): Promise<WorkflowResult> {
-    const workflow = this.registrations.workflows.get(name)
-    if (workflow === undefined) throw new Error(`unknown extension workflow: ${name}`)
-    const step = await workflow(this.context())
+    const owner = this.activations.find(({ registrations }) => registrations.workflows.has(name))
+    const workflow = owner?.registrations.workflows.get(name)
+    if (owner === undefined || workflow === undefined)
+      throw new Error(`unknown extension workflow: ${name}`)
+    const step = await workflow(owner.context)
     return new WorkflowRunner(options).run(step)
   }
 
   async emit(event: string, payload: unknown): Promise<void> {
-    for (const handler of this.registrations.handlers.get(event) ?? [])
-      await handler(payload, this.context())
+    // Collected first: a handler that registers another does not run it in this emit.
+    const calls = this.activations.flatMap(({ registrations, context }) =>
+      (registrations.handlers.get(event) ?? []).map((handler) => ({ handler, context })),
+    )
+    for (const { handler, context } of calls) await handler(payload, context)
   }
 
   private async loadOne(path: string, digest: string): Promise<ExtensionActivation> {
@@ -373,9 +380,9 @@ export class ExtensionHost {
     const registrations = createRegistrations()
     const own = this.context(registrations)
     let activation: ExtensionActivation | undefined
-    // The factory keeps these callbacks. The live registry goes first, so a name another extension
-    // holds is refused before this one records it.
-    const result = await module.default({
+    // The factory and its callbacks keep these. The live registry goes first, so a name another
+    // extension holds is refused before this one records it.
+    const context: ExtensionContext = {
       cwd: own.cwd,
       registerCommand: (name, handler) => {
         activation?.live?.registerCommand(name, handler)
@@ -401,7 +408,8 @@ export class ExtensionHost {
         activation?.live?.on(event, handler)
         own.on(event, handler)
       },
-    })
+    }
+    const result = await module.default(context)
     const extension = Object.freeze({
       id: module.id ?? path,
       path,
@@ -410,11 +418,11 @@ export class ExtensionHost {
         ? { dispose: result.dispose }
         : {}),
     })
-    activation = { extension, digest, registrations, live: undefined }
+    activation = { extension, digest, registrations, context, live: undefined }
     return activation
   }
 
-  private context(registrations = this.registrations): ExtensionContext {
+  private context(registrations: ExtensionRegistrations): ExtensionContext {
     const { commands, tools, workflows, subagents, providers, handlers } = registrations
     return {
       cwd: this.options.cwd,

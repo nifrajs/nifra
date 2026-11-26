@@ -245,6 +245,46 @@ describe("ExtensionHost", () => {
     }
   })
 
+  test("what a handler or workflow registers survives a reload that keeps the extension", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    await writeFile(
+      join(cwd, "lazy.ts"),
+      `export default ({ on, registerWorkflow }) => {
+         let installed = false
+         on("setup", (_payload, context) => {
+           if (installed) return
+           installed = true
+           context.registerCommand("from-event", () => 1)
+           context.on("ping", (payload) => payload.seen.push("late"))
+         })
+         registerWorkflow("flow", (context) => {
+           context.registerCommand("from-workflow", () => 2)
+           return { type: "sequence", steps: [] }
+         })
+       }`,
+    )
+    const host = new ExtensionHost({ cwd, roots: ["lazy.ts"] })
+    const pinged = async () => {
+      const seen: string[] = []
+      await host.emit("ping", { seen })
+      return seen
+    }
+    try {
+      await host.reload()
+      await host.emit("setup", {})
+      await host.runWorkflow("flow")
+      for (let reload = 0; reload < 2; reload++) {
+        expect(host.availableCommands).toEqual(["from-event", "from-workflow"])
+        expect(await pinged()).toEqual(["late"])
+        await host.reload()
+        await host.emit("setup", {})
+      }
+    } finally {
+      await host.close()
+    }
+  })
+
   test("close runs every disposer and reports the first failure", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
     tempRoots.push(cwd)
