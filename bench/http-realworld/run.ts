@@ -30,6 +30,7 @@
  */
 import { loadavg } from "node:os"
 import { join } from "node:path"
+import { buildNodeBundle } from "../bundle.ts"
 import { isRecord } from "../is-record.ts"
 import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
@@ -170,17 +171,7 @@ const fastifyCompatTarget = (runtime: "bun" | "deno", framework: string): Target
 // workspace by default, the installed tarballs under the published tree. The Node arm is bundled, so
 // its source choice is made here at build time rather than by a runtime switch.
 const NIFRA_NODE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra.js`
-const buildNodeBundle = (entry: string) => async (): Promise<void> => {
-  const result = await Bun.build({
-    entrypoints: [`${APP_DIR}/${entry}`],
-    target: "node",
-    outdir: `${APP_DIR}/dist`,
-  })
-  if (!result.success) {
-    throw new Error(`${entry} bundle failed: ${result.logs.map(String).join("; ")}`)
-  }
-}
-const buildNifraNodeBundle = buildNodeBundle("serve-node-nifra.ts")
+const buildNifraNodeBundle = buildNodeBundle(APP_DIR, "serve-node-nifra.ts")
 const nifraNodeTarget: Target = {
   framework: "nifra",
   prepare: buildNifraNodeBundle,
@@ -197,7 +188,7 @@ const nifraNodeBodyTarget: Target = {
 // no node-uws, and the addon comes from the workspace's `packages/node-uws`, found via `NODE_PATH`.
 const NIFRA_UWS_BUNDLE = `${APP_DIR}/dist/serve-node-nifra-uws.js`
 const UWS_ADDON_DIR = join(import.meta.dir, "..", "..", "packages", "node-uws", "node_modules")
-const buildNifraUwsBundle = buildNodeBundle("serve-node-nifra-uws.ts")
+const buildNifraUwsBundle = buildNodeBundle(APP_DIR, "serve-node-nifra-uws.ts")
 const uwsSpawn = (port: number, ...extra: string[]): readonly string[] => [
   "env",
   `NODE_PATH=${UWS_ADDON_DIR}`,
@@ -221,7 +212,7 @@ const nifraUwsTargets: readonly Target[] =
 
 // nifra on the in-repo Rust engine. Workspace only, and measured only where the addon is built.
 const NIFRA_ENGINE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra-engine.js`
-const buildNifraEngineBundle = buildNodeBundle("serve-node-nifra-engine.ts")
+const buildNifraEngineBundle = buildNodeBundle(APP_DIR, "serve-node-nifra-engine.ts")
 const engineSpawn = (port: number, ...extra: string[]): readonly string[] => [
   "node",
   NIFRA_ENGINE_BUNDLE,
