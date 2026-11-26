@@ -69,6 +69,9 @@ export const wrongView: ServerFnReference<void, string> = counted
 
 // 9. A redirect or an error response is control flow, so it needs no schema and passes one.
 export const refused = serverFn({}, async () => new Response(null, { status: 403 }))
+export const mixedRefusal = serverFn({}, async (flag: boolean): Promise<void | Response> => {
+  if (flag) return new Response(null, { status: 403 })
+})
 export const refusedWithOutput = serverFn(
   { output: idSchema },
   async () => new Response(null, { status: 403 }),

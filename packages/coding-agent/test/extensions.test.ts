@@ -43,13 +43,35 @@ describe("ExtensionHost", () => {
     await mkdir(join(cwd, "extensions"))
     await writeFile(
       join(cwd, "extensions", "network.ts"),
-      `import { writeFileSync } from "node:fs"\nwriteFileSync(${JSON.stringify(marker)}, "ran")\nexport const capabilities = ["network"]\nexport default () => {}`,
+      `import { writeFileSync } from "node:fs"\nwriteFileSync(${JSON.stringify(marker)}, "ran")\nexport const capabilities = ["network", // required\n]\nexport default () => {}`,
     )
     const host = new ExtensionHost({ cwd, roots: ["extensions/network.ts"] })
     const result = await host.reload()
     expect(result.rolledBack).toBe(true)
     expect(result.error).toContain("untrusted capability")
     await expect(Bun.file(marker).exists()).resolves.toBe(false)
+  })
+
+  test("ignores string, template, and regex literals matching capabilities syntax", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nifra-agent-extension-"))
+    tempRoots.push(cwd)
+    await mkdir(join(cwd, "extensions"))
+    await writeFile(
+      join(cwd, "extensions", "docs-example.ts"),
+      [
+        `const example = 'export const capabilities = ["network"]'`,
+        "const templated = `example: export const capabilities = ${example}`",
+        `const pattern = /"export const capabilities = ['network']"/`,
+        `export const metadata = { example, templated, pattern: pattern.source }`,
+        `export default ({ registerCommand }) => {`,
+        `  registerCommand("docs-example", async () => "ok")`,
+        `}`,
+      ].join("\n"),
+    )
+    const host = new ExtensionHost({ cwd, roots: ["extensions/docs-example.ts"] })
+    const result = await host.reload()
+    expect(result.rolledBack).toBe(false)
+    expect(host.availableCommands).toEqual(["docs-example"])
   })
 
   test("reuses the imported module when reloading unchanged extension code", async () => {

@@ -25887,7 +25887,7 @@
     "name": "serverFn",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function serverFn<Input = void>(config: ServerFnConfig<Input> & {\n    readonly output?: undefined;\n}, fn: (input: Input, context: Context) => MaybePromise<null | undefined | ServerFnControl> | Promise<void> | void): ServerFn<Input, void>;"
+    "signature": "export declare function serverFn<Input = void>(config: ServerFnConfig<Input> & {\n    readonly output?: undefined;\n}, fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>): ServerFn<Input, void>;"
   },
   {
     "name": "serverFnStubPlugin",

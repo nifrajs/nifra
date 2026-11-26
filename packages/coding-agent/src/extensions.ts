@@ -475,26 +475,429 @@ export class ExtensionHost {
   }
 }
 
-function staticDeclaredCapabilities(source: string): readonly string[] | undefined {
-  // Strip line and block comments so commented examples never pass or fail validation.
-  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
-  const match = /\bexport\s+(?:const|let|var)\s+capabilities(?:\s*:[^=]+)?\s*=\s*\[([^\]]*)\]/.exec(
-    stripped,
+type CapabilityToken =
+  | { readonly kind: "word"; readonly text: string; readonly depth: number }
+  | { readonly kind: "string"; readonly value: string; readonly depth: number }
+  | { readonly kind: "punct"; readonly text: string; readonly depth: number }
+  | { readonly kind: "other"; readonly text: string; readonly depth: number }
+
+const REGEX_PREFIX_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "case",
+  "delete",
+  "void",
+  "typeof",
+  "await",
+  "yield",
+  "in",
+  "instanceof",
+  "of",
+  "new",
+  "export",
+  "default",
+  "else",
+  "do",
+])
+
+const NON_REGEX_PUNCT = new Set([")", "]", "}", "++", "--"])
+const EXPORT_DECL_KEYWORDS = new Set(["const", "let", "var"])
+
+function isWordStartCode(code: number): boolean {
+  return (
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    code === 95 ||
+    code === 36 ||
+    code > 127
   )
-  if (match === null) return undefined
-  const body = match[1] ?? ""
-  const entries = body
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-  const capabilities: string[] = []
-  for (const entry of entries) {
-    const literal = /^(?:"([^"\\]+)"|'([^'\\]+)'|`([^`$\\]+)`)$/.exec(entry)
-    if (literal === null) return undefined
-    const value = literal[1] ?? literal[2] ?? literal[3]
-    if (value !== undefined) capabilities.push(value)
+}
+
+function isWordContinueCode(code: number): boolean {
+  return isWordStartCode(code) || (code >= 48 && code <= 57)
+}
+
+function isWhitespaceCode(code: number): boolean {
+  return code === 32 || code === 9 || code === 10 || code === 13 || code === 11 || code === 12
+}
+
+function decodeHexEscape(
+  source: string,
+  start: number,
+  digits: number,
+): { readonly ch: string; readonly nextIndex: number } | undefined {
+  if (start + digits > source.length) return undefined
+  const slice = source.slice(start, start + digits)
+  for (let idx = 0; idx < slice.length; idx++) {
+    const code = slice.charCodeAt(idx)
+    const hex =
+      (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102)
+    if (!hex) return undefined
   }
-  return capabilities
+  return {
+    ch: String.fromCodePoint(Number.parseInt(slice, 16)),
+    nextIndex: start + digits,
+  }
+}
+
+function decodeStringEscape(
+  source: string,
+  escapeIndex: number,
+): { readonly ch: string; readonly nextIndex: number } {
+  const esc = source[escapeIndex + 1]
+  if (esc === undefined) return { ch: "", nextIndex: escapeIndex + 1 }
+  if (esc === "\r") {
+    return {
+      ch: "",
+      nextIndex: source[escapeIndex + 2] === "\n" ? escapeIndex + 3 : escapeIndex + 2,
+    }
+  }
+  if (esc === "\n") return { ch: "", nextIndex: escapeIndex + 2 }
+  const simple: Record<string, string> = {
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    b: "\b",
+    f: "\f",
+    v: "\v",
+    "0": "\0",
+  }
+  if (esc in simple) return { ch: simple[esc] ?? esc, nextIndex: escapeIndex + 2 }
+  if (esc === "x") {
+    const hex = decodeHexEscape(source, escapeIndex + 2, 2)
+    if (hex !== undefined) return hex
+  }
+  if (esc === "u") {
+    if (source[escapeIndex + 2] === "{") {
+      const close = source.indexOf("}", escapeIndex + 3)
+      if (close !== -1 && close > escapeIndex + 3) {
+        const hex = decodeHexEscape(source, escapeIndex + 3, close - (escapeIndex + 3))
+        if (hex !== undefined) return { ch: hex.ch, nextIndex: close + 1 }
+      }
+    } else {
+      const hex = decodeHexEscape(source, escapeIndex + 2, 4)
+      if (hex !== undefined) return hex
+    }
+  }
+  return { ch: esc, nextIndex: escapeIndex + 2 }
+}
+
+function scanQuotedString(
+  source: string,
+  start: number,
+): { readonly value: string; readonly nextIndex: number } {
+  const quote = source[start]
+  let value = ""
+  let idx = start + 1
+  while (idx < source.length) {
+    const ch = source[idx]
+    if (ch === quote) return { value, nextIndex: idx + 1 }
+    if (ch === "\\") {
+      const decoded = decodeStringEscape(source, idx)
+      value += decoded.ch
+      idx = decoded.nextIndex
+      continue
+    }
+    value += ch
+    idx++
+  }
+  return { value, nextIndex: idx }
+}
+
+function scanTemplateSegment(
+  source: string,
+  start: number,
+): { readonly value: string; readonly interpolated: boolean; readonly nextIndex: number } {
+  let value = ""
+  let idx = start
+  while (idx < source.length) {
+    const ch = source[idx]
+    if (ch === "`") return { value, interpolated: false, nextIndex: idx + 1 }
+    if (ch === "$" && source[idx + 1] === "{") {
+      return { value, interpolated: true, nextIndex: idx + 2 }
+    }
+    if (ch === "\\") {
+      const decoded = decodeStringEscape(source, idx)
+      value += decoded.ch
+      idx = decoded.nextIndex
+      continue
+    }
+    value += ch
+    idx++
+  }
+  return { value, interpolated: false, nextIndex: idx }
+}
+
+function scanRegexLiteral(source: string, start: number): number {
+  let idx = start + 1
+  let inClass = false
+  while (idx < source.length) {
+    const ch = source[idx]
+    if (ch === "\\") {
+      idx += 2
+      continue
+    }
+    if (ch === "[") {
+      inClass = true
+      idx++
+      continue
+    }
+    if (ch === "]" && inClass) {
+      inClass = false
+      idx++
+      continue
+    }
+    if (ch === "/" && !inClass) {
+      idx++
+      while (idx < source.length && isWordContinueCode(source.charCodeAt(idx))) idx++
+      return idx
+    }
+    if (ch === "\n" || ch === "\r") return idx
+    idx++
+  }
+  return idx
+}
+
+function canStartRegex(prev: CapabilityToken | undefined): boolean {
+  if (prev === undefined) return true
+  if (prev.kind === "word") return REGEX_PREFIX_KEYWORDS.has(prev.text)
+  if (prev.kind === "punct") return !NON_REGEX_PUNCT.has(prev.text)
+  return false
+}
+
+function tokenizeModuleSource(source: string): CapabilityToken[] {
+  const tokens: CapabilityToken[] = []
+  const templateBraceDepths: number[] = []
+  let braceDepth = 0
+  let bracketDepth = 0
+  let parenDepth = 0
+  const depth = (): number => braceDepth + bracketDepth + parenDepth
+  let idx = 0
+
+  while (idx < source.length) {
+    const code = source.charCodeAt(idx)
+    if (isWhitespaceCode(code)) {
+      idx++
+      continue
+    }
+    const ch = source[idx]
+    if (ch === "/" && source[idx + 1] === "/") {
+      const nl = source.indexOf("\n", idx + 2)
+      idx = nl === -1 ? source.length : nl + 1
+      continue
+    }
+    if (ch === "/" && source[idx + 1] === "*") {
+      const end = source.indexOf("*/", idx + 2)
+      idx = end === -1 ? source.length : end + 2
+      continue
+    }
+    if (ch === "/" && canStartRegex(tokens.at(-1))) {
+      tokens.push({ kind: "other", text: "/", depth: depth() })
+      idx = scanRegexLiteral(source, idx)
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const scanned = scanQuotedString(source, idx)
+      tokens.push({ kind: "string", value: scanned.value, depth: depth() })
+      idx = scanned.nextIndex
+      continue
+    }
+    if (ch === "`") {
+      const d = depth()
+      const seg = scanTemplateSegment(source, idx + 1)
+      if (!seg.interpolated) {
+        tokens.push({ kind: "string", value: seg.value, depth: d })
+        idx = seg.nextIndex
+        continue
+      }
+      templateBraceDepths.push(braceDepth)
+      braceDepth++
+      tokens.push({ kind: "other", text: "`${", depth: d })
+      idx = seg.nextIndex
+      continue
+    }
+    if (ch === "}" && braceDepth > 0) {
+      braceDepth--
+      const d = depth()
+      if (templateBraceDepths.at(-1) === braceDepth) {
+        templateBraceDepths.pop()
+        const seg = scanTemplateSegment(source, idx + 1)
+        if (seg.interpolated) {
+          templateBraceDepths.push(braceDepth)
+          braceDepth++
+          tokens.push({ kind: "other", text: "${", depth: d })
+        } else {
+          tokens.push({ kind: "other", text: "`", depth: d })
+        }
+        idx = seg.nextIndex
+        continue
+      }
+      tokens.push({ kind: "punct", text: "}", depth: d })
+      idx++
+      continue
+    }
+    if (ch === "{") {
+      tokens.push({ kind: "punct", text: "{", depth: depth() })
+      braceDepth++
+      idx++
+      continue
+    }
+    if (ch === "[") {
+      tokens.push({ kind: "punct", text: "[", depth: depth() })
+      bracketDepth++
+      idx++
+      continue
+    }
+    if (ch === "]") {
+      if (bracketDepth > 0) bracketDepth--
+      tokens.push({ kind: "punct", text: "]", depth: depth() })
+      idx++
+      continue
+    }
+    if (ch === "(") {
+      tokens.push({ kind: "punct", text: "(", depth: depth() })
+      parenDepth++
+      idx++
+      continue
+    }
+    if (ch === ")") {
+      if (parenDepth > 0) parenDepth--
+      tokens.push({ kind: "punct", text: ")", depth: depth() })
+      idx++
+      continue
+    }
+    if (isWordStartCode(code)) {
+      const start = idx
+      idx++
+      while (idx < source.length && isWordContinueCode(source.charCodeAt(idx))) idx++
+      tokens.push({ kind: "word", text: source.slice(start, idx), depth: depth() })
+      continue
+    }
+    if (code >= 48 && code <= 57) {
+      const start = idx
+      idx++
+      while (idx < source.length) {
+        const c = source.charCodeAt(idx)
+        if (
+          isWordContinueCode(c) ||
+          c === 46 ||
+          ((c === 43 || c === 45) && (source[idx - 1] === "e" || source[idx - 1] === "E"))
+        ) {
+          idx++
+          continue
+        }
+        break
+      }
+      tokens.push({ kind: "other", text: source.slice(start, idx), depth: depth() })
+      continue
+    }
+    const two = source.slice(idx, idx + 2)
+    if (two === "=>" || two === "==" || two === "++" || two === "--" || two === "?.") {
+      tokens.push({ kind: "punct", text: two, depth: depth() })
+      idx += 2
+      continue
+    }
+    tokens.push({ kind: "punct", text: ch ?? "", depth: depth() })
+    idx++
+  }
+
+  return tokens
+}
+
+function readStringArrayLiteral(
+  tokens: readonly CapabilityToken[],
+  openIndex: number,
+  expectedDepth: number,
+): readonly string[] | undefined {
+  const open = tokens[openIndex]
+  if (open?.kind !== "punct" || open.text !== "[" || open.depth !== expectedDepth) {
+    return undefined
+  }
+  const innerDepth = expectedDepth + 1
+  const items: string[] = []
+  let idx = openIndex + 1
+  while (idx < tokens.length) {
+    const token = tokens[idx]
+    if (token === undefined) return undefined
+    if (token.kind === "punct" && token.text === "]" && token.depth === expectedDepth) {
+      return items
+    }
+    if (token.kind !== "string" || token.depth !== innerDepth) return undefined
+    items.push(token.value)
+    idx++
+    const sep = tokens[idx]
+    if (sep?.kind === "punct" && sep.text === "]" && sep.depth === expectedDepth) {
+      return items
+    }
+    if (sep?.kind === "punct" && sep.text === "," && sep.depth === innerDepth) {
+      idx++
+      continue
+    }
+    return undefined
+  }
+  return undefined
+}
+
+function staticDeclaredCapabilities(source: string): readonly string[] | undefined {
+  const tokens = tokenizeModuleSource(source)
+  for (let i = 0; i < tokens.length - 3; i++) {
+    const prevTok = i > 0 ? tokens[i - 1] : undefined
+    if (prevTok?.kind === "punct" && (prevTok.text === "." || prevTok.text === "?.")) {
+      continue
+    }
+    const exportTok = tokens[i]
+    const declTok = tokens[i + 1]
+    const nameTok = tokens[i + 2]
+    if (
+      exportTok?.kind !== "word" ||
+      exportTok.text !== "export" ||
+      exportTok.depth !== 0 ||
+      declTok?.kind !== "word" ||
+      !EXPORT_DECL_KEYWORDS.has(declTok.text) ||
+      declTok.depth !== 0 ||
+      nameTok?.kind !== "word" ||
+      nameTok.text !== "capabilities" ||
+      nameTok.depth !== 0
+    ) {
+      continue
+    }
+    // Skip any TypeScript type annotation (`: readonly string[]`) up to the top-level `=`.
+    let eqIdx = i + 3
+    while (eqIdx < tokens.length) {
+      const tok = tokens[eqIdx]
+      if (tok === undefined) return undefined
+      if (tok.depth === 0 && tok.kind === "punct" && tok.text === "=") break
+      if (tok.depth === 0 && tok.kind === "punct" && (tok.text === ";" || tok.text === ",")) {
+        eqIdx = -1
+        break
+      }
+      eqIdx++
+    }
+    if (eqIdx === -1 || eqIdx + 1 >= tokens.length) continue
+    const rhsStart = eqIdx + 1
+    const direct = readStringArrayLiteral(tokens, rhsStart, 0)
+    if (direct !== undefined) return direct
+    // Also recognize `Object.freeze([...])` at depth 0.
+    const t0 = tokens[rhsStart]
+    const t1 = tokens[rhsStart + 1]
+    const t2 = tokens[rhsStart + 2]
+    const t3 = tokens[rhsStart + 3]
+    if (
+      t0?.kind === "word" &&
+      t0.text === "Object" &&
+      t1?.kind === "punct" &&
+      t1.text === "." &&
+      t2?.kind === "word" &&
+      t2.text === "freeze" &&
+      t3?.kind === "punct" &&
+      t3.text === "("
+    ) {
+      const frozen = readStringArrayLiteral(tokens, rhsStart + 4, 1)
+      if (frozen !== undefined) return frozen
+    }
+    return undefined
+  }
+  return undefined
 }
 
 function assertTrustedCapabilities(
