@@ -2,7 +2,7 @@
 //! shared-memory ABI, lazy header/body accessors, and streaming responses.
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
 use std::rc::Rc;
@@ -33,8 +33,9 @@ use nifra_io::uv::{UvCallbacks, UvServer, WriteResult};
 use nifra_tls::{TlsInput, TlsStore};
 #[cfg(unix)]
 use nifra_ws::{
-    compute_accept_key, validate_upgrade_headers, write_close_frame, write_server_frame,
-    write_upgrade_response, WsConfig, WsConn, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
+    compute_accept_key, negotiate_permessage_deflate, new_shared_compressor,
+    validate_upgrade_headers, write_close_frame, write_upgrade_response_with_extensions, Compress,
+    WsConfig, WsConn, WsDeflateConfig, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
 };
 
 const DEFAULT_IN_SLOTS: usize = 256;
@@ -308,6 +309,14 @@ pub struct EngineCapabilities {
     pub param_routes: bool,
     pub batched_ring: bool,
     pub zero_hop_libuv: bool,
+    pub tls: bool,
+    pub tls_crl: bool,
+    pub tls_policy: bool,
+    pub mtls: bool,
+    pub ws_per_message_deflate: bool,
+    pub response_limits: bool,
+    pub idle_spares_draining_response: bool,
+    pub env_cleanup_hook: bool,
 }
 
 #[napi(object)]
@@ -336,6 +345,14 @@ pub fn probe() -> ProbeResult {
             param_routes: true,
             batched_ring: true,
             zero_hop_libuv: cfg!(unix),
+            tls: true,
+            tls_crl: true,
+            tls_policy: true,
+            mtls: true,
+            ws_per_message_deflate: cfg!(unix),
+            response_limits: true,
+            idle_spares_draining_response: cfg!(unix),
+            env_cleanup_hook: cfg!(unix),
         },
     }
 }
@@ -346,6 +363,17 @@ pub struct TlsOptions {
     pub key: Option<String>,
     pub cert_file_name: Option<String>,
     pub key_file_name: Option<String>,
+    pub ca: Option<String>,
+    pub ca_file_name: Option<String>,
+    pub crl: Option<String>,
+    pub crl_file_name: Option<String>,
+    pub request_cert: Option<bool>,
+    pub reject_unauthorized: Option<bool>,
+    pub min_version: Option<String>,
+    pub max_version: Option<String>,
+    pub ciphers: Option<String>,
+    pub ciphersuites: Option<String>,
+    pub ecdh_curve: Option<String>,
     pub ticket_keys: Option<Buffer>,
 }
 
@@ -356,14 +384,38 @@ fn to_tls_input(opts: &TlsOptions, http2_enabled: bool) -> TlsInput {
     } else {
         vec![b"http/1.1".to_vec()]
     };
+    let request_cert = opts.request_cert.unwrap_or(false);
     TlsInput {
         cert_pem: opts.cert.as_ref().map(|s| s.as_bytes().to_vec()),
         key_pem: opts.key.as_ref().map(|s| s.as_bytes().to_vec()),
         cert_file: opts.cert_file_name.clone(),
         key_file: opts.key_file_name.clone(),
+        ca_pem: opts.ca.as_ref().map(|s| s.as_bytes().to_vec()),
+        ca_file: opts.ca_file_name.clone(),
+        crl_pem: opts.crl.as_ref().map(|s| s.as_bytes().to_vec()),
+        crl_file: opts.crl_file_name.clone(),
+        request_cert,
+        reject_unauthorized: opts.reject_unauthorized.unwrap_or(request_cert),
+        min_version: opts.min_version.clone(),
+        max_version: opts.max_version.clone(),
+        ciphers: opts.ciphers.clone(),
+        ciphersuites: opts.ciphersuites.clone(),
+        ecdh_curve: opts.ecdh_curve.clone(),
         alpn_protocols,
         ticket_keys: opts.ticket_keys.as_ref().map(|b| b.as_ref().to_vec()),
     }
+}
+
+#[napi(object)]
+pub struct WsDeflateOptions {
+    pub server_no_context_takeover: Option<bool>,
+    pub client_no_context_takeover: Option<bool>,
+    pub server_max_window_bits: Option<u32>,
+    pub client_max_window_bits: Option<u32>,
+    pub threshold: Option<u32>,
+    pub max_decompressed_size: Option<u32>,
+    pub level: Option<u32>,
+    pub shared_compressor: Option<bool>,
 }
 
 #[napi(object)]
@@ -371,11 +423,19 @@ pub struct UvServerOptions {
     pub max_body_size: Option<u32>,
     pub oversize_window: Option<u32>,
     pub max_header_bytes: Option<u32>,
+    pub max_headers: Option<u32>,
+    pub max_uri_size: Option<u32>,
+    pub max_pending_bytes: Option<u32>,
     pub idle_timeout_ms: Option<u32>,
+    pub response_timeout_ms: Option<u32>,
+    pub response_backpressure_limit: Option<u32>,
+    pub backlog: Option<u32>,
     pub max_connections: Option<u32>,
     pub request_timeout_ms: Option<u32>,
     pub headers_timeout_ms: Option<u32>,
     pub ws_max_message_size: Option<u32>,
+    pub ws_max_lifetime_ms: Option<u32>,
+    pub ws_deflate: Option<WsDeflateOptions>,
     pub http2: Option<bool>,
     pub http2_max_concurrent_streams: Option<u32>,
     pub reuse_port: Option<bool>,
@@ -820,7 +880,7 @@ fn h1_send(
                     *id = own;
                 }
             }
-            if taken_order.held_bytes > MAX_HELD_BYTES {
+            if taken_order.held_bytes > st.max_held_bytes {
                 server.close_conn(conn_id);
                 return WriteResult::Closed;
             }
@@ -904,7 +964,7 @@ fn park_behind_pending(
     };
     order.queue.push_back(id);
     order.held_bytes += frame.len();
-    let over = order.held_bytes > MAX_HELD_BYTES;
+    let over = order.held_bytes > st.max_held_bytes;
     order.held.insert(
         id,
         Held {
@@ -1118,6 +1178,8 @@ struct UvHttpShared {
     on_ws_message_ref: sys::napi_ref,
     on_ws_close_ref: sys::napi_ref,
     ws_max_message_size: usize,
+    ws_deflate_cfg: WsDeflateConfig,
+    ws_shared_compressor: Option<Compress>,
     http2_enabled: bool,
     h2_cfg: H2Config,
     routes: FastRoutes,
@@ -1125,7 +1187,9 @@ struct UvHttpShared {
     template_meta: Vec<(u16, Vec<(String, String)>)>,
     bad_req_tpl: u32,
     too_large_tpl: u32,
+    uri_too_large_tpl: u32,
     headers_too_large_tpl: u32,
+    max_held_bytes: usize,
     limits: ParseLimits,
     in_meta: Arc<SharedSlab>,
     in_data: Arc<SharedSlab>,
@@ -1650,6 +1714,17 @@ impl HttpUvCallbacks {
                         read_buf.len(),
                     );
                 }
+                Err(nifra_http::ParseError::UriTooLarge) => {
+                    let template = st.uri_too_large_tpl;
+                    return refuse_request(
+                        &mut st,
+                        conn_id,
+                        template,
+                        b"URI Too Long",
+                        write_buf,
+                        read_buf.len(),
+                    );
+                }
                 Err(nifra_http::ParseError::HeadersTooLarge) => {
                     let template = st.headers_too_large_tpl;
                     return refuse_request(
@@ -1767,6 +1842,14 @@ impl UvCallbacks for HttpUvCallbacks {
                     .as_ref()
                     .is_some_and(|conn| conn.active_response_streams() > 0)
         })
+    }
+
+    fn is_websocket(&self, conn_id: u32) -> bool {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .is_some_and(|s| s.ws.is_some())
     }
 
     fn without_pending(&self, ids: Vec<u32>) -> Vec<u32> {
@@ -2044,12 +2127,60 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
 
 /// Zero-hop HTTP/1.1 + HTTP/2 + WebSocket server running directly on Node.js's main `libuv` event loop.
 #[cfg(unix)]
+struct EnvCleanupContext {
+    server: UvServer,
+    shared: Rc<RefCell<UvHttpShared>>,
+    closed: Rc<Cell<bool>>,
+    cleanup_slot: Rc<Cell<*mut EnvCleanupContext>>,
+}
+
+#[cfg(unix)]
+fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, closed: &Cell<bool>) {
+    if closed.get() {
+        return;
+    }
+    closed.set(true);
+    server.close_all();
+    let mut st = shared.borrow_mut();
+    let raw_env = st.raw_env;
+    let refs = [
+        std::mem::replace(&mut st.on_batch_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_writable_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_aborted_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_ws_open_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_ws_message_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_ws_close_ref, std::ptr::null_mut()),
+    ];
+    for r in refs {
+        if !r.is_null() {
+            unsafe {
+                let _ = sys::napi_delete_reference(raw_env, r);
+            }
+        }
+    }
+    st.pending.clear();
+    st.conn_meta.clear_all();
+}
+
+#[cfg(unix)]
+unsafe extern "C" fn on_env_cleanup(arg: *mut c_void) {
+    if arg.is_null() {
+        return;
+    }
+    let ctx = Box::from_raw(arg as *mut EnvCleanupContext);
+    ctx.cleanup_slot.set(std::ptr::null_mut());
+    shutdown_uv_server(&ctx.server, &ctx.shared, &ctx.closed);
+}
+
+#[cfg(unix)]
 #[napi]
 pub struct UvHttpServer {
     port: u16,
     server: UvServer,
     shared: Rc<RefCell<UvHttpShared>>,
-    closed: bool,
+    closed: Rc<Cell<bool>>,
+    cleanup_raw_env: sys::napi_env,
+    cleanup_slot: Rc<Cell<*mut EnvCleanupContext>>,
 }
 
 #[cfg(unix)]
@@ -2706,11 +2837,12 @@ impl UvHttpServer {
     /// Returns the positive socket id (firing `onWsOpen` synchronously), or `-1` if the handshake is invalid.
     #[napi]
     pub fn upgrade_to_web_socket(&self, req_id: u32) -> i32 {
-        let accept = {
+        let (accept, negotiated_deflate) = {
             let mut st = self.shared.borrow_mut();
             let UvHttpShared {
                 ref mut pending,
                 ref batch_heads,
+                ws_deflate_cfg,
                 ..
             } = *st;
             let Some(pending) = pending.get_mut(req_id) else {
@@ -2729,7 +2861,9 @@ impl UvHttpServer {
             ) else {
                 return -1;
             };
-            compute_accept_key(key)
+            let ext_hdr = header_from_head(head, "sec-websocket-extensions");
+            let negotiated = negotiate_permessage_deflate(ext_hdr.as_deref(), ws_deflate_cfg);
+            (compute_accept_key(key), negotiated)
         };
 
         let (raw_env, open_ref, conn_id) = {
@@ -2758,7 +2892,11 @@ impl UvHttpServer {
                 slot.h1_overflow = None;
             }
             st.scratch_frame.clear();
-            write_upgrade_response(&accept, &mut st.scratch_frame);
+            write_upgrade_response_with_extensions(
+                &accept,
+                negotiated_deflate.as_ref().map(|n| n.header_value.as_str()),
+                &mut st.scratch_frame,
+            );
             if self
                 .server
                 .write_to_conn(pending.conn_id, &st.scratch_frame, false)
@@ -2774,7 +2912,7 @@ impl UvHttpServer {
                 .map(String::from)
                 .unwrap_or_default();
             st.conn_meta.ensure(pending.conn_id).ws = Some(Box::new(WsConnState {
-                conn: WsConn::new(max_msg),
+                conn: WsConn::with_deflate(max_msg, negotiated_deflate.as_ref()),
                 awaiting_pong: Default::default(),
                 raw_head: owned_head,
                 query,
@@ -2790,45 +2928,29 @@ impl UvHttpServer {
     /// Send a binary or text WebSocket frame from a `Buffer`.
     #[napi]
     pub fn ws_send(&self, socket_id: u32, payload: Buffer, is_binary: bool) -> bool {
-        let mut st = self.shared.borrow_mut();
-        if !st
-            .conn_meta
-            .get(socket_id)
-            .is_some_and(ConnMetaSlot::ws_sendable)
-        {
-            return false;
-        }
-        st.scratch_frame.clear();
-        write_server_frame(
+        send_ws_frame(
+            &self.server,
+            &self.shared,
+            socket_id,
             if is_binary {
                 OPCODE_BINARY
             } else {
                 OPCODE_TEXT
             },
             payload.as_ref(),
-            &mut st.scratch_frame,
-        );
-        self.server
-            .write_to_conn(socket_id, &st.scratch_frame, false)
-            != WriteResult::Closed
+        )
     }
 
     /// Send a UTF-8 text WebSocket frame directly from a JS `string`.
     #[napi]
     pub fn ws_send_text(&self, socket_id: u32, text: String) -> bool {
-        let mut st = self.shared.borrow_mut();
-        if !st
-            .conn_meta
-            .get(socket_id)
-            .is_some_and(ConnMetaSlot::ws_sendable)
-        {
-            return false;
-        }
-        st.scratch_frame.clear();
-        write_server_frame(OPCODE_TEXT, text.as_bytes(), &mut st.scratch_frame);
-        self.server
-            .write_to_conn(socket_id, &st.scratch_frame, false)
-            != WriteResult::Closed
+        send_ws_frame(
+            &self.server,
+            &self.shared,
+            socket_id,
+            OPCODE_TEXT,
+            text.as_bytes(),
+        )
     }
 
     /// Send an RFC 6455 Close frame and close the WebSocket connection.
@@ -2965,31 +3087,49 @@ impl UvHttpServer {
 
     #[napi]
     pub fn close(&mut self) {
-        if self.closed {
-            return;
-        }
-        self.closed = true;
-        self.server.close_all();
-        let mut st = self.shared.borrow_mut();
-        let raw_env = st.raw_env;
-        let refs = [
-            std::mem::replace(&mut st.on_batch_ref, std::ptr::null_mut()),
-            std::mem::replace(&mut st.on_writable_ref, std::ptr::null_mut()),
-            std::mem::replace(&mut st.on_aborted_ref, std::ptr::null_mut()),
-            std::mem::replace(&mut st.on_ws_open_ref, std::ptr::null_mut()),
-            std::mem::replace(&mut st.on_ws_message_ref, std::ptr::null_mut()),
-            std::mem::replace(&mut st.on_ws_close_ref, std::ptr::null_mut()),
-        ];
-        for r in refs {
-            if !r.is_null() {
-                unsafe {
-                    let _ = sys::napi_delete_reference(raw_env, r);
+        let hook = self.cleanup_slot.replace(std::ptr::null_mut());
+        if !hook.is_null() {
+            unsafe {
+                let status = sys::napi_remove_env_cleanup_hook(
+                    self.cleanup_raw_env,
+                    Some(on_env_cleanup),
+                    hook.cast(),
+                );
+                if status == sys::Status::napi_ok {
+                    drop(Box::from_raw(hook));
                 }
             }
         }
-        st.pending.clear();
-        st.conn_meta.clear_all();
+        shutdown_uv_server(&self.server, &self.shared, &self.closed);
     }
+}
+
+#[cfg(unix)]
+fn send_ws_frame(
+    server: &UvServer,
+    shared: &Rc<RefCell<UvHttpShared>>,
+    socket_id: u32,
+    opcode: u8,
+    bytes: &[u8],
+) -> bool {
+    let mut st = shared.borrow_mut();
+    let UvHttpShared {
+        ref mut conn_meta,
+        ref mut ws_shared_compressor,
+        ref mut scratch_frame,
+        ..
+    } = *st;
+    let Some(ws) = conn_meta
+        .get_mut(socket_id)
+        .filter(|s| s.ws_sendable())
+        .and_then(|s| s.ws.as_deref_mut())
+    else {
+        return false;
+    };
+    scratch_frame.clear();
+    ws.conn
+        .encode_server_message(opcode, bytes, ws_shared_compressor.as_mut(), scratch_frame);
+    server.write_to_conn(socket_id, scratch_frame, false) != WriteResult::Closed
 }
 
 #[cfg(unix)]
@@ -3020,6 +3160,8 @@ pub fn create_uv_server(
 
     let mut limits = ParseLimits::default();
     let mut ws_max_message_size = WsConfig::default().max_message_size;
+    let mut ws_deflate_cfg = WsDeflateConfig::default();
+    let mut max_held_bytes = MAX_HELD_BYTES;
     let mut http2_enabled = false;
     let mut h2_cfg = H2Config::default();
     let mut sock_cfg = SocketConfig::default();
@@ -3037,8 +3179,34 @@ pub fn create_uv_server(
             limits.max_header_bytes = v as usize;
             h2_cfg.max_header_list_size = v as usize;
         }
+        if let Some(v) = opts.max_headers {
+            limits.max_headers = (v as usize).max(1);
+            h2_cfg.max_headers = (v as usize).max(1);
+        }
+        if let Some(v) = opts.max_uri_size {
+            limits.max_uri_size = v as usize;
+            h2_cfg.max_uri_size = v as usize;
+        }
+        if let Some(v) = opts.max_pending_bytes {
+            if v > 0 {
+                max_held_bytes = v as usize;
+            }
+        }
         if let Some(v) = opts.idle_timeout_ms {
             sock_cfg.idle_timeout_ms = v as u64;
+        }
+        if let Some(v) = opts.response_timeout_ms {
+            sock_cfg.response_timeout_ms = Some(v as u64);
+        }
+        if let Some(v) = opts.response_backpressure_limit {
+            if v > 0 {
+                sock_cfg.max_write_buf_bytes = v as usize;
+            }
+        }
+        if let Some(v) = opts.backlog {
+            if v > 0 {
+                sock_cfg.backlog = (v as i32).max(1);
+            }
         }
         if let Some(v) = opts.max_connections {
             sock_cfg.max_connections = v as usize;
@@ -3051,6 +3219,36 @@ pub fn create_uv_server(
         }
         if let Some(v) = opts.ws_max_message_size {
             ws_max_message_size = v as usize;
+        }
+        if let Some(v) = opts.ws_max_lifetime_ms {
+            sock_cfg.ws_max_lifetime_ms = v as u64;
+        }
+        if let Some(def) = opts.ws_deflate {
+            ws_deflate_cfg.enabled = true;
+            if let Some(v) = def.server_no_context_takeover {
+                ws_deflate_cfg.server_no_context_takeover = v;
+            }
+            if let Some(v) = def.client_no_context_takeover {
+                ws_deflate_cfg.client_no_context_takeover = v;
+            }
+            if let Some(v) = def.server_max_window_bits {
+                ws_deflate_cfg.server_max_window_bits = (v as u8).clamp(8, 15);
+            }
+            if let Some(v) = def.client_max_window_bits {
+                ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
+            }
+            if let Some(v) = def.threshold {
+                ws_deflate_cfg.threshold = v as usize;
+            }
+            if let Some(v) = def.max_decompressed_size {
+                ws_deflate_cfg.max_decompressed_size = v as usize;
+            }
+            if let Some(v) = def.level {
+                ws_deflate_cfg.level = (v as u8).clamp(1, 9);
+            }
+            if let Some(v) = def.shared_compressor {
+                ws_deflate_cfg.shared_compressor = v;
+            }
         }
         if let Some(h2) = opts.http2 {
             http2_enabled = h2;
@@ -3071,6 +3269,11 @@ pub fn create_uv_server(
     h2_cfg.request_timeout = (sock_cfg.request_timeout_ms > 0)
         .then(|| std::time::Duration::from_millis(sock_cfg.request_timeout_ms));
 
+    let ws_shared_compressor =
+        (ws_deflate_cfg.enabled && ws_deflate_cfg.shared_compressor).then(|| {
+            new_shared_compressor(ws_deflate_cfg.level, ws_deflate_cfg.server_max_window_bits)
+        });
+
     let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
         .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
 
@@ -3087,6 +3290,8 @@ pub fn create_uv_server(
     let mut templates = PreparedTemplates::default();
     let bad_req_tpl = templates.register(400, &[("content-type", "text/plain; charset=utf-8")]);
     let too_large_tpl = templates.register(413, &[]);
+    let uri_too_large_tpl =
+        templates.register(414, &[("content-type", "text/plain; charset=utf-8")]);
     let headers_too_large_tpl =
         templates.register(431, &[("content-type", "text/plain; charset=utf-8")]);
     let template_meta = vec![
@@ -3095,6 +3300,10 @@ pub fn create_uv_server(
             vec![("content-type".into(), "text/plain; charset=utf-8".into())],
         ),
         (413, vec![]),
+        (
+            414,
+            vec![("content-type".into(), "text/plain; charset=utf-8".into())],
+        ),
         (
             431,
             vec![("content-type".into(), "text/plain; charset=utf-8".into())],
@@ -3110,6 +3319,8 @@ pub fn create_uv_server(
         on_ws_message_ref: std::ptr::null_mut(),
         on_ws_close_ref: std::ptr::null_mut(),
         ws_max_message_size,
+        ws_deflate_cfg,
+        ws_shared_compressor,
         http2_enabled,
         h2_cfg,
         routes: FastRoutes::default(),
@@ -3117,7 +3328,9 @@ pub fn create_uv_server(
         template_meta,
         bad_req_tpl,
         too_large_tpl,
+        uri_too_large_tpl,
         headers_too_large_tpl,
+        max_held_bytes,
         limits,
         in_meta: SharedSlab::new(DEFAULT_IN_SLOTS * IN_SLOT_U32S * 4, 16),
         in_data: SharedSlab::new(DEFAULT_IN_DATA_BYTES, 16),
@@ -3147,11 +3360,29 @@ pub fn create_uv_server(
         Error::new(Status::GenericFailure, e.to_string())
     })?;
 
+    let closed = Rc::new(Cell::new(false));
+    let cleanup_slot = Rc::new(Cell::new(std::ptr::null_mut()));
+    let ctx_ptr = Box::into_raw(Box::new(EnvCleanupContext {
+        server: server.clone(),
+        shared: Rc::clone(&shared),
+        closed: Rc::clone(&closed),
+        cleanup_slot: Rc::clone(&cleanup_slot),
+    }));
+    let hook_status =
+        unsafe { sys::napi_add_env_cleanup_hook(env.raw(), Some(on_env_cleanup), ctx_ptr.cast()) };
+    if hook_status == sys::Status::napi_ok {
+        cleanup_slot.set(ctx_ptr);
+    } else {
+        unsafe { drop(Box::from_raw(ctx_ptr)) };
+    }
+
     Ok(UvHttpServer {
         port: local_addr.port(),
         server,
         shared,
-        closed: false,
+        closed,
+        cleanup_raw_env: env.raw(),
+        cleanup_slot,
     })
 }
 

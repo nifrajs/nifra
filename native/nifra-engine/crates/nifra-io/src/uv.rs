@@ -77,10 +77,14 @@ pub trait UvCallbacks {
     fn probe_idle(&self, _conn_id: u32) -> bool {
         false
     }
+    fn is_websocket(&self, _conn_id: u32) -> bool {
+        false
+    }
     fn on_writable(&mut self, conn_id: u32);
     fn on_disconnect(&mut self, conn_id: u32);
 }
 
+#[derive(Clone)]
 enum ServerBackend {
     Uv(Rc<RefCell<UvPollState>>),
     #[cfg(target_os = "linux")]
@@ -88,6 +92,7 @@ enum ServerBackend {
 }
 
 /// Zero-hop HTTP/HTTPS server handle attached directly to Node.js's `uv_loop_t`.
+#[derive(Clone)]
 pub struct UvServer {
     backend: ServerBackend,
 }
@@ -466,11 +471,16 @@ impl UvPollState {
         if st.read_ended.contains(&conn_id) {
             st.turn_dirty = true;
         }
+        let max_write = if st.cfg.max_write_buf_bytes > 0 {
+            st.cfg.max_write_buf_bytes
+        } else {
+            MAX_WRITE_BUF_BYTES
+        };
         if st.dispatching == Some(conn_id) {
             if let Some(conn) = st.conns.get(conn_id) {
                 let effective_close = close_after
                     || (close_if_read_ended && conn.core.read_ended && !conn.core.dispatching);
-                if st.deferred.len().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+                if st.deferred.len().saturating_add(bytes.len()) > max_write {
                     if let Some(c) = st.conns.remove(conn_id) {
                         close_client_handle(uv, c.poll_handle);
                     }
@@ -487,7 +497,7 @@ impl UvPollState {
         conn.core.last_activity = now;
         let effective_close =
             close_after || (close_if_read_ended && conn.core.read_ended && !conn.core.dispatching);
-        if conn.core.queued_bytes().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+        if conn.core.queued_bytes().saturating_add(bytes.len()) > max_write {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
             }

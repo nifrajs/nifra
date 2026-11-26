@@ -700,6 +700,8 @@ pub(crate) fn collect_timeouts<'a>(
 ) -> Sweep {
     let limit = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
     let idle_limit = limit(cfg.idle_timeout_ms);
+    let response_limit = limit(cfg.response_timeout_ms.unwrap_or(cfg.idle_timeout_ms));
+    let ws_lifetime_limit = limit(cfg.ws_max_lifetime_ms);
     let request_limit = limit(cfg.request_timeout_ms);
     // A request head (and a TLS handshake before it) gets the shorter of the two budgets.
     let head_limit = limit(cfg.headers_timeout_ms)
@@ -717,7 +719,12 @@ pub(crate) fn collect_timeouts<'a>(
     let mut reply = Vec::new();
 
     for (id, c) in conns {
-        if past(c.last_activity, idle_limit) {
+        if past(c.accepted_at, ws_lifetime_limit)
+            && callbacks.as_deref().is_some_and(|cb| cb.is_websocket(id))
+        {
+            overdue.push(id);
+        }
+        if c.queued_bytes() == 0 && past(c.last_activity, idle_limit) {
             idle.push(id);
         }
         if c.partial_since.is_some_and(|at| past(at, request_limit))
@@ -753,7 +760,11 @@ pub(crate) fn collect_timeouts<'a>(
                 .as_deref()
                 .and_then(|cb| cb.output_stalled_since(id)),
         ];
-        if stalled.into_iter().flatten().any(|at| past(at, idle_limit)) {
+        if stalled
+            .into_iter()
+            .flatten()
+            .any(|at| past(at, response_limit))
+        {
             overdue.push(id);
         }
         if c.close_deadline.is_some_and(|d| now >= d) {

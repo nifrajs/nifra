@@ -211,6 +211,7 @@ impl EpollState {
 }
 
 /// Linux `epoll`-backed server handle matching `UvServer` method signatures.
+#[derive(Clone)]
 pub struct EpollServer {
     state: Rc<RefCell<EpollState>>,
 }
@@ -411,11 +412,16 @@ impl EpollServer {
             let uv_ms = unsafe { (uv.now)(st.uv_loop) };
             st.clock.tick(uv_ms)
         };
+        let max_write = if st.cfg.max_write_buf_bytes > 0 {
+            st.cfg.max_write_buf_bytes
+        } else {
+            MAX_WRITE_BUF_BYTES
+        };
         if st.dispatching == Some(conn_id) {
             if let Some(conn) = st.conns.get(conn_id) {
                 let effective_close =
                     close_after || (close_if_read_ended && conn.read_ended && !conn.dispatching);
-                if st.deferred.len().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+                if st.deferred.len().saturating_add(bytes.len()) > max_write {
                     st.remove_and_close_conn(conn_id);
                     return WriteResult::Closed;
                 }
@@ -432,7 +438,7 @@ impl EpollServer {
         let read_ended = conn.read_ended;
         let effective_close =
             close_after || (close_if_read_ended && read_ended && !conn.dispatching);
-        if conn.queued_bytes().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+        if conn.queued_bytes().saturating_add(bytes.len()) > max_write {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }

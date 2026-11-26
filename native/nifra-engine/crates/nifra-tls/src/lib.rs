@@ -1,15 +1,21 @@
 //! Sans-I/O `rustls` + `aws-lc-rs` TLS termination with lock-free hot certificate reload
 //! and session-ticket preservation across reloads.
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::io::{self, Cursor, Read, Write};
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::io::{self, BufReader, Cursor, Read, Write};
+use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::ProducesTickets;
+use rustls::crypto::{aws_lc_rs as tls_aws_lc_rs, CryptoProvider, SupportedKxGroup};
+use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
+use rustls::server::danger::ClientCertVerifier;
+use rustls::server::{ProducesTickets, WebPkiClientVerifier};
+use rustls::version::{TLS12, TLS13};
+use rustls::{RootCertStore, SupportedCipherSuite, SupportedProtocolVersion};
 pub use rustls::{ServerConfig, ServerConnection};
 
 #[derive(Debug)]
@@ -19,6 +25,13 @@ pub enum TlsError {
     InvalidCertChain,
     InvalidPrivateKey,
     InvalidTicketKeys,
+    InvalidCaCerts,
+    InvalidCrl,
+    MissingCaForClientAuth,
+    InvalidClientVerifier(String),
+    InvalidProtocolVersion(String),
+    InvalidCipherSuite(String),
+    InvalidEcdhCurve(String),
     Rustls(rustls::Error),
 }
 
@@ -36,6 +49,17 @@ impl std::fmt::Display for TlsError {
                 f,
                 "TLS ticket keys must be one or more 48-byte entries (16-byte name + 32-byte key)"
             ),
+            Self::InvalidCaCerts => write!(f, "no valid PEM CA certificates found"),
+            Self::InvalidCrl => write!(f, "no valid PEM CRL entries found"),
+            Self::MissingCaForClientAuth => {
+                write!(f, "requestCert requires ca or ca_file_name trust anchors")
+            }
+            Self::InvalidClientVerifier(msg) => {
+                write!(f, "invalid client certificate verifier: {msg}")
+            }
+            Self::InvalidProtocolVersion(v) => write!(f, "unsupported TLS protocol version: {v}"),
+            Self::InvalidCipherSuite(c) => write!(f, "unsupported TLS cipher suite: {c}"),
+            Self::InvalidEcdhCurve(c) => write!(f, "unsupported ECDH/KEM curve: {c}"),
             Self::Rustls(err) => write!(f, "rustls error: {err}"),
         }
     }
@@ -43,13 +67,24 @@ impl std::fmt::Display for TlsError {
 
 impl std::error::Error for TlsError {}
 
-/// TLS configuration material accepted by `TlsStore` (inline PEM or file paths).
-#[derive(Debug, Clone)]
+/// TLS configuration material accepted by `TlsStore` (inline PEM or file paths, plus mTLS & policy).
+#[derive(Debug, Clone, Default)]
 pub struct TlsInput {
     pub cert_pem: Option<Vec<u8>>,
     pub key_pem: Option<Vec<u8>>,
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
+    pub ca_pem: Option<Vec<u8>>,
+    pub ca_file: Option<String>,
+    pub crl_pem: Option<Vec<u8>>,
+    pub crl_file: Option<String>,
+    pub request_cert: bool,
+    pub reject_unauthorized: bool,
+    pub min_version: Option<String>,
+    pub max_version: Option<String>,
+    pub ciphers: Option<String>,
+    pub ciphersuites: Option<String>,
+    pub ecdh_curve: Option<String>,
     pub alpn_protocols: Vec<Vec<u8>>,
     /// Optional shared session ticket key material for cross-worker TLS session resumption in cluster
     /// mode: one or more 48-byte entries (`16B key_name || 32B AES-256-GCM key`), newest first. The
@@ -58,8 +93,15 @@ pub struct TlsInput {
     pub ticket_keys: Option<Vec<u8>>,
 }
 
+struct ResolvedMaterial {
+    cert: Vec<u8>,
+    key: Vec<u8>,
+    ca: Option<Vec<u8>>,
+    crl: Option<Vec<u8>>,
+}
+
 impl TlsInput {
-    fn resolve_pem(&self) -> Result<(Vec<u8>, Vec<u8>), TlsError> {
+    fn resolve_pem(&self) -> Result<ResolvedMaterial, TlsError> {
         let cert = match (&self.cert_pem, &self.cert_file) {
             (Some(bytes), _) => bytes.clone(),
             (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
@@ -70,15 +112,41 @@ impl TlsInput {
             (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
             (None, None) => return Err(TlsError::MissingMaterial),
         };
-        Ok((cert, key))
+        let ca = match (&self.ca_pem, &self.ca_file) {
+            (Some(bytes), _) => Some(bytes.clone()),
+            (None, Some(path)) => Some(fs::read(path).map_err(TlsError::Io)?),
+            (None, None) => None,
+        };
+        let crl = match (&self.crl_pem, &self.crl_file) {
+            (Some(bytes), _) => Some(bytes.clone()),
+            (None, Some(path)) => Some(fs::read(path).map_err(TlsError::Io)?),
+            (None, None) => None,
+        };
+        Ok(ResolvedMaterial { cert, key, ca, crl })
     }
 }
 
-/// Lock-free certificate store supporting live `reloadTls()` while preserving session tickets.
+/// Lock-free certificate store supporting live `reloadTls()` while preserving session tickets when
+/// the TLS policy is unchanged (and rotating the ticketer whenever security policy changes).
 #[derive(Debug)]
 pub struct TlsStore {
     config: ArcSwap<ServerConfig>,
+    ticket_state: Mutex<TicketState>,
+}
+
+struct TicketState {
     ticketer: Arc<dyn ProducesTickets>,
+    policy_fingerprint: u64,
+    has_shared_keys: bool,
+}
+
+impl std::fmt::Debug for TicketState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TicketState")
+            .field("policy_fingerprint", &self.policy_fingerprint)
+            .field("has_shared_keys", &self.has_shared_keys)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Cross-worker TLS session ticketer backed by AES-256-GCM (`aws-lc-rs`) using shared keys.
@@ -190,20 +258,20 @@ impl ProducesTickets for SharedKeyTicketer {
 
 impl TlsStore {
     pub fn from_input(input: &TlsInput) -> Result<Self, TlsError> {
-        let (cert, key) = input.resolve_pem()?;
+        let mat = input.resolve_pem()?;
+        let fp = policy_fingerprint(input, &mat);
         let ticketer: Arc<dyn ProducesTickets> = match &input.ticket_keys {
             Some(bytes) => Arc::new(SharedKeyTicketer::from_bytes(bytes)?),
-            None => rustls::crypto::aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
+            None => tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
         };
-        let cfg = build_config(
-            &cert,
-            &key,
-            input.alpn_protocols.clone(),
-            Arc::clone(&ticketer),
-        )?;
+        let cfg = build_config(input, &mat, Arc::clone(&ticketer))?;
         Ok(Self {
             config: ArcSwap::from_pointee(cfg),
-            ticketer,
+            ticket_state: Mutex::new(TicketState {
+                ticketer,
+                policy_fingerprint: fp,
+                has_shared_keys: input.ticket_keys.is_some(),
+            }),
         })
     }
 
@@ -212,20 +280,49 @@ impl TlsStore {
         key_pem: &[u8],
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<Self, TlsError> {
-        let ticketer: Arc<dyn ProducesTickets> =
-            rustls::crypto::aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?;
-        let cfg = build_config(cert_pem, key_pem, alpn_protocols, Arc::clone(&ticketer))?;
-        Ok(Self {
-            config: ArcSwap::from_pointee(cfg),
-            ticketer,
+        Self::from_input(&TlsInput {
+            cert_pem: Some(cert_pem.to_vec()),
+            key_pem: Some(key_pem.to_vec()),
+            alpn_protocols,
+            ..Default::default()
         })
     }
 
-    /// Atomically swap the TLS certificate/key for all future handshakes while preserving session
-    /// tickets. Leaves the previous certificate in place if validation fails.
+    /// Atomically swap the TLS certificate/key and policy for all future handshakes. Session
+    /// tickets survive cert/key rotation when security policy is unchanged; any change to mTLS,
+    /// protocol bounds, cipher suites, or curves rotates an ephemeral ticketer so stale tickets
+    /// cannot resume under loosened assumptions. Leaves the previous config intact on any error.
     pub fn reload_input(&self, input: &TlsInput) -> Result<(), TlsError> {
-        let (cert, key) = input.resolve_pem()?;
-        self.reload_pem(&cert, &key, input.alpn_protocols.clone())
+        let mat = input.resolve_pem()?;
+        let fp = policy_fingerprint(input, &mat);
+        let mut guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Validate/construct replacement ticketer before storing `ServerConfig` so failures leave
+        // both the active config and active ticketer untouched.
+        let (next_ticketer, next_shared) = if let Some(ref bytes) = input.ticket_keys {
+            if guard.has_shared_keys && guard.policy_fingerprint == fp {
+                (Arc::clone(&guard.ticketer), true)
+            } else {
+                (
+                    Arc::new(SharedKeyTicketer::from_bytes(bytes)?) as Arc<dyn ProducesTickets>,
+                    true,
+                )
+            }
+        } else if !guard.has_shared_keys && guard.policy_fingerprint == fp {
+            (Arc::clone(&guard.ticketer), false)
+        } else {
+            (
+                tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
+                false,
+            )
+        };
+
+        let cfg = build_config(input, &mat, Arc::clone(&next_ticketer))?;
+        self.config.store(Arc::new(cfg));
+        guard.ticketer = next_ticketer;
+        guard.policy_fingerprint = fp;
+        guard.has_shared_keys = next_shared;
+        Ok(())
     }
 
     pub fn reload_pem(
@@ -234,14 +331,12 @@ impl TlsStore {
         key_pem: &[u8],
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<(), TlsError> {
-        let cfg = build_config(
-            cert_pem,
-            key_pem,
+        self.reload_input(&TlsInput {
+            cert_pem: Some(cert_pem.to_vec()),
+            key_pem: Some(key_pem.to_vec()),
             alpn_protocols,
-            Arc::clone(&self.ticketer),
-        )?;
-        self.config.store(Arc::new(cfg));
-        Ok(())
+            ..Default::default()
+        })
     }
 
     /// Create a sans-I/O `ServerConnection` for a newly accepted socket.
@@ -251,13 +346,280 @@ impl TlsStore {
     }
 }
 
+fn policy_fingerprint(input: &TlsInput, mat: &ResolvedMaterial) -> u64 {
+    let mut h = DefaultHasher::new();
+    mat.ca.hash(&mut h);
+    mat.crl.hash(&mut h);
+    input.request_cert.hash(&mut h);
+    input.reject_unauthorized.hash(&mut h);
+    input.min_version.hash(&mut h);
+    input.max_version.hash(&mut h);
+    input.ciphers.hash(&mut h);
+    input.ciphersuites.hash(&mut h);
+    input.ecdh_curve.hash(&mut h);
+    input.ticket_keys.hash(&mut h);
+    h.finish()
+}
+
+fn parse_tls_version(raw: &str) -> Result<u8, TlsError> {
+    match raw.trim() {
+        "TLSv1.2" | "1.2" => Ok(12),
+        "TLSv1.3" | "1.3" => Ok(13),
+        other => Err(TlsError::InvalidProtocolVersion(other.to_owned())),
+    }
+}
+
+fn resolve_protocol_versions(
+    min_version: Option<&str>,
+    max_version: Option<&str>,
+) -> Result<Vec<&'static SupportedProtocolVersion>, TlsError> {
+    let min = min_version
+        .map(parse_tls_version)
+        .transpose()?
+        .unwrap_or(12);
+    let max = max_version
+        .map(parse_tls_version)
+        .transpose()?
+        .unwrap_or(13);
+    if min > max {
+        return Err(TlsError::InvalidProtocolVersion(format!(
+            "minVersion TLSv1.{} > maxVersion TLSv1.{}",
+            min - 10,
+            max - 10
+        )));
+    }
+    let mut out = Vec::with_capacity(2);
+    if max >= 13 && min <= 13 {
+        out.push(&TLS13);
+    }
+    if min <= 12 && max >= 12 {
+        out.push(&TLS12);
+    }
+    Ok(out)
+}
+
+fn match_cipher_suite(token: &str) -> Option<SupportedCipherSuite> {
+    let u = token.trim().to_ascii_uppercase();
+    match u.as_str() {
+        "TLS_AES_256_GCM_SHA384" | "TLS13_AES_256_GCM_SHA384" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384)
+        }
+        "TLS_AES_128_GCM_SHA256" | "TLS13_AES_128_GCM_SHA256" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256)
+        }
+        "TLS_CHACHA20_POLY1305_SHA256" | "TLS13_CHACHA20_POLY1305_SHA256" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256)
+        }
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" | "ECDHE-ECDSA-AES256-GCM-SHA384" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384)
+        }
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" | "ECDHE-ECDSA-AES128-GCM-SHA256" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
+        }
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256" | "ECDHE-ECDSA-CHACHA20-POLY1305" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256)
+        }
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" | "ECDHE-RSA-AES256-GCM-SHA384" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384)
+        }
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" | "ECDHE-RSA-AES128-GCM-SHA256" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+        }
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256" | "ECDHE-RSA-CHACHA20-POLY1305" => {
+            Some(tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256)
+        }
+        _ => None,
+    }
+}
+
+fn push_unique_suite(out: &mut Vec<SupportedCipherSuite>, suite: SupportedCipherSuite) {
+    if !out.contains(&suite) {
+        out.push(suite);
+    }
+}
+
+fn resolve_cipher_suites(
+    ciphers: Option<&str>,
+    ciphersuites: Option<&str>,
+) -> Result<Option<Vec<SupportedCipherSuite>>, TlsError> {
+    if ciphers.is_none() && ciphersuites.is_none() {
+        return Ok(None);
+    }
+    let mut selected = Vec::new();
+    let mut excluded = Vec::new();
+    let mut saw_positive = false;
+
+    for raw in [ciphers, ciphersuites].into_iter().flatten() {
+        for part in raw.split([':', ',', ' ', '\t']) {
+            let token = part.trim();
+            if token.is_empty() {
+                continue;
+            }
+            if let Some(neg) = token.strip_prefix('!') {
+                if let Some(suite) = match_cipher_suite(neg) {
+                    push_unique_suite(&mut excluded, suite);
+                }
+                continue;
+            }
+            saw_positive = true;
+            if token.eq_ignore_ascii_case("HIGH") || token.eq_ignore_ascii_case("DEFAULT") {
+                for &suite in tls_aws_lc_rs::DEFAULT_CIPHER_SUITES {
+                    push_unique_suite(&mut selected, suite);
+                }
+                continue;
+            }
+            if token.eq_ignore_ascii_case("TLSv1.3") {
+                for suite in [
+                    tls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384,
+                    tls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256,
+                    tls_aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+                ] {
+                    push_unique_suite(&mut selected, suite);
+                }
+                continue;
+            }
+            if token.eq_ignore_ascii_case("TLSv1.2") {
+                for suite in [
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+                ] {
+                    push_unique_suite(&mut selected, suite);
+                }
+                continue;
+            }
+            let suite = match_cipher_suite(token)
+                .ok_or_else(|| TlsError::InvalidCipherSuite(token.to_owned()))?;
+            push_unique_suite(&mut selected, suite);
+        }
+    }
+
+    if !saw_positive {
+        selected.extend_from_slice(tls_aws_lc_rs::DEFAULT_CIPHER_SUITES);
+    }
+    selected.retain(|s| !excluded.contains(s));
+    if selected.is_empty() {
+        return Err(TlsError::InvalidCipherSuite(
+            "no supported TLS cipher suites remain".to_owned(),
+        ));
+    }
+    Ok(Some(selected))
+}
+
+fn match_kx_group(token: &str) -> Option<&'static dyn SupportedKxGroup> {
+    match token.trim().to_ascii_uppercase().as_str() {
+        "X25519" => Some(tls_aws_lc_rs::kx_group::X25519),
+        "P-256" | "PRIME256V1" | "SECP256R1" => Some(tls_aws_lc_rs::kx_group::SECP256R1),
+        "P-384" | "SECP384R1" => Some(tls_aws_lc_rs::kx_group::SECP384R1),
+        "X25519MLKEM768" => Some(tls_aws_lc_rs::kx_group::X25519MLKEM768),
+        "SECP256R1MLKEM768" => Some(tls_aws_lc_rs::kx_group::SECP256R1MLKEM768),
+        "MLKEM768" => Some(tls_aws_lc_rs::kx_group::MLKEM768),
+        "MLKEM1024" => Some(tls_aws_lc_rs::kx_group::MLKEM1024),
+        _ => None,
+    }
+}
+
+fn resolve_kx_groups(
+    curve: Option<&str>,
+) -> Result<Option<Vec<&'static dyn SupportedKxGroup>>, TlsError> {
+    let Some(raw) = curve else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(Some(tls_aws_lc_rs::ALL_KX_GROUPS.to_vec()));
+    }
+    let mut selected: Vec<&'static dyn SupportedKxGroup> = Vec::new();
+    for part in trimmed.split([':', ',', ' ', '\t']) {
+        let token = part.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let group =
+            match_kx_group(token).ok_or_else(|| TlsError::InvalidEcdhCurve(token.to_owned()))?;
+        if !selected.iter().any(|g| g.name() == group.name()) {
+            selected.push(group);
+        }
+    }
+    if selected.is_empty() {
+        return Err(TlsError::InvalidEcdhCurve(
+            "ecdhCurve must name at least one curve".to_owned(),
+        ));
+    }
+    Ok(Some(selected))
+}
+
+fn parse_ca_store(ca_pem: &[u8]) -> Result<RootCertStore, TlsError> {
+    let mut reader = Cursor::new(ca_pem);
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<_, _>>()
+        .map_err(|_| TlsError::InvalidCaCerts)?;
+    if certs.is_empty() {
+        return Err(TlsError::InvalidCaCerts);
+    }
+    let mut roots = RootCertStore::empty();
+    for cert in certs {
+        roots.add(cert).map_err(|_| TlsError::InvalidCaCerts)?;
+    }
+    Ok(roots)
+}
+
+fn parse_crls(crl_pem: &[u8]) -> Result<Vec<CertificateRevocationListDer<'static>>, TlsError> {
+    let mut reader = BufReader::new(Cursor::new(crl_pem));
+    let mut crls = Vec::new();
+    for item in rustls_pemfile::read_all(&mut reader) {
+        match item {
+            Ok(rustls_pemfile::Item::Crl(crl)) => crls.push(crl),
+            Ok(_) => {}
+            Err(_) => return Err(TlsError::InvalidCrl),
+        }
+    }
+    if crls.is_empty() {
+        return Err(TlsError::InvalidCrl);
+    }
+    Ok(crls)
+}
+
+fn build_client_verifier(
+    mat: &ResolvedMaterial,
+    request_cert: bool,
+    reject_unauthorized: bool,
+    provider: &Arc<CryptoProvider>,
+) -> Result<Option<Arc<dyn ClientCertVerifier>>, TlsError> {
+    let parsed_crls = match &mat.crl {
+        Some(pem) => Some(parse_crls(pem)?),
+        None => None,
+    };
+    let parsed_roots = match &mat.ca {
+        Some(pem) => Some(Arc::new(parse_ca_store(pem)?)),
+        None => None,
+    };
+    if !request_cert {
+        return Ok(None);
+    }
+    let roots = parsed_roots.ok_or(TlsError::MissingCaForClientAuth)?;
+    let mut builder = WebPkiClientVerifier::builder_with_provider(roots, Arc::clone(provider));
+    if let Some(crls) = parsed_crls {
+        builder = builder.with_crls(crls);
+    }
+    if !reject_unauthorized {
+        builder = builder.allow_unauthenticated();
+    }
+    let verifier = builder
+        .build()
+        .map_err(|e| TlsError::InvalidClientVerifier(e.to_string()))?;
+    Ok(Some(verifier))
+}
+
 fn build_config(
-    cert_pem: &[u8],
-    key_pem: &[u8],
-    alpn_protocols: Vec<Vec<u8>>,
+    input: &TlsInput,
+    mat: &ResolvedMaterial,
     ticketer: Arc<dyn ProducesTickets>,
 ) -> Result<ServerConfig, TlsError> {
-    let mut cert_reader = Cursor::new(cert_pem);
+    let mut cert_reader = Cursor::new(&mat.cert);
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
         .collect::<Result<_, _>>()
         .map_err(|_| TlsError::InvalidCertChain)?;
@@ -265,16 +627,41 @@ fn build_config(
         return Err(TlsError::InvalidCertChain);
     }
 
-    let mut key_reader = Cursor::new(key_pem);
+    let mut key_reader = Cursor::new(&mat.key);
     let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
         .map_err(|_| TlsError::InvalidPrivateKey)?
         .ok_or(TlsError::InvalidPrivateKey)?;
 
-    let mut cfg = ServerConfig::builder()
-        .with_no_client_auth()
+    let versions =
+        resolve_protocol_versions(input.min_version.as_deref(), input.max_version.as_deref())?;
+    let mut provider = tls_aws_lc_rs::default_provider();
+    if let Some(suites) =
+        resolve_cipher_suites(input.ciphers.as_deref(), input.ciphersuites.as_deref())?
+    {
+        provider.cipher_suites = suites;
+    }
+    if let Some(groups) = resolve_kx_groups(input.ecdh_curve.as_deref())? {
+        provider.kx_groups = groups;
+    }
+    let provider = Arc::new(provider);
+    let client_verifier = build_client_verifier(
+        mat,
+        input.request_cert,
+        input.reject_unauthorized,
+        &provider,
+    )?;
+
+    let wants_verifier = ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&versions)
+        .map_err(TlsError::Rustls)?;
+    let wants_cert = match client_verifier {
+        Some(verifier) => wants_verifier.with_client_cert_verifier(verifier),
+        None => wants_verifier.with_no_client_auth(),
+    };
+    let mut cfg = wants_cert
         .with_single_cert(certs, key)
         .map_err(TlsError::Rustls)?;
-    cfg.alpn_protocols = alpn_protocols;
+    cfg.alpn_protocols = input.alpn_protocols.clone();
     cfg.ticketer = ticketer;
     Ok(cfg)
 }
@@ -438,5 +825,44 @@ mod tests {
         // Two entries that share a name (here, identical) are ambiguous.
         let twin = [[0x33u8; 48], [0x33u8; 48]].concat();
         assert!(SharedKeyTicketer::from_bytes(&twin).is_err());
+    }
+
+    #[test]
+    fn tls_policy_validation_rejects_bad_versions_ciphers_curves_and_ca() {
+        assert!(matches!(
+            resolve_protocol_versions(Some("TLSv1.3"), Some("TLSv1.2")),
+            Err(TlsError::InvalidProtocolVersion(_))
+        ));
+        assert!(matches!(
+            resolve_protocol_versions(Some("SSLv3"), None),
+            Err(TlsError::InvalidProtocolVersion(_))
+        ));
+        assert!(matches!(
+            resolve_cipher_suites(Some("RC4-MD5"), None),
+            Err(TlsError::InvalidCipherSuite(_))
+        ));
+        let suites = resolve_cipher_suites(Some("TLS_AES_256_GCM_SHA384"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(suites.len(), 1);
+        assert!(matches!(
+            resolve_kx_groups(Some("secp192r1")),
+            Err(TlsError::InvalidEcdhCurve(_))
+        ));
+        assert_eq!(
+            resolve_kx_groups(Some("X25519:P-256"))
+                .unwrap()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            parse_ca_store(b"not a pem"),
+            Err(TlsError::InvalidCaCerts)
+        ));
+        assert!(matches!(
+            parse_crls(b"not a crl"),
+            Err(TlsError::InvalidCrl)
+        ));
     }
 }

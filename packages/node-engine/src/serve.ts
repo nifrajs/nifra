@@ -10,7 +10,8 @@
  * can hold (plus `oversizeWindow`, for answering a body only a little over it); set it to the largest
  * body any route accepts.
  */
-import { existsSync } from "node:fs"
+import { createPrivateKey } from "node:crypto"
+import { existsSync, readFileSync } from "node:fs"
 import { Module } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -39,6 +40,7 @@ import {
   payloadCeiling,
   type ServeOptions,
   type TlsOptions,
+  type WsDeflateOptions,
 } from "./options.ts"
 
 type WsUpgrade = Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>
@@ -96,7 +98,29 @@ interface RustTlsOptions {
   readonly key: string | undefined
   readonly certFileName: string | undefined
   readonly keyFileName: string | undefined
+  readonly ca: string | undefined
+  readonly caFileName: string | undefined
+  readonly crl: string | undefined
+  readonly crlFileName: string | undefined
+  readonly requestCert: boolean | undefined
+  readonly rejectUnauthorized: boolean | undefined
+  readonly minVersion: string | undefined
+  readonly maxVersion: string | undefined
+  readonly ciphers: string | undefined
+  readonly ciphersuites: string | undefined
+  readonly ecdhCurve: string | undefined
   readonly ticketKeys: Buffer | undefined
+}
+
+interface RustWsDeflateOptions {
+  serverNoContextTakeover?: boolean
+  clientNoContextTakeover?: boolean
+  serverMaxWindowBits?: number
+  clientMaxWindowBits?: number
+  threshold?: number
+  maxDecompressedSize?: number
+  level?: number
+  sharedCompressor?: boolean
 }
 
 interface RustUvServer {
@@ -159,11 +183,19 @@ interface RustAddon {
       readonly maxBodySize?: number
       readonly oversizeWindow?: number
       readonly maxHeaderBytes?: number | undefined
+      readonly maxHeaders?: number | undefined
+      readonly maxUriSize?: number | undefined
+      readonly maxPendingBytes?: number | undefined
       readonly idleTimeoutMs?: number | undefined
+      readonly responseTimeoutMs?: number | undefined
+      readonly responseBackpressureLimit?: number | undefined
+      readonly backlog?: number | undefined
       readonly maxConnections?: number | undefined
       readonly requestTimeoutMs?: number | undefined
       readonly headersTimeoutMs?: number | undefined
       readonly wsMaxMessageSize?: number | undefined
+      readonly wsMaxLifetimeMs?: number | undefined
+      readonly wsDeflate?: RustWsDeflateOptions | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
       readonly reusePort?: boolean | undefined
@@ -179,6 +211,22 @@ function pemToString(value: string | ArrayBuffer | Uint8Array | undefined): stri
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("utf8")
 }
 
+function pemBundleToString(
+  value:
+    | string
+    | ArrayBuffer
+    | Uint8Array
+    | readonly (string | ArrayBuffer | Uint8Array)[]
+    | undefined,
+): string | undefined {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) {
+    return value.map((item) => pemToString(item) ?? "").join("\n")
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: narrowed non-array PEM union by Array.isArray
+  return pemToString(value as string | ArrayBuffer | Uint8Array)
+}
+
 function toTicketBuffer(value: string | ArrayBuffer | Uint8Array | undefined): Buffer | undefined {
   if (value === undefined) return undefined
   if (typeof value === "string") return Buffer.from(value)
@@ -187,17 +235,192 @@ function toTicketBuffer(value: string | ArrayBuffer | Uint8Array | undefined): B
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
 }
 
+function decryptKeyIfNeeded(
+  keyPem: string | undefined,
+  keyFileName: string | undefined,
+  passphrase: string | undefined,
+): { readonly key: string | undefined; readonly keyFileName: string | undefined } {
+  if (passphrase === undefined) return { key: keyPem, keyFileName }
+  if (typeof passphrase !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.passphrase` must be a string")
+  }
+  const sourcePem =
+    keyPem ?? (keyFileName === undefined ? undefined : readFileSync(keyFileName, "utf8"))
+  if (sourcePem === undefined) return { key: undefined, keyFileName }
+  const exported = createPrivateKey({
+    key: sourcePem,
+    format: "pem",
+    passphrase,
+  }).export({ format: "pem", type: "pkcs8" })
+  return { key: exported, keyFileName: undefined }
+}
+
 function toRustTls(tls: TlsOptions): RustTlsOptions {
+  if (tls.requestCert !== undefined && typeof tls.requestCert !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `tls.requestCert` must be a boolean")
+  }
+  if (tls.rejectUnauthorized !== undefined && typeof tls.rejectUnauthorized !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `tls.rejectUnauthorized` must be a boolean")
+  }
+  if (
+    tls.minVersion !== undefined &&
+    tls.minVersion !== "TLSv1.2" &&
+    tls.minVersion !== "TLSv1.3"
+  ) {
+    throw new TypeError('@nifrajs/node-engine: `tls.minVersion` must be "TLSv1.2" or "TLSv1.3"')
+  }
+  if (
+    tls.maxVersion !== undefined &&
+    tls.maxVersion !== "TLSv1.2" &&
+    tls.maxVersion !== "TLSv1.3"
+  ) {
+    throw new TypeError('@nifrajs/node-engine: `tls.maxVersion` must be "TLSv1.2" or "TLSv1.3"')
+  }
+  if (tls.ciphers !== undefined && typeof tls.ciphers !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ciphers` must be a string")
+  }
+  if (tls.ciphersuites !== undefined && typeof tls.ciphersuites !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ciphersuites` must be a string")
+  }
+  if (tls.ecdhCurve !== undefined && typeof tls.ecdhCurve !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ecdhCurve` must be a string")
+  }
   const cert = pemToString(tls.cert)
-  const key = pemToString(tls.key)
+  const rawKey = pemToString(tls.key)
+  const { key, keyFileName } = decryptKeyIfNeeded(rawKey, tls.key_file_name, tls.passphrase)
+  const ca = pemBundleToString(tls.ca)
+  const crl = pemBundleToString(tls.crl)
   const ticketKeys = toTicketBuffer(tls.ticketKeys)
   return {
     cert,
     key,
     certFileName: tls.cert_file_name,
-    keyFileName: tls.key_file_name,
+    keyFileName,
+    ca,
+    caFileName: tls.ca_file_name,
+    crl,
+    crlFileName: tls.crl_file_name,
+    requestCert: tls.requestCert,
+    rejectUnauthorized: tls.rejectUnauthorized,
+    minVersion: tls.minVersion,
+    maxVersion: tls.maxVersion,
+    ciphers: tls.ciphers,
+    ciphersuites: tls.ciphersuites,
+    ecdhCurve: tls.ecdhCurve,
     ticketKeys,
   }
+}
+
+function toRustWsDeflate(
+  opt: boolean | WsDeflateOptions | undefined,
+): RustWsDeflateOptions | undefined {
+  if (opt === undefined || opt === false) return undefined
+  if (opt === true) return {}
+  if (typeof opt !== "object" || opt === null) {
+    throw new TypeError("@nifrajs/node-engine: `wsDeflate` must be a boolean or options object")
+  }
+  const out: RustWsDeflateOptions = {}
+  if (opt.serverNoContextTakeover !== undefined) {
+    if (typeof opt.serverNoContextTakeover !== "boolean") {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.serverNoContextTakeover` must be a boolean",
+      )
+    }
+    out.serverNoContextTakeover = opt.serverNoContextTakeover
+  }
+  if (opt.clientNoContextTakeover !== undefined) {
+    if (typeof opt.clientNoContextTakeover !== "boolean") {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.clientNoContextTakeover` must be a boolean",
+      )
+    }
+    out.clientNoContextTakeover = opt.clientNoContextTakeover
+  }
+  if (opt.serverMaxWindowBits !== undefined) {
+    if (
+      typeof opt.serverMaxWindowBits !== "number" ||
+      !Number.isInteger(opt.serverMaxWindowBits) ||
+      opt.serverMaxWindowBits < 8 ||
+      opt.serverMaxWindowBits > 15
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.serverMaxWindowBits` must be an integer 8..15",
+      )
+    }
+    out.serverMaxWindowBits = opt.serverMaxWindowBits
+  }
+  if (opt.clientMaxWindowBits !== undefined) {
+    if (
+      typeof opt.clientMaxWindowBits !== "number" ||
+      !Number.isInteger(opt.clientMaxWindowBits) ||
+      opt.clientMaxWindowBits < 8 ||
+      opt.clientMaxWindowBits > 15
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.clientMaxWindowBits` must be an integer 8..15",
+      )
+    }
+    out.clientMaxWindowBits = opt.clientMaxWindowBits
+  }
+  if (opt.threshold !== undefined) {
+    if (
+      typeof opt.threshold !== "number" ||
+      !Number.isSafeInteger(opt.threshold) ||
+      opt.threshold < 0 ||
+      opt.threshold > MAX_NATIVE_LENGTH
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.threshold` must be a non-negative integer below 2^32",
+      )
+    }
+    out.threshold = opt.threshold
+  }
+  if (opt.maxDecompressedSize !== undefined) {
+    if (!(isCap(opt.maxDecompressedSize) && opt.maxDecompressedSize <= MAX_NATIVE_LENGTH)) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.maxDecompressedSize` must be a positive integer below 2^32",
+      )
+    }
+    out.maxDecompressedSize = opt.maxDecompressedSize
+  }
+  if (opt.level !== undefined) {
+    if (
+      typeof opt.level !== "number" ||
+      !Number.isInteger(opt.level) ||
+      opt.level < 1 ||
+      opt.level > 9
+    ) {
+      throw new TypeError("@nifrajs/node-engine: `wsDeflate.level` must be an integer 1..9")
+    }
+    out.level = opt.level
+  }
+  if (opt.sharedCompressor !== undefined) {
+    if (typeof opt.sharedCompressor !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `wsDeflate.sharedCompressor` must be a boolean")
+    }
+    out.sharedCompressor = opt.sharedCompressor
+  }
+  return out
+}
+
+function optionalPositiveCap(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (!(isCap(value) && value <= MAX_NATIVE_LENGTH)) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a positive integer below 2^32`,
+    )
+  }
+  return value
+}
+
+function optionalNonNegMs(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a non-negative finite number`,
+    )
+  }
+  return Math.min(Math.round(value), MAX_NATIVE_LENGTH)
 }
 
 let cachedAddon: RustAddon | undefined
@@ -621,6 +844,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     MAX_NATIVE_LENGTH,
   )
   const oversizeWindow = options.oversizeWindow ?? DEFAULT_OVERSIZE_WINDOW
+  const writeHighWaterMark = optionalPositiveCap(
+    "writeHighWaterMark",
+    options.engine?.writeHighWaterMark,
+  )
+  const bufferedResponseLimit = writeHighWaterMark ?? MAX_BUFFERED_RESPONSE_BYTES
+  const streamChunkBytes = Math.min(STREAM_CHUNK_BYTES, bufferedResponseLimit)
 
   let uvServer: RustUvServer
   let bufs: RustBatchBuffers
@@ -786,7 +1015,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       else if (next.value.byteLength > 0) pending.push(next.value)
     }
 
-    if (finished && (pending[0]?.byteLength ?? 0) <= MAX_BUFFERED_RESPONSE_BYTES) {
+    if (finished && (pending[0]?.byteLength ?? 0) <= bufferedResponseLimit) {
       const [first] = pending
       const only =
         first === undefined ? null : pending.length === 1 ? first : Buffer.concat(pending)
@@ -810,9 +1039,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       for (
         let offset = startOffset;
         offset < chunk.byteLength && !source.aborted;
-        offset += STREAM_CHUNK_BYTES
+        offset += streamChunkBytes
       ) {
-        const len = Math.min(STREAM_CHUNK_BYTES, chunk.byteLength - offset)
+        const len = Math.min(streamChunkBytes, chunk.byteLength - offset)
         const buf = Buffer.from(chunk.buffer, chunk.byteOffset + offset, len)
         sent += len
         if (declared !== undefined && sent === declared) {
@@ -882,7 +1111,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           cookies === undefined &&
           !isHead &&
           !isBodyless(status) &&
-          len <= MAX_BUFFERED_RESPONSE_BYTES &&
+          len <= bufferedResponseLimit &&
           (outcome.kind === "json" || defaultBodyType === "text/plain; charset=utf-8")
         ) {
           const buf =
@@ -902,7 +1131,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           body !== undefined &&
           !isHead &&
           !isBodyless(status) &&
-          len > MAX_BUFFERED_RESPONSE_BYTES
+          len > bufferedResponseLimit
         ) {
           const bytes = typeof body === "string" ? Buffer.from(body) : body
           pumpBuffer(source, status, headers, cookies, bytes, type, len).then(
@@ -1367,29 +1596,58 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     typeof options.http2 === "object" && options.http2 !== null
       ? options.http2.maxConcurrentStreams
       : undefined
-  const idleTimeoutMs = nativeMs(options.engine?.idleTimeoutMs)
-  const requestTimeoutMs = nativeMs(options.engine?.requestTimeoutMs)
+  const idleTimeoutMs = optionalNonNegMs("idleTimeoutMs", options.engine?.idleTimeoutMs)
+  const responseTimeoutMs = optionalNonNegMs("responseTimeoutMs", options.engine?.responseTimeoutMs)
+  const requestTimeoutMs = optionalNonNegMs("requestTimeoutMs", options.engine?.requestTimeoutMs)
+  const wsMaxLifetimeMs = optionalNonNegMs("wsMaxLifetimeMs", options.engine?.wsMaxLifetimeMs)
+  const maxConnections = optionalPositiveCap("maxConnections", options.engine?.maxConnections)
   const headersTimeoutMs = nativeMs(options.engine?.headersTimeoutMs)
-  const rawHeaderBytes = options.engine?.maxHeaderBytes
   const maxHeaderBytes =
-    isCap(rawHeaderBytes) && rawHeaderBytes <= MAX_NATIVE_LENGTH ? rawHeaderBytes : undefined
-  const rawMax = options.engine?.maxConnections
-  const maxConnections =
-    typeof rawMax === "number" && Number.isInteger(rawMax) && rawMax > 0 ? rawMax : undefined
+    optionalPositiveCap("maxHeaderBytes", options.engine?.maxHeaderBytes) ??
+    optionalPositiveCap("maxHeadSize", options.engine?.maxHeadSize)
+  const maxHeaders = optionalPositiveCap("maxHeaders", options.engine?.maxHeaders)
+  const maxUriSize = optionalPositiveCap("maxUriSize", options.engine?.maxUriSize)
+  const maxPendingBytes = optionalPositiveCap("maxPendingBytes", options.engine?.maxPendingBytes)
+  const responseBackpressureLimit = optionalPositiveCap(
+    "responseBackpressureLimit",
+    options.engine?.responseBackpressureLimit,
+  )
+  const backlog =
+    options.engine?.backlog === undefined
+      ? undefined
+      : (() => {
+          const b = options.engine.backlog
+          if (!(isCap(b) && b <= 0x7fff_ffff)) {
+            throw new TypeError(
+              "@nifrajs/node-engine: `engine.backlog` must be a positive 32-bit integer",
+            )
+          }
+          return b
+        })()
+  const wsDeflate = toRustWsDeflate(options.wsDeflate)
+  const rustTls = currentTls === undefined ? undefined : toRustTls(currentTls)
   try {
     uvServer = addon.createUvServer(host, options.port, onBatch, {
       maxBodySize,
       oversizeWindow,
+      maxHeaders,
+      maxUriSize,
+      maxPendingBytes,
       idleTimeoutMs,
+      responseTimeoutMs,
+      responseBackpressureLimit,
+      backlog,
       maxConnections,
       requestTimeoutMs,
       headersTimeoutMs,
       maxHeaderBytes,
       reusePort: options.engine?.reusePort,
       wsMaxMessageSize: wsCap,
+      wsMaxLifetimeMs,
+      wsDeflate,
       http2: http2Enabled ? true : undefined,
       http2MaxConcurrentStreams: http2MaxStreams,
-      tls: currentTls === undefined ? undefined : toRustTls(currentTls),
+      tls: rustTls,
     })
   } catch (cause) {
     return Promise.reject(

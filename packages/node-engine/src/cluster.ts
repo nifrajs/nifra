@@ -110,6 +110,11 @@ type ToPrimary =
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
 
+const isNonIpcTlsValue = (value: unknown): boolean =>
+  value instanceof ArrayBuffer ||
+  ArrayBuffer.isView(value) ||
+  (Array.isArray(value) ? value.some(isNonIpcTlsValue) : isObject(value))
+
 function isToWorker(message: unknown): message is ToWorker {
   return (
     isObject(message) &&
@@ -476,7 +481,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     if (options.tls === undefined) {
       throw new Error("@nifrajs/node-engine: reloadTls requires a cluster started with `tls`")
     }
-    if (tls !== undefined && Object.values(tls).some((value) => isObject(value))) {
+    if (tls !== undefined && Object.values(tls).some((value) => isNonIpcTlsValue(value))) {
       throw new TypeError(
         "@nifrajs/node-engine: give the certificate as PEM text or file names; it crosses a process boundary",
       )

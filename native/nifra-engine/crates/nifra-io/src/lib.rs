@@ -52,6 +52,9 @@ pub struct SocketConfig {
     pub backlog: i32,
     /// Idle connection timeout in milliseconds (`0` disables the sweep). Default 30s.
     pub idle_timeout_ms: u64,
+    /// Maximum ms an actively draining outbound response may go with zero socket write progress
+    /// before closing a stalled peer (`0` disables). Defaults to the idle timeout.
+    pub response_timeout_ms: Option<u64>,
     /// Open connections above which a new one is closed at accept (`0` is unlimited).
     pub max_connections: usize,
     /// Most time a request may take to arrive, from its first byte; unlike the idle timeout it does not
@@ -59,6 +62,10 @@ pub struct SocketConfig {
     pub request_timeout_ms: u64,
     /// Budget for a request head, and for a TLS handshake. 0 leaves them to `request_timeout_ms`.
     pub headers_timeout_ms: u64,
+    /// Per-connection queued outbound buffer cap before closing a slow peer. Default 16 MiB.
+    pub max_write_buf_bytes: usize,
+    /// Optional WebSocket connection maximum lifetime in ms (`0` disables).
+    pub ws_max_lifetime_ms: u64,
 }
 
 impl Default for SocketConfig {
@@ -70,9 +77,12 @@ impl Default for SocketConfig {
             tcp_nodelay: true,
             backlog: 4096,
             idle_timeout_ms: 30_000,
+            response_timeout_ms: None,
             max_connections: 0,
             request_timeout_ms: 300_000,
             headers_timeout_ms: 60_000,
+            max_write_buf_bytes: 16 * 1024 * 1024,
+            ws_max_lifetime_ms: 0,
         }
     }
 }
