@@ -143,6 +143,21 @@ function askForTls(): Promise<ServeOptions["tls"]> {
   })
 }
 
+/** Whether a starting worker came up, never will, or is still not listening after `timeoutMs`. */
+function startOutcome(ready: Promise<void>, timeoutMs: number): Promise<"up" | "gone" | "late"> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("late"), timeoutMs)
+    const settle = (outcome: "up" | "gone"): void => {
+      clearTimeout(timer)
+      resolve(outcome)
+    }
+    ready.then(
+      () => settle("up"),
+      () => settle("gone"),
+    )
+  })
+}
+
 /**
  * Run `app` on every core. The primary returns once every worker is listening; a worker returns once
  * its server is. Rejects in the primary when a worker cannot start, after stopping the others.
@@ -469,10 +484,11 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     const failures: string[] = []
     await Promise.all(
       targets.map(async (slot) => {
-        try {
-          await slot.ready
-        } catch {
-          return // It never listened, so it serves nothing.
+        const outcome = await startOutcome(slot.ready, DEFAULT_START_TIMEOUT_MS)
+        if (outcome === "gone") return // It never listened, so it serves nothing.
+        if (outcome === "late") {
+          failures.push(`worker ${slot.worker.id}: still starting`)
+          return
         }
         await new Promise<void>((resolve) => {
           const id = nextAck++

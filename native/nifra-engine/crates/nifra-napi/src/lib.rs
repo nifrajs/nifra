@@ -1574,26 +1574,22 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 
     fn on_writable(&mut self, conn_id: u32) {
-        let (raw_env, cb_ref, req_ids) = {
+        let req_ids: Vec<u32> = {
             let st = self.shared.borrow();
             if st.on_writable_ref.is_null() {
                 return;
             }
-            let ids: Vec<u32> = st
-                .pending
+            st.pending
                 .iter()
                 .filter(|(_, p)| p.conn_id == conn_id && p.streaming())
                 .map(|(id, _)| id)
-                .collect();
-            (st.raw_env, st.on_writable_ref, ids)
+                .collect()
         };
-        for req_id in req_ids {
-            unsafe { call_js_u32(raw_env, cb_ref, req_id) };
-        }
+        notify_each(&self.shared, req_ids, |st| st.on_writable_ref);
     }
 
     fn on_disconnect(&mut self, conn_id: u32) {
-        let (raw_env, aborted_ids, ws_close) = {
+        let (aborted_ids, ws_close) = {
             let mut st = self.shared.borrow_mut();
             let ids: Vec<u32> = if st.pending.is_empty() {
                 Vec::new()
@@ -1612,13 +1608,18 @@ impl UvCallbacks for HttpUvCallbacks {
                     None
                 } else {
                     // No Close came back, whatever this side had sent (RFC 6455 section 7.1.5).
-                    Some((st.on_ws_close_ref, 1006, String::new()))
+                    Some((1006, String::new()))
                 }
             });
-            (st.raw_env, ids, ws_close)
+            (ids, ws_close)
         };
         notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
-        if let Some((ws_close_ref, code, reason)) = ws_close {
+        if let Some((code, reason)) = ws_close {
+            // Read after those calls: a handler may have stopped the server and dropped it.
+            let (raw_env, ws_close_ref) = {
+                let st = self.shared.borrow();
+                (st.raw_env, st.on_ws_close_ref)
+            };
             unsafe { call_js_ws_close(raw_env, ws_close_ref, conn_id, code, &reason) };
         }
     }
