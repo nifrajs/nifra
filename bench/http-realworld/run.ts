@@ -30,6 +30,7 @@
  */
 import { loadavg } from "node:os"
 import { join } from "node:path"
+import { buildNodeBundle } from "../bundle.ts"
 import { isRecord } from "../is-record.ts"
 import { cpuListFromEnv, pinned } from "../pinning.ts"
 import {
@@ -40,6 +41,7 @@ import {
   pushRounds,
   roundOrder,
 } from "../rounds.ts"
+import { selectWorkloads } from "../selection.ts"
 
 const APP_DIR = Bun.env.BENCH_APP_DIR ?? "bench/http-realworld"
 const BUN_CORE_PRELOAD =
@@ -103,8 +105,8 @@ const GET_ORDERS_BODY: Workload = {
   headers: AUTH_HEADERS,
 }
 
-const WORKLOADS: readonly Workload[] = [GET_ORDERS, POST_ORDERS]
-const BODY_WORKLOADS: readonly Workload[] = [GET_ORDERS_BODY]
+const WORKLOADS = selectWorkloads<Workload>([GET_ORDERS, POST_ORDERS])
+const BODY_WORKLOADS = selectWorkloads<Workload>([GET_ORDERS_BODY])
 const ALL_WORKLOADS: readonly Workload[] = [...WORKLOADS, ...BODY_WORKLOADS]
 
 interface Target {
@@ -169,17 +171,7 @@ const fastifyCompatTarget = (runtime: "bun" | "deno", framework: string): Target
 // workspace by default, the installed tarballs under the published tree. The Node arm is bundled, so
 // its source choice is made here at build time rather than by a runtime switch.
 const NIFRA_NODE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra.js`
-const buildNodeBundle = (entry: string) => async (): Promise<void> => {
-  const result = await Bun.build({
-    entrypoints: [`${APP_DIR}/${entry}`],
-    target: "node",
-    outdir: `${APP_DIR}/dist`,
-  })
-  if (!result.success) {
-    throw new Error(`${entry} bundle failed: ${result.logs.map(String).join("; ")}`)
-  }
-}
-const buildNifraNodeBundle = buildNodeBundle("serve-node-nifra.ts")
+const buildNifraNodeBundle = buildNodeBundle(APP_DIR, "serve-node-nifra.ts")
 const nifraNodeTarget: Target = {
   framework: "nifra",
   prepare: buildNifraNodeBundle,
@@ -196,7 +188,7 @@ const nifraNodeBodyTarget: Target = {
 // no node-uws, and the addon comes from the workspace's `packages/node-uws`, found via `NODE_PATH`.
 const NIFRA_UWS_BUNDLE = `${APP_DIR}/dist/serve-node-nifra-uws.js`
 const UWS_ADDON_DIR = join(import.meta.dir, "..", "..", "packages", "node-uws", "node_modules")
-const buildNifraUwsBundle = buildNodeBundle("serve-node-nifra-uws.ts")
+const buildNifraUwsBundle = buildNodeBundle(APP_DIR, "serve-node-nifra-uws.ts")
 const uwsSpawn = (port: number, ...extra: string[]): readonly string[] => [
   "env",
   `NODE_PATH=${UWS_ADDON_DIR}`,
@@ -213,6 +205,32 @@ const nifraUwsTargets: readonly Target[] =
           framework: "nifra-uws-body",
           prepare: buildNifraUwsBundle,
           spawn: (port) => uwsSpawn(port, "body"),
+          workloads: BODY_WORKLOADS,
+        },
+      ]
+    : []
+
+// nifra on the in-repo Rust engine. Workspace only, and measured only where the addon is built.
+const NIFRA_ENGINE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra-engine.js`
+const buildNifraEngineBundle = buildNodeBundle(APP_DIR, "serve-node-nifra-engine.ts")
+const engineSpawn = (port: number, ...extra: string[]): readonly string[] => [
+  "node",
+  NIFRA_ENGINE_BUNDLE,
+  String(port),
+  ...extra,
+]
+const nifraEngineTargets: readonly Target[] =
+  Bun.env.BENCH_APP_DIR === undefined && Bun.env.NIFRA_RUST_ENGINE_PATH !== undefined
+    ? [
+        {
+          framework: "nifra-engine",
+          prepare: buildNifraEngineBundle,
+          spawn: (port) => engineSpawn(port),
+        },
+        {
+          framework: "nifra-engine-body",
+          prepare: buildNifraEngineBundle,
+          spawn: (port) => engineSpawn(port, "body"),
           workloads: BODY_WORKLOADS,
         },
       ]
@@ -247,6 +265,7 @@ const SECTIONS: readonly Section[] = [
       { ...nodeTarget("node-raw"), isCeiling: true },
       nifraNodeBodyTarget,
       ...nifraUwsTargets,
+      ...nifraEngineTargets,
       bodyTarget(nodeTarget("hono-body")),
       bodyTarget(nodeTarget("fastify-body")),
       bodyTarget(nodeTarget("express-body")),

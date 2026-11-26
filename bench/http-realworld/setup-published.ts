@@ -34,6 +34,7 @@ import { spawnSync } from "node:child_process"
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { FILES, rewriteForPublished } from "./published-files.ts"
 
 /** Packages the bench actually loads. Peers (hono, elysia, fastify) stay on the repo's pinned
  * versions - they are the comparison, and changing them would move both sides of the ratio. */
@@ -41,33 +42,6 @@ const PACKAGES = ["@nifrajs/core", "@nifrajs/middleware", "@nifrajs/node", "@nif
 
 const REPO = join(import.meta.dir, "..", "..")
 const OUT_DIR = join(REPO, "bench", ".published", "app")
-
-/** Rewrites applied to each copied server file: workspace-relative `dist/` paths become paths into
- * the installed packages. Same `<root>/<pkg>/dist/...` shape on both sides, so only the root moves. */
-const REWRITES: ReadonlyArray<readonly [string, string]> = [
-  ["../../packages/core/dist/", "./node_modules/@nifrajs/core/dist/"],
-  ["../../packages/middleware/dist/", "./node_modules/@nifrajs/middleware/dist/"],
-  ["../../packages/core/src/index.ts", "./node_modules/@nifrajs/core/dist/index.js"],
-  // The adapter is imported from `src/` in the workspace (Deno strips types there); an installed
-  // consumer resolves the `default` condition to `dist/index.js`, which is what must be measured.
-  ["../../packages/deno/src/index.ts", "./node_modules/@nifrajs/deno/dist/index.js"],
-  // The Node adapter must become an explicit path too, for two reasons, both verified by marker
-  // builds. A BARE `@nifrajs/node` here resolves through the ROOT workspace map - which wins over
-  // this directory's node_modules and silently bundles the checkout, the exact failure this script
-  // exists to prevent. And Bun's resolver would then take the package's "bun" condition to
-  // `src/*.ts`, while a real Node user gets the "default" condition and runs `dist/index.js`. The
-  // explicit dist path pins both: published tree, and the artifact Node actually loads.
-  ['from "@nifrajs/node"', 'from "./node_modules/@nifrajs/node/dist/index.js"'],
-]
-
-/** Server files plus the shared app. `serve-node.ts` carries the Fastify arm and imports no nifra. */
-const FILES = [
-  "_nifra-app.ts",
-  "serve.ts",
-  "serve-node.ts",
-  "serve-node-nifra.ts",
-  "serve-deno.ts",
-] as const
 
 function run(cmd: string, args: readonly string[], cwd: string): void {
   const res = spawnSync(cmd, [...args], { cwd, stdio: "inherit" })
@@ -123,8 +97,7 @@ await cp(join(staging, "node_modules"), join(OUT_DIR, "node_modules"), {
 })
 
 for (const file of FILES) {
-  let source = await readFile(join(import.meta.dir, file), "utf8")
-  for (const [from, to] of REWRITES) source = source.replaceAll(from, to)
+  const source = rewriteForPublished(await readFile(join(import.meta.dir, file), "utf8"))
   if (source.includes("../../packages/")) {
     throw new Error(`${file} still references the workspace after rewriting - add a REWRITES entry`)
   }

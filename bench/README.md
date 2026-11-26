@@ -114,34 +114,33 @@ the way its framework ships it, measured in interleaved rounds against the compa
 
 ## In CI
 
-The `Benchmark accuracy` workflow (`.github/workflows/benchmark-accuracy.yml`) is an on-demand
-run of the same six HTTP suite/runtime combinations with a larger sampling budget: at least 7
-whole-matrix runs, up to 15, targeting a 95% interval no wider than 5% of its median. With
-four interleaved rounds per run, that collects 28-60 samples per row. Each job has a six-hour
-limit. It skips SSR: an SSR run takes an estimated 20 minutes, so 15 could hit that limit. Start it
-from GitHub Actions with **Run workflow** on the branch to measure.
+The `Benchmark accuracy` workflow (`.github/workflows/benchmark-accuracy.yml`) runs nightly and on
+demand, as three jobs: HTTP with real-world, SSR, and memory. Hosted runners vary in CPU model, so
+what is read together is measured in one job. SSR's Node and Bun are sampled in the same rounds, with
+each rival measured once for both reports.
 
-Both workflows save raw rounds, CPU topology and steal time, the commit SHA, run ID, exact runtime
-versions, and sampling settings in downloadable artifacts retained for 90 days. Compare the ratios
-and interval widths within each report; a shared runner can still leave noisy rows after the larger
-budget is spent. Those rows remain marked unsettled, and benchmark measurements do not gate merges.
+`.github/workflows/benchmarks.yml` is the report-only path: on demand, and the HTTP matrices on a PR
+labelled `bench`. It runs one job per HTTP suite and runtime, and one SSR job for Node and Bun.
 
-`.github/workflows/benchmarks.yml` runs both HTTP matrices and the SSR tables nightly and on demand,
-and the HTTP matrices alone on a PR labelled `bench`: one job per suite x runtime (SSR on Bun and Node
-only, see `bench/ssr/README.md`), each through `bench/ci/run.ts`. A job splits the runner's
-physical cores in two (`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset
-lists the matrices also take by hand on Linux), runs the matrix 3 times in fresh processes, and keeps going up to 5 runs while any row's 95% interval
-is wider than 10% of its median. The stopping rule reads only interval widths, never which row leads.
-Every ratio in the job summary is a median of per-round ratios with a distribution-free interval
-(`bench/ci/stats.ts`); the req/s beside it is the median over every round and moves with the runner.
-An SSR job runs `bench/ssr/run.ts` with its defaults (5 rounds, 3 s warmup, 5 s oha, 50 connections),
-pinned like the other suites, and logs the same round and result lines as a local run. The report is
-uploaded as an artifact with every raw round, and nothing gates a merge yet: the nightly runs measure
-the runner's noise floor that a later regression gate will take its tolerance from.
+Both go through `bench/ci/run.ts`. A job splits the runner's physical cores in two
+(`BENCH_SERVER_CPUS` for the servers, `BENCH_LOAD_CPUS` for oha, both taskset lists the matrices also
+take by hand on Linux) and runs the whole matrix at least 3 times in fresh processes. After that it reruns only the workloads that still hold a row whose 95%
+interval is wider than 10% of its median, up to 5 runs; reruns reuse the first run's builds. The
+stopping rule reads only interval widths, never which row leads. Every ratio in the job summary is a
+median of per-round ratios with a distribution-free interval (`bench/ci/stats.ts`); the req/s beside
+it is the median over every round and moves with the runner.
+
+The `nifra-engine` rows serve nifra on the in-repo Rust engine (`@nifrajs/node-engine`, experimental)
+on Node. The matrices include them only when `NIFRA_RUST_ENGINE_PATH` names a built addon, as CI
+does, and the website's tables leave them out.
+
+Artifacts keep every raw round, CPU topology and steal time, the commit SHA, runtime versions and
+sampling settings for 90 days. Rows still noisy after the run budget are marked unsettled, and
+benchmark measurements do not gate merges.
 
 ```sh
 bun run bench/ci/run.ts --suite http --runtime bun --pin   # one job, Linux only with --pin
-bun run bench/ci/run.ts --suite ssr --runtime node         # an SSR job, unpinned
+bun run bench/ci/run.ts --suite ssr --runtime node,bun --out 'bench-ci/ssr-{runtime}.json'   # unpinned
 bun run bench/ci/summary.ts bench-ci                       # combine downloaded reports
 ```
 

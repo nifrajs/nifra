@@ -1,7 +1,8 @@
 /**
- * Which SSR tables a run measures, and the one `--json` line a CI job reads (bench/ci/report.ts). A
- * CI job measures one runtime: nifra's rows on it, every rival app, and each table's reference row,
- * all in the same interleaved rounds, so every ratio it reports pairs samples taken seconds apart.
+ * Which SSR tables a run measures, and the `--json` lines a CI job reads (bench/ci/report.ts), one
+ * per runtime: nifra's rows on it, every rival app, and each table's reference row. Measuring both
+ * runtimes in one run puts them on one machine and samples each rival once for both reports; every
+ * ratio pairs samples of the same round.
  */
 import type { Matrix, RoundCell } from "../rounds.ts"
 import { rowKind, type SsrBenchMeasure, type SsrBenchTarget } from "./harness.ts"
@@ -40,6 +41,20 @@ export function forRuntime(section: SsrTableSection, runtime: SsrRuntime): SsrTa
     ...section,
     targets: section.targets.filter((t) => !isNifraApp(t) || t.runtime === runtime),
   }
+}
+
+/** The tables that feed any of the named workloads on any of `runtimes`. */
+export function sectionsMeasuring(
+  sections: readonly SsrTableSection[],
+  runtimes: readonly SsrRuntime[],
+  only: ReadonlySet<string>,
+): SsrTableSection[] {
+  const named = (section: SsrTableSection): string[] =>
+    runtimes.flatMap((runtime) => ciWorkloads(forRuntime(section, runtime)).map((w) => w.workload))
+  const known = new Set(sections.flatMap(named))
+  const unknown = [...only].filter((name) => !known.has(name))
+  if (unknown.length > 0) throw new Error(`no SSR workload named ${unknown.join(", ")}`)
+  return sections.filter((section) => named(section).some((name) => only.has(name)))
 }
 
 /** One comparison a CI report summarizes: a nifra row, its rival and the table's ceiling. */
@@ -130,7 +145,8 @@ export function ciRunOutput(
   const ceilings: Record<string, string> = {}
   const roles: Record<string, CiRoles> = {}
   for (const { section, rounds } of tables) {
-    for (const w of ciWorkloads(section)) {
+    // A run that measured both runtimes reports each on its own, from the same rounds.
+    for (const w of ciWorkloads(forRuntime(section, runtime))) {
       for (const row of w.rows) {
         const measured = rounds[row.name]
         if (measured === undefined) throw new Error(`${w.workload}: ${row.name} has no rounds`)
@@ -138,7 +154,7 @@ export function ciRunOutput(
         rows[row.name] = cells
         cells[w.workload] = { rounds: measured }
       }
-      const divisor = ciDivisor(section, w)
+      const divisor = ciDivisor(forRuntime(section, runtime), w)
       if (divisor !== undefined) ceilings[w.workload] = divisor.name
       roles[w.workload] =
         w.rival === undefined
