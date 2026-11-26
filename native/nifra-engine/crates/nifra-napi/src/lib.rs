@@ -529,6 +529,15 @@ impl PendingReq {
     }
 }
 
+/// What joins a repeated field: cookie pairs split on `;` (RFC 9113 section 8.2.3), the rest on `,`.
+fn field_separator(name: &str) -> &'static str {
+    if name.eq_ignore_ascii_case("cookie") {
+        "; "
+    } else {
+        ", "
+    }
+}
+
 #[cfg(unix)]
 fn header_from_head(fields: &[String], name: &str) -> Option<String> {
     let mut values = fields
@@ -538,7 +547,7 @@ fn header_from_head(fields: &[String], name: &str) -> Option<String> {
     let mut value = values.next()?.to_owned();
     if !name.eq_ignore_ascii_case("content-type") {
         for next in values {
-            value.push_str(", ");
+            value.push_str(field_separator(name));
             value.push_str(next);
         }
     }
@@ -592,6 +601,11 @@ impl ConnMetaSlot {
         self.ws = None;
         self.h2 = None;
         self.refuse_input = false;
+    }
+
+    /// An open WebSocket that has not sent its Close.
+    fn ws_sendable(&self) -> bool {
+        self.ws.as_ref().is_some_and(|ws| !ws.conn.close_sent())
     }
 
     #[inline]
@@ -752,6 +766,16 @@ fn h1_send(
             held.done |= finish;
             held.keep_alive = keep_alive;
             taken_order.held_bytes += bytes.len();
+            if finish {
+                // The request id returns to the slab now: the queue keeps the answer under its own.
+                let own = next_placeholder(st);
+                if let Some(held) = taken_order.held.remove(&req_id) {
+                    taken_order.held.insert(own, held);
+                }
+                if let Some(id) = taken_order.queue.iter_mut().find(|id| **id == req_id) {
+                    *id = own;
+                }
+            }
             if taken_order.held_bytes > MAX_HELD_BYTES {
                 server.close_conn(conn_id);
                 return WriteResult::Closed;
@@ -801,6 +825,14 @@ fn h1_send(
     result
 }
 
+/// An id for a queued answer that no request owns.
+#[cfg(unix)]
+fn next_placeholder(st: &mut UvHttpShared) -> u32 {
+    let id = st.placeholder_seq;
+    st.placeholder_seq = id.wrapping_sub(1);
+    id
+}
+
 /// Queue a finished answer behind the connection's earlier unanswered requests, so it leaves in
 /// request order. Returns `true` when more than `MAX_HELD_BYTES` now wait on this connection.
 #[cfg(unix)]
@@ -810,8 +842,7 @@ fn park_behind_pending(
     frame: Vec<u8>,
     keep_alive: bool,
 ) -> bool {
-    let id = st.placeholder_seq;
-    st.placeholder_seq = id.wrapping_sub(1);
+    let id = next_placeholder(st);
     let slot = st.conn_meta.ensure(conn_id);
     if slot.h1_overflow.is_none() {
         let mut order = Box::new(H1Order::default());
@@ -952,7 +983,6 @@ struct WsConnState {
     conn: WsConn,
     raw_head: Box<[u8]>,
     query: String,
-    sent_close: Option<(u16, String)>,
     close_emitted: bool,
 }
 
@@ -988,10 +1018,26 @@ struct UvHttpShared {
     reset_in_batch: Vec<(u32, u32, u32)>,
     pending: PendingSlab,
     conn_meta: ConnMetaTable,
-    /// Ids for native-route answers parked behind a JS request; they count down from the top so they
-    /// never meet a slab id.
+    /// Ids for finished answers parked behind an earlier request; they count down from the top so
+    /// they never meet a slab id.
     placeholder_seq: u32,
     scratch_frame: Vec<u8>,
+}
+
+/// Call a registered callback once per id, resolving it each time: a handler may delete it.
+#[cfg(unix)]
+fn notify_each(
+    shared: &Rc<RefCell<UvHttpShared>>,
+    ids: Vec<u32>,
+    pick: fn(&UvHttpShared) -> sys::napi_ref,
+) {
+    for id in ids {
+        let (raw_env, cb_ref) = {
+            let st = shared.borrow();
+            (st.raw_env, pick(&st))
+        };
+        unsafe { call_js_u32(raw_env, cb_ref, id) };
+    }
 }
 
 #[cfg(unix)]
@@ -1009,7 +1055,7 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
     unsafe { call_js_u32(raw_env, on_batch_ref, count as u32) };
 
     // A stream reset while its request was still in that batch is aborted now, once JS has it.
-    let (raw_env, aborted_ref, resets) = {
+    let resets = {
         let mut st = shared.borrow_mut();
         let resets = std::mem::take(&mut st.reset_in_batch);
         let mut aborted = Vec::with_capacity(resets.len());
@@ -1023,11 +1069,9 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
                 aborted.push(id);
             }
         }
-        (st.raw_env, st.on_aborted_ref, aborted)
+        aborted
     };
-    for req_id in resets {
-        unsafe { call_js_u32(raw_env, aborted_ref, req_id) };
-    }
+    notify_each(shared, resets, |st| st.on_aborted_ref);
 
     // Promote any request that stayed async past `onBatch` out of the per-batch head arena.
     let mut st = shared.borrow_mut();
@@ -1071,6 +1115,12 @@ impl HttpUvCallbacks {
     ) -> ConnAction {
         let mut st = self.shared.borrow_mut();
 
+        if st.conn_meta.get(conn_id).is_some_and(|s| s.refuse_input) {
+            return ConnAction::Continue {
+                consumed: read_buf.len(),
+            };
+        }
+
         // If this connection has already upgraded to WebSocket, decode RFC 6455 frames directly.
         if let Some(ws) = st
             .conn_meta
@@ -1085,10 +1135,12 @@ impl HttpUvCallbacks {
             if has_close {
                 ws.close_emitted = true;
             }
-            let (raw_env, msg_ref, close_ref) =
-                (st.raw_env, st.on_ws_message_ref, st.on_ws_close_ref);
             drop(st);
             for event in &feed.events {
+                let (raw_env, msg_ref, close_ref) = {
+                    let st = self.shared.borrow();
+                    (st.raw_env, st.on_ws_message_ref, st.on_ws_close_ref)
+                };
                 match event {
                     WsEvent::Text(_) | WsEvent::Binary(_) => unsafe {
                         call_js_ws_message(raw_env, msg_ref, conn_id, event);
@@ -1205,7 +1257,7 @@ impl HttpUvCallbacks {
                         }
                     }
                     H2Event::StreamReset(stream_id) => {
-                        let (raw_env, cb_ref, aborted) = {
+                        let aborted = {
                             let mut st = self.shared.borrow_mut();
                             let ids: Vec<u32> = st
                                 .pending
@@ -1224,21 +1276,18 @@ impl HttpUvCallbacks {
                                     aborted.push(id);
                                 }
                             }
-                            (st.raw_env, st.on_aborted_ref, aborted)
+                            aborted
                         };
-                        for req_id in aborted {
-                            unsafe { call_js_u32(raw_env, cb_ref, req_id) };
-                        }
+                        notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
                     }
                     H2Event::GoAway => {}
                 }
             }
             // Streams whose response backlog drained after a WINDOW_UPDATE may write again.
             for stream_id in feed.writable {
-                let (raw_env, cb_ref, ids) = {
+                let ids: Vec<u32> = {
                     let st = self.shared.borrow();
-                    let ids: Vec<u32> = st
-                        .pending
+                    st.pending
                         .iter()
                         .filter(|(_, p)| {
                             p.conn_id == conn_id
@@ -1246,14 +1295,9 @@ impl HttpUvCallbacks {
                                 && p.streaming()
                         })
                         .map(|(id, _)| id)
-                        .collect();
-                    (st.raw_env, st.on_writable_ref, ids)
+                        .collect()
                 };
-                if !cb_ref.is_null() {
-                    for req_id in ids {
-                        unsafe { call_js_u32(raw_env, cb_ref, req_id) };
-                    }
-                }
+                notify_each(&self.shared, ids, |st| st.on_writable_ref);
             }
             return if feed.close_after_write {
                 ConnAction::CloseAfterWrite {
@@ -1266,11 +1310,6 @@ impl HttpUvCallbacks {
             };
         }
 
-        if st.conn_meta.get(conn_id).is_some_and(|s| s.refuse_input) {
-            return ConnAction::Continue {
-                consumed: read_buf.len(),
-            };
-        }
         let mut consumed = 0usize;
         let mut close_after = false;
         let limits = st.limits;
@@ -1324,6 +1363,7 @@ impl HttpUvCallbacks {
                             resume = ChunkResume::default();
                         }
                         if !req.keep_alive {
+                            st.conn_meta.ensure(conn_id).refuse_input = true;
                             close_after = !parked;
                             break;
                         }
@@ -1412,6 +1452,7 @@ impl HttpUvCallbacks {
                         resume = ChunkResume::default();
                     }
                     if !req.keep_alive {
+                        st.conn_meta.ensure(conn_id).refuse_input = true;
                         break;
                     }
                 }
@@ -1552,7 +1593,7 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 
     fn on_disconnect(&mut self, conn_id: u32) {
-        let (raw_env, cb_ref, aborted_ids, ws_close) = {
+        let (raw_env, aborted_ids, ws_close) = {
             let mut st = self.shared.borrow_mut();
             let ids: Vec<u32> = if st.pending.is_empty() {
                 Vec::new()
@@ -1570,17 +1611,13 @@ impl UvCallbacks for HttpUvCallbacks {
                 if ws.close_emitted {
                     None
                 } else {
-                    let (code, reason) = ws.sent_close.unwrap_or((1006, String::new()));
-                    Some((st.on_ws_close_ref, code, reason))
+                    // No Close came back, whatever this side had sent (RFC 6455 section 7.1.5).
+                    Some((st.on_ws_close_ref, 1006, String::new()))
                 }
             });
-            (st.raw_env, st.on_aborted_ref, ids, ws_close)
+            (st.raw_env, ids, ws_close)
         };
-        if !cb_ref.is_null() {
-            for req_id in aborted_ids {
-                unsafe { call_js_u32(raw_env, cb_ref, req_id) };
-            }
-        }
+        notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
         if let Some((ws_close_ref, code, reason)) = ws_close {
             unsafe { call_js_ws_close(raw_env, ws_close_ref, conn_id, code, &reason) };
         }
@@ -1700,6 +1737,7 @@ fn h2_content_type(req: &H2Request) -> Option<&str> {
         .map(|(_, value)| value.as_str())
 }
 
+#[cfg(unix)]
 fn pack_h2_into_shared(st: &mut UvHttpShared, req_id: u32, req: &H2Request) -> bool {
     let slot_base = st.batch_count * IN_SLOT_U32S;
     let max_u32s = st.in_meta.len / 4;
@@ -1903,7 +1941,7 @@ impl UvHttpServer {
                             found = Some(v.clone());
                         }
                         Some(existing) => {
-                            existing.push_str(", ");
+                            existing.push_str(field_separator(&name));
                             existing.push_str(v);
                         }
                     }
@@ -2514,7 +2552,6 @@ impl UvHttpServer {
                 conn: WsConn::new(max_msg),
                 raw_head: owned_head,
                 query,
-                sent_close: None,
                 close_emitted: false,
             }));
             (st.raw_env, st.on_ws_open_ref, pending.conn_id)
@@ -2528,7 +2565,11 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_send(&self, socket_id: u32, payload: Buffer, is_binary: bool) -> bool {
         let mut st = self.shared.borrow_mut();
-        if !st.conn_meta.get(socket_id).is_some_and(|s| s.ws.is_some()) {
+        if !st
+            .conn_meta
+            .get(socket_id)
+            .is_some_and(ConnMetaSlot::ws_sendable)
+        {
             return false;
         }
         st.scratch_frame.clear();
@@ -2550,7 +2591,11 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_send_text(&self, socket_id: u32, text: String) -> bool {
         let mut st = self.shared.borrow_mut();
-        if !st.conn_meta.get(socket_id).is_some_and(|s| s.ws.is_some()) {
+        if !st
+            .conn_meta
+            .get(socket_id)
+            .is_some_and(ConnMetaSlot::ws_sendable)
+        {
             return false;
         }
         st.scratch_frame.clear();
@@ -2574,7 +2619,6 @@ impl UvHttpServer {
                 return false;
             };
             ws.conn.mark_close_sent();
-            ws.sent_close = Some((code, reason_str.clone()));
             st.scratch_frame.clear();
             write_close_frame(code, &reason_str, &mut st.scratch_frame);
             // The socket stays open for the peer's own Close (RFC 6455 section 7.1.2); closing at

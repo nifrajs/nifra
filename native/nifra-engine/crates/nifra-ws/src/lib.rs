@@ -107,7 +107,7 @@ pub fn validate_upgrade_headers<'a>(
 }
 
 /// A `Sec-WebSocket-Key`: the base64 of a 16-byte nonce, which is 22 characters and `==`, the last
-/// character carrying four bits and two zero pad bits.
+/// character carrying two bits and four zero pad bits.
 fn is_nonce_key(key: &str) -> bool {
     let bytes = key.as_bytes();
     if bytes.len() != 24 || !key.ends_with("==") {
@@ -122,7 +122,7 @@ fn is_nonce_key(key: &str) -> bool {
         _ => None,
     };
     bytes[..22].iter().all(|&b| sextet(b).is_some())
-        && sextet(bytes[21]).is_some_and(|last| last & 0x03 == 0)
+        && sextet(bytes[21]).is_some_and(|last| last & 0x0f == 0)
 }
 
 /// Compute RFC 6455 §4.2.2 `Sec-WebSocket-Accept` from a client's `Sec-WebSocket-Key`.
@@ -210,6 +210,13 @@ impl WsConn {
 
     pub fn mark_close_sent(&mut self) {
         self.close_sent = true;
+        // A half-received message is never delivered, and must not count against later frames.
+        self.frag_opcode = None;
+        self.frag_buf = Vec::new();
+    }
+
+    pub fn close_sent(&self) -> bool {
+        self.close_sent
     }
 
     pub fn is_closed(&self) -> bool {
@@ -628,6 +635,29 @@ mod tests {
             res.events.last(),
             Some(WsEvent::Close { code: 1000, .. })
         ));
+    }
+
+    #[test]
+    fn a_fragment_held_at_close_does_not_count_against_later_frames() {
+        let mut conn = WsConn::new(8);
+        let mask = [1, 2, 3, 4];
+        let mut out = Vec::new();
+        conn.feed(
+            &make_client_frame(false, OPCODE_BINARY, b"123456", mask),
+            &mut out,
+        );
+        conn.mark_close_sent();
+        let mut wire = make_client_frame(true, OPCODE_CONT, b"78", mask);
+        wire.extend(make_client_frame(true, OPCODE_TEXT, b"abc", mask));
+        let res = conn.feed(&wire, &mut out);
+        assert!(!res.close_after_write);
+        assert!(res.events.is_empty());
+    }
+
+    #[test]
+    fn a_nonce_with_set_padding_bits_is_refused() {
+        assert!(is_nonce_key("dGhlIHNhbXBsZSBub25jZQ=="));
+        assert!(!is_nonce_key("dGhlIHNhbXBsZSBub25jZU=="));
     }
 
     #[test]

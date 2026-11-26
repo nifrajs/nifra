@@ -293,18 +293,15 @@ function fixedHeaders(headers: readonly (readonly [string, string])[]): string[]
   return flat
 }
 
+const NO_BODY_BYTES = new Uint8Array(0)
+
 function declaredContentLength(headers: HeaderRecord | undefined): number | undefined {
   if (headers === undefined) return undefined
   for (const [name, value] of Object.entries(headers)) {
     if (name.length !== 14 || name.toLowerCase() !== "content-length") continue
     const text = typeof value === "string" ? value : value?.[0]
     if (text === undefined || !/^\d{1,15}$/.test(text)) return undefined
-    const length = Number(text)
-    // The native writer takes a u32 and would wrap a larger value into a short, wrong length.
-    if (length > MAX_NATIVE_LENGTH) {
-      throw new RangeError(`Content-Length ${text} is larger than the engine can frame`)
-    }
-    return length
+    return Number(text)
   }
   return undefined
 }
@@ -479,7 +476,8 @@ class RustBatchSource {
   }
 
   bytes(): Promise<Uint8Array> {
-    return Promise.resolve(this.toBytes() ?? new Uint8Array(0))
+    // A copy, as `arrayBuffer()`: the view's `.buffer` would expose the rest of a pooled Buffer.
+    return Promise.resolve(new Uint8Array(this.toBytes() ?? NO_BODY_BYTES))
   }
 
   jsonNow(): { readonly value: unknown; readonly byteLength: number } {
@@ -612,8 +610,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   const checkHost = options.validateHost === true || policedHost
   const host = options.hostname ?? "0.0.0.0"
 
-  const wsCap = options.wsMaxMessageSize ?? payloadCeiling(app)
-  const maxBodySize = options.maxBodySize ?? Math.max(DEFAULT_MAX_BODY_SIZE, bodyCeiling(app) ?? 0)
+  // The native caps are u32: a larger one, the app's own included, is held to the largest it takes.
+  const wsDeclared = options.wsMaxMessageSize ?? payloadCeiling(app)
+  const wsCap = wsDeclared === undefined ? undefined : Math.min(wsDeclared, MAX_NATIVE_LENGTH)
+  const maxBodySize = Math.min(
+    options.maxBodySize ?? Math.max(DEFAULT_MAX_BODY_SIZE, bodyCeiling(app) ?? 0),
+    MAX_NATIVE_LENGTH,
+  )
   const oversizeWindow = options.oversizeWindow ?? DEFAULT_OVERSIZE_WINDOW
 
   let uvServer: RustUvServer
@@ -754,6 +757,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
     validateHeaders(status, headers, cookies)
     const flat = buildFlatHeaders(headers, cookies, defaultType)
+    // The native writer takes a u32 and would wrap a larger value into a short, wrong length.
+    if (declared !== undefined && declared > MAX_NATIVE_LENGTH) {
+      throw new RangeError(`Content-Length ${declared} is larger than the engine can frame`)
+    }
     uvServer.writeHead(source.requestId, status, flat, declared ?? null)
     source.headWritten = true
 

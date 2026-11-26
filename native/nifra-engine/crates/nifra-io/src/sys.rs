@@ -680,10 +680,9 @@ pub(crate) fn collect_timeout_ids<'a>(
         if idle_limit.is_some_and(|l| now.duration_since(c.last_activity) >= l) {
             idle.push(id);
         }
-        let started = c.partial_since.or_else(|| {
-            request_limit?;
-            callbacks?.oldest_incomplete_request(id)
-        });
+        // A newer partial frame must not hide an older unfinished request.
+        let unfinished = request_limit.and_then(|_| callbacks?.oldest_incomplete_request(id));
+        let started = [c.partial_since, unfinished].into_iter().flatten().min();
         if let Some(started) = started {
             if request_limit.is_some_and(|l| now.duration_since(started) >= l) {
                 partial.push(id);

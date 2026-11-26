@@ -180,6 +180,33 @@ describe("NF-S010 a listener that answers with Host unchecked", () => {
   })
 })
 
+describe("what counts as configuring or serving", () => {
+  const listen = 'import { server } from "@nifrajs/core"\nawait server().listen(443, { tls })\n'
+
+  test("a later writer wins over a spread, and an unreadable spread proves nothing", async () => {
+    for (const options of [
+      "{ ...{ validateHost: true }, validateHost: false }",
+      "{ validateHost: true, ...overrides }",
+    ]) {
+      expect(await one(`${listen}export const options = ${options}`)).toHaveLength(1)
+    }
+    expect(
+      await one(
+        `const base = { port: 1 }\n${listen}export const o = { validateHost: true, ...base }`,
+      ),
+    ).toEqual([])
+  })
+
+  test("a long route chain is still a server", async () => {
+    const routes = '.get("/a", h)'.repeat(12)
+    expect(
+      await one(
+        `import { server } from "@nifrajs/core"\nawait server()${routes}.listen(443, { tls })`,
+      ),
+    ).toHaveLength(1)
+  })
+})
+
 describe("nifra.check.json hostTopology", () => {
   async function project(config: unknown): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))

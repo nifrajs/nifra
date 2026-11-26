@@ -101,16 +101,24 @@ pub fn bind_tcp_listener(
         .strip_prefix('[')
         .and_then(|rest| rest.strip_suffix(']'))
         .unwrap_or(host);
-    let addr = (bare, port)
+    let addrs = (bare, port)
         .to_socket_addrs()
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?
-        .next()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("`{host}` resolves to no address"),
-            )
-        })?;
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let mut failure = io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("`{host}` resolves to no address"),
+    );
+    // A name may resolve to several addresses; the first that binds is served.
+    for addr in addrs {
+        match bind_one(addr, cfg) {
+            Ok(bound) => return Ok(bound),
+            Err(err) => failure = err,
+        }
+    }
+    Err(failure)
+}
+
+fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, SocketAddr)> {
     let domain = match addr {
         SocketAddr::V4(_) => Domain::IPV4,
         SocketAddr::V6(_) => Domain::IPV6,

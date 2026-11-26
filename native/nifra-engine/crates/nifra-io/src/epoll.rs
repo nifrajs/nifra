@@ -64,17 +64,17 @@ fn epoll_tuning() -> (usize, usize, bool, usize) {
 }
 
 #[inline]
-unsafe fn epoll_ctl_mod(epfd: RawFd, fd: RawFd, conn_id: u32, events: u32) {
+unsafe fn epoll_ctl_mod(epfd: RawFd, fd: RawFd, conn_id: u32, events: u32) -> bool {
     let mut ev = libc::epoll_event {
         events,
         u64: u64::from(conn_id),
     };
     // A connection whose read side ended and queue drained was taken out of the set: re-add it.
-    if libc::epoll_ctl(epfd, libc::EPOLL_CTL_MOD, fd, &mut ev) != 0
-        && *libc::__errno_location() == libc::ENOENT
-    {
-        libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fd, &mut ev);
+    if libc::epoll_ctl(epfd, libc::EPOLL_CTL_MOD, fd, &mut ev) == 0 {
+        return true;
     }
+    *libc::__errno_location() == libc::ENOENT
+        && libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fd, &mut ev) == 0
 }
 
 #[inline]
@@ -86,7 +86,7 @@ unsafe fn epoll_ctl_del_and_close(epfd: RawFd, fd: RawFd) {
 }
 
 #[inline]
-fn apply_epoll_flush_action(epfd: RawFd, core: &ConnCore, conn_id: u32, action: FlushAction) {
+fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, action: FlushAction) {
     unsafe {
         match action {
             FlushAction::ArmWritable => {
@@ -96,7 +96,10 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &ConnCore, conn_id: u32, action: 
                     } else {
                         libc::EPOLLIN as u32
                     };
-                epoll_ctl_mod(epfd, core.fd, conn_id, events);
+                if !epoll_ctl_mod(epfd, core.fd, conn_id, events) {
+                    // No event will ever drain it: the timeout sweep closes it.
+                    core.close_deadline = Some(std::time::Instant::now());
+                }
             }
             FlushAction::DisarmWritable => {
                 if core.read_ended {
@@ -476,11 +479,9 @@ impl EpollServer {
     }
 
     pub fn any_queued(&self) -> bool {
-        self.state
-            .borrow()
-            .conns
-            .iter()
-            .any(|(_, c)| c.queued_bytes() > 0)
+        let st = self.state.borrow();
+        // `deferred` holds what a handler wrote during its own dispatch, not yet on any queue.
+        !st.deferred.is_empty() || st.conns.iter().any(|(_, c)| c.queued_bytes() > 0)
     }
 
     pub fn stop_listening(&self) {
@@ -653,7 +654,7 @@ unsafe fn handle_client_readable(
     let mut direct_len = 0usize;
     let mut has_buf_plaintext = false;
     let mut scratch;
-    let mut dispatch_state: Option<(Option<Box<dyn UvCallbacks>>, Vec<u8>, bool, Vec<u8>)> = None;
+    let mut dispatch_state: Option<(Option<Box<dyn UvCallbacks>>, Vec<u8>, Vec<u8>)> = None;
 
     {
         let mut st = state_rc.borrow_mut();
@@ -799,7 +800,9 @@ unsafe fn handle_client_readable(
                 conn.read_ended = true;
                 conn.eof_at.get_or_insert(now);
                 if conn.writable_armed {
-                    epoll_ctl_mod(epfd, conn.fd, conn_id, libc::EPOLLOUT as u32);
+                    if !epoll_ctl_mod(epfd, conn.fd, conn_id, libc::EPOLLOUT as u32) {
+                        conn.close_deadline = Some(now);
+                    }
                 } else {
                     libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, conn.fd, std::ptr::null_mut());
                 }
@@ -812,12 +815,11 @@ unsafe fn handle_client_readable(
                 } else {
                     std::mem::take(&mut conn.read_buf)
                 };
-                let is_tls = conn.tls.is_some();
                 let mut sw = std::mem::take(&mut st.scratch_write);
                 sw.clear();
                 let cb = st.callbacks.take();
                 st.dispatching = Some(conn_id);
-                dispatch_state = Some((cb, taken, is_tls, sw));
+                dispatch_state = Some((cb, taken, sw));
             } else if !remove
                 && (conn.close_after_write
                     || conn.write_pos < conn.write_buf.len()
@@ -852,7 +854,7 @@ unsafe fn handle_client_readable(
         }
     }
 
-    let (mut cb, mut read_buf, is_tls, mut cleartext_write) = dispatch_state.unwrap();
+    let (mut cb, mut read_buf, mut cleartext_write) = dispatch_state.unwrap();
 
     let action = if let Some(ref mut handler) = cb {
         let input_slice = if direct_len > 0 {
@@ -946,22 +948,7 @@ unsafe fn handle_client_readable(
             conn.read_buf = read_buf;
         }
         if !remove && !cleartext_write.is_empty() {
-            let fa = if is_tls {
-                if let Some(ref mut tls_conn) = conn.tls {
-                    if nifra_tls::encrypt_plaintext(tls_conn, &cleartext_write, &mut conn.write_buf)
-                        .is_err()
-                    {
-                        remove = true;
-                        FlushAction::Close
-                    } else {
-                        FlushAction::None
-                    }
-                } else {
-                    FlushAction::None
-                }
-            } else {
-                write_bytes_or_queue(conn, &cleartext_write)
-            };
+            let fa = write_bytes_or_queue(conn, &cleartext_write);
             if fa == FlushAction::Close {
                 remove = true;
             } else if fa != FlushAction::None {

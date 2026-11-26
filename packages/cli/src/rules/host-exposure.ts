@@ -38,34 +38,79 @@ function propertyKey(ts: typeof TSApi, prop: TSApi.ObjectLiteralElementLike): st
   return undefined
 }
 
-/** Whether `node` or anything under it is an object literal that sets `key`. */
-function setsKey(ts: typeof TSApi, node: TSApi.Node, key: string): boolean {
-  if (ts.isObjectLiteralExpression(node)) {
-    for (const prop of node.properties) if (propertyKey(ts, prop) === key) return true
+type Bindings = ReadonlyMap<string, readonly TSApi.Expression[]>
+
+/** The object literals a spread can copy from, or `undefined` when one of them cannot be read. */
+function spreadSources(
+  ts: typeof TSApi,
+  from: TSApi.Expression,
+  bindings: Bindings,
+  seen: ReadonlySet<TSApi.Node>,
+): readonly TSApi.ObjectLiteralExpression[] | undefined {
+  if (ts.isObjectLiteralExpression(from)) return [from]
+  let branches: readonly TSApi.Expression[] | undefined
+  if (ts.isParenthesizedExpression(from)) branches = [from.expression]
+  else if (ts.isConditionalExpression(from)) branches = [from.whenTrue, from.whenFalse]
+  else if (
+    ts.isBinaryExpression(from) &&
+    from.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  )
+    branches = [from.right]
+  else if (ts.isIdentifier(from)) branches = bindings.get(from.text)
+  if (branches === undefined) return undefined
+  const found: TSApi.ObjectLiteralExpression[] = []
+  for (const branch of branches) {
+    // Each node is followed once, so a name bound to itself ends here.
+    if (seen.has(branch)) return undefined
+    const sources = spreadSources(ts, branch, bindings, new Set([...seen, branch]))
+    if (sources === undefined) return undefined
+    found.push(...sources)
   }
-  return ts.forEachChild(node, (child) => (setsKey(ts, child, key) ? true : undefined)) === true
+  return found
 }
 
 /**
- * Whether code in `tree` puts a Host check on a server: a `validateHost` that is not the literal
- * `false` and that no later spread in the same object may override. A comment or a string that
- * names it configures nothing.
+ * What an object literal leaves `validateHost` at, the last writer winning: `true` for a value that
+ * is not the literal `false`, `undefined` when nothing writes it. A spread that cannot be read may
+ * write it, so it is no guarantee.
  */
-function configuresHost(ts: typeof TSApi, tree: TSApi.SourceFile): boolean {
-  const visit = (node: TSApi.Node): boolean => {
-    if (ts.isObjectLiteralExpression(node)) {
-      const { properties } = node
-      for (const [at, prop] of properties.entries()) {
-        if (propertyKey(ts, prop) !== HOST_OPTION) continue
-        if (ts.isPropertyAssignment(prop) && prop.initializer.kind === ts.SyntaxKind.FalseKeyword)
-          continue
-        // A spread after it can write the option again: one that may sets it is no guarantee.
-        const overridden = properties
-          .slice(at + 1)
-          .some((later) => ts.isSpreadAssignment(later) && setsKey(ts, later, HOST_OPTION))
-        if (!overridden) return true
+function hostSetting(
+  ts: typeof TSApi,
+  object: TSApi.ObjectLiteralExpression,
+  bindings: Bindings,
+  seen: ReadonlySet<TSApi.Node> = new Set(),
+): boolean | undefined {
+  let setting: boolean | undefined
+  for (const prop of object.properties) {
+    if (ts.isSpreadAssignment(prop)) {
+      const sources = spreadSources(ts, prop.expression, bindings, seen)
+      if (sources === undefined) {
+        setting = false
+        continue
       }
+      const results = sources.map((source) =>
+        hostSetting(ts, source, bindings, new Set([...seen, source])),
+      )
+      if (results.includes(false)) setting = false
+      else if (results.every((result) => result === true)) setting = true
+    } else if (propertyKey(ts, prop) === HOST_OPTION) {
+      setting = !(
+        ts.isPropertyAssignment(prop) && prop.initializer.kind === ts.SyntaxKind.FalseKeyword
+      )
     }
+  }
+  return setting
+}
+
+/**
+ * Whether code in `tree` puts a Host check on a server. A comment or a string that names the option
+ * configures nothing.
+ */
+function configuresHost(ts: typeof TSApi, tree: TSApi.SourceFile, bindings: Bindings): boolean {
+  const visit = (node: TSApi.Node): boolean => {
+    // A literal spread into another is judged there, where a later property can overwrite it.
+    if (ts.isSpreadAssignment(node) && ts.isObjectLiteralExpression(node.expression)) return false
+    if (ts.isObjectLiteralExpression(node) && hostSetting(ts, node, bindings) === true) return true
     return ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) === true
   }
   return visit(tree)
@@ -84,7 +129,7 @@ function serveImports(ts: typeof TSApi, tree: TSApi.SourceFile): ReadonlyMap<str
 interface CoreNames {
   readonly factories: ReadonlySet<string>
   readonly namespaces: ReadonlySet<string>
-  readonly bindings: ReadonlyMap<string, readonly TSApi.Expression[]>
+  readonly bindings: Bindings
 }
 
 function coreNames(ts: typeof TSApi, tree: TSApi.SourceFile): CoreNames {
@@ -94,6 +139,11 @@ function coreNames(ts: typeof TSApi, tree: TSApi.SourceFile): CoreNames {
     (from) => from === "@nifrajs/core" || from.startsWith("@nifrajs/core/"),
     "server",
   )
+  return { factories, namespaces, bindings: bindingsIn(ts, tree) }
+}
+
+/** Every initializer each name in the file is declared with. */
+function bindingsIn(ts: typeof TSApi, tree: TSApi.SourceFile): Bindings {
   const bindings = new Map<string, TSApi.Expression[]>()
   const collect = (node: TSApi.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
@@ -104,7 +154,7 @@ function coreNames(ts: typeof TSApi, tree: TSApi.SourceFile): CoreNames {
     ts.forEachChild(node, collect)
   }
   collect(tree)
-  return { factories, namespaces, bindings }
+  return bindings
 }
 
 /**
@@ -117,20 +167,21 @@ function isNifraServer(
   receiver: TSApi.Expression,
   names: CoreNames,
   lenient = true,
-  depth = 0,
+  hops = 0,
 ): boolean {
-  if (depth > 6) return false
+  // Only following a binding counts: a chain or a wrapper is finite, a binding can name itself.
+  if (hops > 6) return false
   if (
     ts.isParenthesizedExpression(receiver) ||
     ts.isAwaitExpression(receiver) ||
     ts.isNonNullExpression(receiver) ||
     ts.isAsExpression(receiver)
   )
-    return isNifraServer(ts, receiver.expression, names, lenient, depth + 1)
+    return isNifraServer(ts, receiver.expression, names, lenient, hops)
   if (ts.isIdentifier(receiver)) {
     const inits = names.bindings.get(receiver.text)
     if (inits === undefined) return lenient
-    return inits.some((init) => isNifraServer(ts, init, names, true, depth + 1))
+    return inits.some((init) => isNifraServer(ts, init, names, true, hops + 1))
   }
   if (ts.isCallExpression(receiver)) {
     const callee = receiver.expression
@@ -143,7 +194,7 @@ function isNifraServer(
       )
         return true
       // A method call on a name this file does not bind (`net.createServer()`) proves nothing.
-      return isNifraServer(ts, callee.expression, names, false, depth + 1)
+      return isNifraServer(ts, callee.expression, names, false, hops)
     }
     return false
   }
@@ -281,7 +332,11 @@ export function createHostExposureRule(
         if (!SCRIPT_FILE.test(file)) continue
         const source = parsedFile(ts, sources, file)
         if (source === undefined) continue
-        if (HOST_OPTION_HINT.test(source.tree.text) && configuresHost(ts, source.tree)) return []
+        if (
+          HOST_OPTION_HINT.test(source.tree.text) &&
+          configuresHost(ts, source.tree, bindingsIn(ts, source.tree))
+        )
+          return []
         parsed.push(source)
       }
       const findings: Diagnostic[] = []

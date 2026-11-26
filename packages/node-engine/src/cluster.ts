@@ -97,10 +97,12 @@ const DEFAULT_START_TIMEOUT_MS = 30_000
 const DEFAULT_DRAIN_MS = 10_000
 
 type ToWorker =
+  | { readonly nifra: "init"; readonly tls?: ServeOptions["tls"] }
   | { readonly nifra: "stop"; readonly options: NodeStopOptions }
   | { readonly nifra: "reloadTls"; readonly id: number; readonly tls?: ServeOptions["tls"] }
 
 type ToPrimary =
+  | { readonly nifra: "hello" }
   | { readonly nifra: "listening"; readonly port: number }
   | { readonly nifra: "error"; readonly message: string }
   | { readonly nifra: "reloaded"; readonly id: number; readonly error?: string }
@@ -109,14 +111,36 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
 
 function isToWorker(message: unknown): message is ToWorker {
-  return isObject(message) && (message.nifra === "stop" || message.nifra === "reloadTls")
+  return (
+    isObject(message) &&
+    (message.nifra === "init" || message.nifra === "stop" || message.nifra === "reloadTls")
+  )
 }
 
 function isToPrimary(message: unknown): message is ToPrimary {
   return (
     isObject(message) &&
-    (message.nifra === "listening" || message.nifra === "error" || message.nifra === "reloaded")
+    (message.nifra === "hello" ||
+      message.nifra === "listening" ||
+      message.nifra === "error" ||
+      message.nifra === "reloaded")
   )
+}
+
+/** Ask the primary what to start with, so a worker never listens with a certificate since replaced. */
+function askForTls(): Promise<ServeOptions["tls"]> {
+  return new Promise((resolve) => {
+    const onMessage = (message: unknown): void => {
+      if (!isToWorker(message)) return
+      if (message.nifra === "stop") process.exit(0)
+      if (message.nifra !== "init") return
+      process.removeListener("message", onMessage)
+      resolve(message.tls)
+    }
+    process.on("message", onMessage)
+    const hello: ToPrimary = { nifra: "hello" }
+    process.send?.(hello)
+  })
 }
 
 /**
@@ -156,10 +180,17 @@ async function runWorker(
 ): Promise<ClusterWorker> {
   const { workers: _workers, respawn: _respawn, onWorkerEvent: _onWorkerEvent, ...rest } = options
   const hex = process.env[TICKET_ENV]
-  const tls =
-    options.tls === undefined || options.tls.ticketKeys !== undefined || hex === undefined
+  const reloaded = await askForTls()
+  const current =
+    reloaded === undefined
       ? options.tls
-      : { ...options.tls, ticketKeys: Buffer.from(hex, "hex") }
+      : options.tls?.ticketKeys === undefined
+        ? reloaded
+        : { ticketKeys: options.tls.ticketKeys, ...reloaded }
+  const tls =
+    current === undefined || current.ticketKeys !== undefined || hex === undefined
+      ? current
+      : { ...current, ticketKeys: Buffer.from(hex, "hex") }
   let server: EngineServer
   try {
     server = await serve(await app(), {
@@ -191,6 +222,7 @@ async function runWorker(
       void shutdown(message.options)
       return
     }
+    if (message.nifra !== "reloadTls") return
     let error: string | undefined
     try {
       server.reloadTls(message.tls)
@@ -216,6 +248,8 @@ interface Slot {
   readonly worker: Worker
   readonly startedAt: number
   listening: boolean
+  /** Has been given its certificate, so only a reload can change it. */
+  started: boolean
   /** Being replaced on purpose: its exit is expected and starts nothing. */
   retiring: boolean
   /** Settles when the worker is listening, or rejects when it cannot get there. */
@@ -236,6 +270,8 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
   const timers = new Set<NodeJS.Timeout>()
   /** The certificate last given to `reloadTls`, which a replacement worker must start serving. */
   let currentTls: NonNullable<ServeOptions["tls"]> | undefined
+  /** Settles when no reload is under way; a worker starting meanwhile waits for its outcome. */
+  let reloading: Promise<unknown> = Promise.resolve()
 
   const emit = (event: ClusterWorkerEvent): void => {
     try {
@@ -255,40 +291,32 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     })
     // A caller that never asks (a respawn) must not leave this unhandled.
     ready.catch(() => {})
-    const slot: Slot = { worker, startedAt: Date.now(), listening: false, retiring: false, ready }
+    const slot: Slot = {
+      worker,
+      startedAt: Date.now(),
+      listening: false,
+      started: false,
+      retiring: false,
+      ready,
+    }
     slots.set(worker.id, slot)
     let failure: string | undefined
     worker.on("message", (message: unknown) => {
       if (!isToPrimary(message)) return
-      if (message.nifra === "listening") {
-        const settle = (): void => {
-          slot.listening = true
-          emit({ type: "listening", id: worker.id, pid: worker.process.pid ?? 0 })
-          resolve()
+      if (message.nifra === "hello") {
+        const init = (): void => {
+          if (!worker.isConnected()) return
+          slot.started = true
+          const reply: ToWorker =
+            currentTls === undefined ? { nifra: "init" } : { nifra: "init", tls: currentTls }
+          // A send that fails means the worker has gone; its `exit` handles that.
+          worker.send(reply, () => {})
         }
-        if (currentTls === undefined) {
-          settle()
-          return
-        }
-        // The worker started from the entrypoint's own certificate: it takes the reloaded one
-        // before it counts as listening, so a replacement never serves what was replaced.
-        const id = nextAck++
-        const done = (_worker: number, error: string | undefined): void => {
-          clearTimeout(timer)
-          acks.delete(id)
-          if (error === undefined) {
-            settle()
-            return
-          }
-          failure = `the reloaded certificate was not applied: ${error}`
-          worker.process.kill("SIGKILL")
-        }
-        const timer = setTimeout(() => done(worker.id, "no answer"), ACK_TIMEOUT_MS)
-        acks.set(id, done)
-        const reload: ToWorker = { nifra: "reloadTls", id, tls: currentTls }
-        worker.send(reload, (error) => {
-          if (error !== null) done(worker.id, "could not be reached")
-        })
+        void reloading.then(init, init)
+      } else if (message.nifra === "listening") {
+        slot.listening = true
+        emit({ type: "listening", id: worker.id, pid: worker.process.pid ?? 0 })
+        resolve()
       } else if (message.nifra === "error") {
         failure = message.message
       } else {
@@ -426,7 +454,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     process.once("SIGINT", onSignal)
   }
 
-  const reloadTls = async (tls?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
+  const applyTls = async (tls?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
     if (stopping) throw new Error("@nifrajs/node-engine: the cluster is not running")
     if (options.tls === undefined) {
       throw new Error("@nifrajs/node-engine: reloadTls requires a cluster started with `tls`")
@@ -436,35 +464,50 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
         "@nifrajs/node-engine: give the certificate as PEM text or file names; it crosses a process boundary",
       )
     }
-    const targets = [...slots.values()].filter((slot) => slot.listening)
+    // Every worker that holds a certificate, the ones still starting included.
+    const targets = [...slots.values()].filter((slot) => slot.started)
     const failures: string[] = []
     await Promise.all(
-      targets.map(
-        (slot) =>
-          new Promise<void>((resolve) => {
-            const id = nextAck++
-            const done = (worker: number, error: string | undefined): void => {
-              clearTimeout(timer)
-              acks.delete(id)
-              if (error !== undefined) failures.push(`worker ${worker}: ${error}`)
-              resolve()
-            }
-            const timer = setTimeout(() => done(slot.worker.id, "no answer"), ACK_TIMEOUT_MS)
-            acks.set(id, done)
-            const message: ToWorker =
-              tls === undefined ? { nifra: "reloadTls", id } : { nifra: "reloadTls", id, tls }
-            // A send to a worker that has gone fails through the callback; without one it would be
-            // an `error` event nobody listens to, which ends the primary.
-            slot.worker.send(message, (error) => {
-              if (error !== null) done(slot.worker.id, "could not be reached")
-            })
-          }),
-      ),
+      targets.map(async (slot) => {
+        try {
+          await slot.ready
+        } catch {
+          return // It never listened, so it serves nothing.
+        }
+        await new Promise<void>((resolve) => {
+          const id = nextAck++
+          const done = (worker: number, error: string | undefined): void => {
+            clearTimeout(timer)
+            acks.delete(id)
+            if (error !== undefined) failures.push(`worker ${worker}: ${error}`)
+            resolve()
+          }
+          const timer = setTimeout(() => done(slot.worker.id, "no answer"), ACK_TIMEOUT_MS)
+          acks.set(id, done)
+          const message: ToWorker =
+            tls === undefined ? { nifra: "reloadTls", id } : { nifra: "reloadTls", id, tls }
+          // A send to a worker that has gone fails through the callback; without one it would be
+          // an `error` event nobody listens to, which ends the primary.
+          slot.worker.send(message, (error) => {
+            if (error !== null) done(slot.worker.id, "could not be reached")
+          })
+        })
+      }),
     )
     if (failures.length > 0) {
       throw new Error(`@nifrajs/node-engine: reloadTls is not applied by ${failures.join("; ")}`)
     }
     if (tls !== undefined) currentTls = tls
+  }
+
+  // One at a time, in call order: a worker that starts during one waits to be told its result.
+  const reloadTls = (tls?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
+    const next = reloading.then(
+      () => applyTls(tls),
+      () => applyTls(tls),
+    )
+    reloading = next
+    return next
   }
 
   return {

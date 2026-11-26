@@ -200,11 +200,11 @@ impl UvServer {
     /// Whether any connection still holds response bytes it has not yet written to its socket.
     pub fn any_queued(&self) -> bool {
         match &self.backend {
-            ServerBackend::Uv(state) => state
-                .borrow()
-                .conns
-                .iter()
-                .any(|(_, c)| c.core.queued_bytes() > 0),
+            ServerBackend::Uv(state) => {
+                let st = state.borrow();
+                // `deferred` holds what a handler wrote during its own dispatch, not yet on any queue.
+                !st.deferred.is_empty() || st.conns.iter().any(|(_, c)| c.core.queued_bytes() > 0)
+            }
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.any_queued(),
         }
@@ -724,7 +724,6 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
     let mut dispatch_state: Option<(
         Option<Box<dyn UvCallbacks>>,
         Vec<u8>,
-        bool,
         Vec<u8>,
         Vec<MaybeUninit<u8>>,
     )> = None;
@@ -881,13 +880,12 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                 } else {
                     std::mem::take(&mut c.core.read_buf)
                 };
-                let is_tls = c.core.tls.is_some();
                 let mut sw = std::mem::take(&mut st.scratch_write);
                 sw.clear();
                 let cb = st.callbacks.take();
                 st.dispatching = Some(conn_id);
                 let s = std::mem::take(&mut scratch);
-                dispatch_state = Some((cb, taken, is_tls, sw, s));
+                dispatch_state = Some((cb, taken, sw, s));
             }
         } else if !remove {
             if let Some(conn) = st.conns.get_mut(conn_id) {
@@ -920,7 +918,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
         }
     }
 
-    if let Some((mut cb, mut read_buf, is_tls, mut cleartext_write, scratch)) = dispatch_state {
+    if let Some((mut cb, mut read_buf, mut cleartext_write, scratch)) = dispatch_state {
         let action = if let Some(ref mut handler) = cb {
             let input_slice = if direct_len > 0 {
                 std::slice::from_raw_parts(scratch.as_ptr().cast::<u8>(), direct_len)
@@ -1013,26 +1011,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                 conn.core.read_buf = read_buf;
             }
             if !remove && !cleartext_write.is_empty() {
-                let fa = if is_tls {
-                    if let Some(ref mut tls_conn) = conn.core.tls {
-                        if nifra_tls::encrypt_plaintext(
-                            tls_conn,
-                            &cleartext_write,
-                            &mut conn.core.write_buf,
-                        )
-                        .is_err()
-                        {
-                            remove = true;
-                            FlushAction::Close
-                        } else {
-                            FlushAction::None
-                        }
-                    } else {
-                        FlushAction::None
-                    }
-                } else {
-                    write_bytes_or_queue(&mut conn.core, &cleartext_write)
-                };
+                let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write);
                 if fa == FlushAction::Close {
                     remove = true;
                 } else if fa != FlushAction::None {

@@ -46,6 +46,8 @@ const HPACK_TABLE_LIMIT: usize = 4096;
 const RST_WINDOW: Duration = Duration::from_secs(30);
 /// Response bytes a stream may hold back for flow control before the writer is told to wait.
 const STREAM_BACKLOG_LIMIT: usize = 1024 * 1024;
+/// Response bytes one connection may hold back behind flow control before it is given no more.
+const CONN_BACKLOG_LIMIT: usize = 16 * 1024 * 1024;
 const MAX_WINDOW: i64 = 0x7FFF_FFFF;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16_384;
 const MAX_ALLOWED_FRAME_SIZE: usize = 16_777_215;
@@ -130,6 +132,14 @@ struct OutStream {
     blocked: bool,
 }
 
+/// RFC 3986 section 3.1.
+fn is_uri_scheme(value: &str) -> bool {
+    value.starts_with(|c: char| c.is_ascii_alphabetic())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+}
+
 /// A field name or value HTTP/2 refuses: upper-case or non-token names, NUL/CR/LF in a value, or a
 /// connection-specific field (RFC 9113 sections 8.2 and 8.2.2).
 fn invalid_field(name: &str, val: &str) -> bool {
@@ -166,6 +176,7 @@ struct HeaderContinuation {
     stream_id: u32,
     end_stream: bool,
     block: Vec<u8>,
+    started: Instant,
 }
 
 /// Sans-I/O RFC 9113 HTTP/2 server connection state machine.
@@ -232,7 +243,15 @@ impl H2Conn {
 
     /// When the oldest request still being received (its body unfinished) began, for the request deadline.
     pub fn oldest_incomplete_request(&self) -> Option<Instant> {
-        self.active_streams.values().map(|st| st.started).min()
+        self.active_streams
+            .values()
+            .map(|st| st.started)
+            .chain(self.continuation.iter().map(|cont| cont.started))
+            .min()
+    }
+
+    fn queued_response_bytes(&self) -> usize {
+        self.out_streams.values().map(OutStream::backlog).sum()
     }
 
     fn new_out_stream(&mut self, stream_id: u32) -> OutStream {
@@ -387,6 +406,9 @@ impl H2Conn {
                                         os.window += delta;
                                         overflow |= os.window > MAX_WINDOW;
                                     }
+                                    overflow |= self.early_credit.values().any(|credit| {
+                                        self.peer_initial_window + credit > MAX_WINDOW
+                                    });
                                     if overflow {
                                         self.send_goaway_internal(
                                             ERR_FLOW_CONTROL_ERROR,
@@ -453,8 +475,8 @@ impl H2Conn {
                             res.close_after_write = true;
                             return res;
                         } else {
-                            write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
-                            self.out_streams.remove(&stream_id);
+                            self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            res.events.push(H2Event::StreamReset(stream_id));
                         }
                     } else if stream_id == 0 {
                         self.conn_send_window += i64::from(inc);
@@ -468,8 +490,8 @@ impl H2Conn {
                     } else if let Some(os) = self.out_streams.get_mut(&stream_id) {
                         os.window += i64::from(inc);
                         if os.window > MAX_WINDOW {
-                            self.out_streams.remove(&stream_id);
-                            write_rst_stream(stream_id, ERR_FLOW_CONTROL_ERROR, write_buf);
+                            self.reset_stream(stream_id, ERR_FLOW_CONTROL_ERROR, write_buf);
+                            res.events.push(H2Event::StreamReset(stream_id));
                         } else {
                             self.flush_stream(stream_id, write_buf, &mut res.writable);
                         }
@@ -479,8 +501,8 @@ impl H2Conn {
                         let credit = self.early_credit.entry(stream_id).or_insert(0);
                         *credit += i64::from(inc);
                         if self.peer_initial_window + *credit > MAX_WINDOW {
-                            self.early_credit.remove(&stream_id);
-                            write_rst_stream(stream_id, ERR_FLOW_CONTROL_ERROR, write_buf);
+                            self.reset_stream(stream_id, ERR_FLOW_CONTROL_ERROR, write_buf);
+                            res.events.push(H2Event::StreamReset(stream_id));
                         }
                     }
                 }
@@ -553,15 +575,17 @@ impl H2Conn {
                     };
                     let end_stream = (flags & FLAG_END_STREAM) != 0;
                     let end_headers = (flags & FLAG_END_HEADERS) != 0;
+                    let started = (self.clock)();
                     if !end_headers {
                         self.continuation = Some(HeaderContinuation {
                             stream_id,
                             end_stream,
                             block: frag.to_vec(),
+                            started,
                         });
-                    } else if let Err(conn_err) =
-                        self.handle_header_block(stream_id, end_stream, frag, write_buf, &mut res)
-                    {
+                    } else if let Err(conn_err) = self.handle_header_block(
+                        stream_id, end_stream, frag, started, write_buf, &mut res,
+                    ) {
                         self.send_goaway_internal(conn_err, write_buf);
                         res.consumed = pos;
                         res.close_after_write = true;
@@ -593,6 +617,7 @@ impl H2Conn {
                             cont.stream_id,
                             cont.end_stream,
                             &cont.block,
+                            cont.started,
                             write_buf,
                             &mut res,
                         ) {
@@ -657,8 +682,7 @@ impl H2Conn {
                             .is_some_and(|cl| st.body.len() + data.len() > cl)
                         {
                             // More body than content-length declared (RFC 9113 §8.1.1).
-                            self.active_streams.remove(&stream_id);
-                            write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             continue;
                         } else {
                             st.body.extend_from_slice(data);
@@ -678,7 +702,7 @@ impl H2Conn {
                     } else if remove_stream {
                         if let Some(st) = self.active_streams.remove(&stream_id) {
                             if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
-                                write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                                self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             } else {
                                 self.finalize_request(stream_id, st, &mut res);
                             }
@@ -700,6 +724,7 @@ impl H2Conn {
         stream_id: u32,
         end_stream: bool,
         block: &[u8],
+        started: Instant,
         write_buf: &mut Vec<u8>,
         res: &mut H2FeedResult,
     ) -> Result<(), u32> {
@@ -723,8 +748,7 @@ impl H2Conn {
                 return Err(ERR_PROTOCOL_ERROR);
             }
             self.last_stream_id = self.last_stream_id.max(stream_id);
-            self.active_streams.remove(&stream_id);
-            write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+            self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
         };
 
@@ -737,21 +761,19 @@ impl H2Conn {
                     .iter()
                     .any(|(name, val)| name.starts_with(':') || invalid_field(name, val))
                 {
-                    self.active_streams.remove(&stream_id);
-                    write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     return Ok(());
                 }
                 if let Some(st) = self.active_streams.remove(&stream_id) {
                     if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
-                        write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                        self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
                         self.finalize_request(stream_id, st, res);
                     }
                 }
                 return Ok(());
             }
-            write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
-            self.active_streams.remove(&stream_id);
+            self.reset_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
         }
 
@@ -821,7 +843,7 @@ impl H2Conn {
                         authority = Some(val);
                     }
                     ":scheme" => {
-                        if seen_scheme {
+                        if seen_scheme || !is_uri_scheme(&val) {
                             write_rst_stream(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             return Ok(());
                         }
@@ -911,7 +933,7 @@ impl H2Conn {
             declared_cl,
             headers_done: true,
             end_stream,
-            started: (self.clock)(),
+            started,
         };
 
         if end_stream {
@@ -968,6 +990,11 @@ impl H2Conn {
         } else {
             body.unwrap_or(&[])
         };
+        // Checked before the bytes are added, so one response of any size still goes out.
+        if !body_bytes.is_empty() && self.queued_response_bytes() >= CONN_BACKLOG_LIMIT {
+            self.reset_stream(stream_id, ERR_ENHANCE_YOUR_CALM, out);
+            return;
+        }
         let mut block = Vec::with_capacity(128);
         let cl_str = if !bodyless {
             let has_cl = headers
@@ -1036,8 +1063,9 @@ impl H2Conn {
             self.open_response_streams.remove(&stream_id);
         }
         self.queue_data(stream_id, chunk, end_stream, out);
+        let crowded = self.queued_response_bytes() > CONN_BACKLOG_LIMIT;
         match self.out_streams.get_mut(&stream_id) {
-            Some(os) if os.backlog() > STREAM_BACKLOG_LIMIT => {
+            Some(os) if os.backlog() > STREAM_BACKLOG_LIMIT || (crowded && os.backlog() > 0) => {
                 os.blocked = true;
                 false
             }
@@ -2600,6 +2628,36 @@ mod tests {
             .sum();
         assert_eq!(sent, 150_000);
         assert_eq!(conn.active_response_streams(), 0);
+    }
+
+    #[test]
+    fn h2_an_unfinished_header_block_counts_toward_the_request_deadline() {
+        let mut conn = ready_conn(H2Config::default());
+        let mut wire = Vec::new();
+        let mut out = Vec::new();
+        write_frame(FRAME_HEADERS, 0, 1, &get_headers(&[]), &mut wire);
+        conn.feed(&wire, &mut out);
+        assert!(conn.oldest_incomplete_request().is_some());
+    }
+
+    #[test]
+    fn h2_an_empty_scheme_resets_the_stream() {
+        assert!(!is_uri_scheme(""));
+        assert!(!is_uri_scheme("1http"));
+        assert!(is_uri_scheme("coap+tcp"));
+    }
+
+    #[test]
+    fn h2_held_response_bytes_are_bounded_per_connection() {
+        let mut conn = ready_conn(H2Config::default());
+        let mut out = Vec::new();
+        let body = vec![0u8; CONN_BACKLOG_LIMIT];
+        for id in [1u32, 3, 5] {
+            conn.open_response_streams.insert(id, ());
+            conn.write_response(id, 200, &[], Some(&body), &mut out);
+        }
+        assert!(conn.queued_response_bytes() <= CONN_BACKLOG_LIMIT * 2);
+        assert_eq!(conn.active_response_streams(), 2);
     }
 
     #[test]

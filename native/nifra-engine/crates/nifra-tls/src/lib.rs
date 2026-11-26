@@ -344,15 +344,26 @@ pub fn encrypt_plaintext(
     plaintext: &[u8],
     ciphertext_out: &mut Vec<u8>,
 ) -> io::Result<()> {
-    if !plaintext.is_empty() {
-        conn.writer().write_all(plaintext)?;
-    }
-    while conn.wants_write() {
-        if conn.write_tls(ciphertext_out)? == 0 {
-            break;
+    // rustls holds a bounded amount of unsent records, so a large write alternates with draining.
+    let mut rest = plaintext;
+    loop {
+        let taken = conn.writer().write(rest)?;
+        rest = &rest[taken..];
+        let mut drained = 0;
+        while conn.wants_write() {
+            let n = conn.write_tls(ciphertext_out)?;
+            if n == 0 {
+                break;
+            }
+            drained += n;
+        }
+        if rest.is_empty() {
+            return Ok(());
+        }
+        if taken == 0 && drained == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

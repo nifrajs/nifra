@@ -83,9 +83,11 @@ function dechunk(wire: string): string {
   let at = 0
   for (;;) {
     const eol = wire.indexOf("\r\n", at)
-    if (eol === -1) return out
+    assert.ok(eol !== -1, "a chunked body ended without its last chunk")
     const size = Number.parseInt(wire.slice(at, eol).split(";")[0] ?? "", 16)
-    if (!Number.isFinite(size) || size === 0) return out
+    assert.ok(Number.isFinite(size), "a chunk size is not hexadecimal")
+    if (size === 0) return out
+    assert.equal(wire.slice(eol + 2 + size, eol + 4 + size), "\r\n", "a chunk is cut short")
     out += wire.slice(eol + 2, eol + 2 + size)
     at = eol + 2 + size + 2
   }
@@ -119,6 +121,11 @@ async function observe(port: number, request: string | Buffer): Promise<Observed
   const body = chunked ? dechunk(parsed.body) : parsed.body
   // A HEAD or bodyless answer's length is part of the reply; elsewhere it only frames the body.
   const lengthMatters = /^HEAD /.test(request.toString("latin1")) || parsed.status === 204
+  const declared = parsed.headers.get("content-length")?.[0]
+  const bodyless = /^HEAD /.test(request.toString("latin1")) || [204, 304].includes(parsed.status)
+  if (!chunked && !bodyless && declared !== undefined) {
+    assert.equal(parsed.body.length, Number(declared), "the body is not the declared length")
+  }
   const headers: Array<[string, string]> = []
   for (const [name, values] of parsed.headers) {
     if (SKIP.has(name) || name === "transfer-encoding") continue
