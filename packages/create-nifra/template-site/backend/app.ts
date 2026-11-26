@@ -35,7 +35,7 @@ export const backend = server({
   .use(securityHeaders())
   .use(
     cors({
-      origin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+      origin: process.env.CORS_ORIGIN ?? "http://localhost:4321",
       credentials: false,
     }),
   )

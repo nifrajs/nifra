@@ -143,6 +143,7 @@ export function serverFn<Input = void, Schema extends StandardSchemaV1 = Standar
 ): ServerFn<Input, InferOutput<Schema>, InferInput<Schema>>
 export function serverFn<Input = void>(
   config: ServerFnConfig<Input> & { readonly output?: undefined },
+  // biome-ignore lint/suspicious/noConfusingVoidType: `void` inside the promised union allows handlers returning `Promise<void | Response>`.
   fn: (input: Input, context: Context) => MaybePromise<void | null | undefined | ServerFnControl>,
 ): ServerFn<Input, void>
 export function serverFn(

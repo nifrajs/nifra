@@ -39,6 +39,68 @@ test("manual command help prints usage before dispatching", () => {
       expect(result.exitCode).toBe(0)
       expect(result.stdout.toString()).toStartWith(`  nifra ${command} `)
     }
+    const dbHelp = Bun.spawnSync([process.execPath, "--no-env-file", cli, "db", "--help"], {
+      cwd,
+      timeout: 3000,
+    })
+    expect(dbHelp.exitCode).toBe(0)
+    expect(dbHelp.stdout.toString()).toContain("nifra db schema")
+    expect(readdirSync(cwd)).toEqual([])
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test("manual dispatch commands reject unknown options and format --json errors", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nifra-cli-manual-flags-"))
+  try {
+    const cli = resolve(import.meta.dir, "../src/cli.ts")
+    for (const args of [
+      ["docs-mcp", "--bogus"],
+      ["learn", "--bogus"],
+      ["verify", "--bogus"],
+      ["init-agents", "--bogus"],
+      ["mcp", "--bogus"],
+      ["sdk", "--bogus"],
+    ]) {
+      const result = Bun.spawnSync([process.execPath, "--no-env-file", cli, ...args], {
+        cwd,
+        timeout: 3000,
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.toString()).toContain("[nifra] unknown option: --bogus")
+    }
+    const sdkJson = Bun.spawnSync([process.execPath, "--no-env-file", cli, "sdk", "--json"], {
+      cwd,
+      timeout: 3000,
+    })
+    expect(sdkJson.exitCode).toBe(1)
+    expect(JSON.parse(sdkJson.stdout.toString())).toEqual({
+      ok: false,
+      error: "[nifra] sdk needs --lang python or --lang go",
+    })
+    const sdkJsonEq = Bun.spawnSync(
+      [process.execPath, "--no-env-file", cli, "sdk", "--json=true"],
+      { cwd, timeout: 3000 },
+    )
+    expect(sdkJsonEq.exitCode).toBe(1)
+    expect(JSON.parse(sdkJsonEq.stdout.toString())).toEqual({
+      ok: false,
+      error: "[nifra] sdk needs --lang python or --lang go",
+    })
+    for (const [args, expectedError] of [
+      [["sdk", "--lang", "python", "--lang", "--bogus"], "[nifra] --lang needs a value"],
+      [["docs-mcp", "--port", "8787", "--port", "--bogus"], "[nifra] --port needs a value"],
+      [["docs-mcp", "--port", "abc"], "[nifra] invalid --port: abc"],
+      [["verify", "--release=true", "--bogus"], "[nifra] unknown option: --bogus"],
+    ] as const) {
+      const missingOperand = Bun.spawnSync([process.execPath, "--no-env-file", cli, ...args], {
+        cwd,
+        timeout: 3000,
+      })
+      expect(missingOperand.exitCode).toBe(1)
+      expect(missingOperand.stderr.toString()).toContain(expectedError)
+    }
     expect(readdirSync(cwd)).toEqual([])
   } finally {
     rmSync(cwd, { recursive: true, force: true })
