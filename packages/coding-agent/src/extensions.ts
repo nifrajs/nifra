@@ -1310,6 +1310,52 @@ function scanMatchingParenEnd(tokens: readonly CapabilityToken[], openIndex: num
   return tokens.length - 1
 }
 
+function paramListContainsBinding(
+  tokens: readonly CapabilityToken[],
+  openIndex: number,
+  closeIndex: number,
+  name: string,
+): boolean {
+  const open = tokens[openIndex]
+  if (open === undefined) return false
+  const paramDepth = open.depth + 1
+  let pos = openIndex + 1
+  while (pos < closeIndex) {
+    // Parameter pattern ends at parameter-level `:`, `=`, or `,`.
+    let patEnd = pos
+    while (patEnd < closeIndex) {
+      const t = tokens[patEnd]
+      if (t === undefined) break
+      if (
+        t.depth === paramDepth &&
+        t.kind === "punct" &&
+        (t.text === ":" || t.text === "=" || t.text === ",")
+      ) {
+        break
+      }
+      patEnd++
+    }
+    if (patternContainsName(tokens, pos, patEnd, name)) return true
+    pos = patEnd
+    // Skip `: <type>` and `= <default>` up to the next `,` at paramDepth (tracking `<...>` generics).
+    let angleDepth = 0
+    while (pos < closeIndex) {
+      const t = tokens[pos]
+      if (t === undefined) break
+      if (t.depth === paramDepth && angleDepth === 0 && t.kind === "punct" && t.text === ",") {
+        pos++
+        break
+      }
+      if (t.kind === "punct") {
+        if (t.text === "<") angleDepth++
+        else if (t.text === ">" && angleDepth > 0) angleDepth--
+      }
+      pos++
+    }
+  }
+  return false
+}
+
 function isObjectGlobalShadowed(tokens: readonly CapabilityToken[]): boolean {
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]
@@ -1320,7 +1366,14 @@ function isObjectGlobalShadowed(tokens: readonly CapabilityToken[]): boolean {
       const next2 = tokens[i + 2]
       const next3 = tokens[i + 3]
       // Direct reassignment: `Object = ...`, `globalThis.Object = ...`, or `Object.freeze = ...`.
-      if (next?.kind === "punct" && next.text === "=") return true
+      // Skip `const cfg: Object = {}` / `: A | Object = ...` where `Object` is a type annotation.
+      if (
+        next?.kind === "punct" &&
+        next.text === "=" &&
+        !(prev?.kind === "punct" && (prev.text === ":" || prev.text === "|" || prev.text === "&"))
+      ) {
+        return true
+      }
       if (
         !(prev?.kind === "punct" && (prev.text === "." || prev.text === "?.")) &&
         next?.kind === "punct" &&
@@ -1455,7 +1508,7 @@ function isObjectGlobalShadowed(tokens: readonly CapabilityToken[]): boolean {
             prev.text === "catch" ||
             (beforePrev?.kind === "word" && beforePrev.text === "function"))) ||
         (afterClose?.kind === "punct" && afterClose.text === "=>")
-      if (isFunctionOrArrow && patternContainsName(tokens, i + 1, closeIdx, "Object")) {
+      if (isFunctionOrArrow && paramListContainsBinding(tokens, i, closeIdx, "Object")) {
         return true
       }
     }

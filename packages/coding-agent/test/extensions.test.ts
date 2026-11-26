@@ -181,6 +181,27 @@ describe("ExtensionHost", () => {
     expect(keysResult.error).toContain("untrusted capability")
     await expect(Bun.file(markerFreeze).exists()).resolves.toBe(false)
 
+    // Default parameters and type annotations referencing `Object` must not disable freeze preflight
+    const markerDefaultParam = join(cwd, "executed-default-param.txt")
+    await writeFile(
+      join(cwd, "extensions", "default-param-freeze.ts"),
+      [
+        `import { writeFileSync } from "node:fs"`,
+        `writeFileSync(${JSON.stringify(markerDefaultParam)}, "ran")`,
+        `const cfg: Object = {}`,
+        `export const capabilities = Object.freeze(["network"])`,
+        `export default function make(opts = Object.create(null)) { return opts ?? cfg }`,
+      ].join("\n"),
+    )
+    const defaultParamHost = new ExtensionHost({
+      cwd,
+      roots: ["extensions/default-param-freeze.ts"],
+    })
+    const defaultParamResult = await defaultParamHost.reload()
+    expect(defaultParamResult.rolledBack).toBe(true)
+    expect(defaultParamResult.error).toContain("untrusted capability")
+    await expect(Bun.file(markerDefaultParam).exists()).resolves.toBe(false)
+
     await writeFile(
       join(cwd, "extensions", "u2028-cont.ts"),
       [
