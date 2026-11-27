@@ -214,6 +214,11 @@ describe("generating a missing schema", () => {
     expect(changedLiteral).not.toBe(reordered)
     writeFileSync(join(root, file), changedLiteral)
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+
+    const aligned = reordered.replace('id: 1, name: "Ada"', 'name: "Ada", id: 1')
+    expect(aligned).not.toBe(reordered)
+    writeFileSync(join(root, file), aligned)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
   }, 60_000)
 
   for (const typescript of ["typescript5", "typescript7"]) {
@@ -388,6 +393,19 @@ describe("a generated schema over time", () => {
 
     expect((await outputSchemas(root, { write: true })).written).toEqual([file])
     expect(read(root, file)).toContain("// left out: total - a bigint, which is not JSON")
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("reordering only the omitted fields keeps a generated schema current", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]: "export const loader = () => ({ id: 1, total: 1n, revision: 2n })\n",
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const reordered = generated.replace("total: 1n, revision: 2n", "revision: 2n, total: 1n")
+    expect(reordered).not.toBe(generated)
+    writeFileSync(join(root, file), reordered)
     expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
   }, 60_000)
 

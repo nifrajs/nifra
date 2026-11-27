@@ -1179,10 +1179,9 @@ export async function planOutputSchemas(
         // A matching marker makes a union reorder an edit to the declaration.
         const markerMatches = declaration.hash === hashOf(body)
         const current =
-          schemaTokens(declaration.value) === schemaTokens(body)
-            ? markerMatches
-            : schemaIgnoringOrder(declaration.value, !markerMatches) ===
-              schemaIgnoringOrder(body, !markerMatches)
+          (markerMatches && schemaTokens(declaration.value) === schemaTokens(body)) ||
+          schemaIgnoringOrder(declaration.value, !markerMatches) ===
+            schemaIgnoringOrder(body, !markerMatches)
         if (current) {
           entry("current", [], undefined, false, [], open)
           continue
