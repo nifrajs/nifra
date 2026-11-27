@@ -572,3 +572,41 @@ test("WebSocket wsMaxBackpressure + wsCloseOnBackpressureLimit closes stalled so
     await running.stop({ drainMs: 50 })
   }
 })
+
+test("releasing an unconsumed streaming request body terminates detached readers", async () => {
+  let pipeResult: Promise<void> | undefined
+  const app = server().post("/early-return", (c) => {
+    const body = c.req.body
+    assert.ok(body !== null)
+    pipeResult = body.pipeTo(new WritableStream())
+    // Attach a no-op rejection handler in the handler turn because `release()` runs before the client receives the TCP response.
+    void pipeResult.catch(() => {})
+    return { ok: true }
+  })
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    engine: { streamRequestBodies: true },
+  })
+  const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+    // Send only the first chunk and keep the TCP connection open until pipeTo rejects.
+    sock.write(
+      "POST /early-return HTTP/1.1\r\nHost: x\r\ntransfer-encoding: chunked\r\nconnection: keep-alive\r\n\r\n5\r\nhello\r\n",
+    )
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let buf = ""
+      sock.on("data", (chunk) => {
+        buf += chunk.toString("utf8")
+        if (buf.includes('"ok":true')) resolve()
+      })
+      sock.on("error", reject)
+    })
+    assert.ok(pipeResult !== undefined)
+    await assert.rejects(pipeResult, /released/i)
+  } finally {
+    sock.destroy()
+    await running.stop({ drainMs: 50 })
+  }
+})

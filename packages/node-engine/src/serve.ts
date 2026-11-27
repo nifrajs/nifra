@@ -730,6 +730,22 @@ interface ReqBodyStreamState {
   waiters: Array<(done: boolean, error?: Error) => void>
 }
 
+function terminateReqBodyStream(state: ReqBodyStreamState, err: Error): void {
+  state.ended = true
+  state.cancelled = true
+  state.queue.length = 0
+  state.queuedBytes = 0
+  if (state.controller !== undefined) {
+    try {
+      state.controller.error(err)
+    } catch {
+      // already errored or closed
+    }
+  }
+  const waiters = state.waiters.splice(0, state.waiters.length)
+  for (const wake of waiters) wake(true, err)
+}
+
 /** Request view backed by the zero-copy `inData` slice with lazy FFI fallback for headers/bodies. */
 class RustBatchSource {
   readonly method: string
@@ -847,18 +863,11 @@ class RustBatchSource {
     this.id = -1
     const state = this.streamState
     if (state !== undefined && !state.ended) {
-      state.cancelled = true
-      state.ended = true
-      state.queue.length = 0
-      state.queuedBytes = 0
       if (state.paused && reqId >= 0) {
         state.paused = false
         this.server.resumeRequestBody(reqId)
       }
-      while (state.waiters.length > 0) {
-        const wake = state.waiters.shift()
-        wake?.(true)
-      }
+      terminateReqBodyStream(state, new Error("Request stream released"))
     }
   }
 
@@ -867,18 +876,7 @@ class RustBatchSource {
     this.aborted = true
     const state = this.streamState
     if (state !== undefined && !state.ended) {
-      const err = new Error("Request aborted")
-      state.ended = true
-      state.cancelled = true
-      if (state.controller !== undefined) {
-        try {
-          state.controller.error(err)
-        } catch {
-          // already errored or closed
-        }
-      }
-      const waiters = state.waiters.splice(0, state.waiters.length)
-      for (const wake of waiters) wake(true, err)
+      terminateReqBodyStream(state, new Error("Request aborted"))
     }
     this.controller?.abort()
     this.onAbort?.()

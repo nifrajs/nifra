@@ -232,7 +232,15 @@ impl EpollServer {
         // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
         // would stall Node's thread once the backlog is empty.
         listener.set_nonblocking(true)?;
-        Self::start_fd_with_tls(uv_loop, OwnedFd::from(listener), true, cfg, tls, callbacks)
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(listener),
+            true,
+            None,
+            cfg,
+            tls,
+            callbacks,
+        )
     }
 
     /// # Safety
