@@ -361,8 +361,12 @@ Develop      dev, build, start, scaffold, target, db
 Verify       check, review, assure, doctor, fix, smoke
 Contracts    routes, types, schemas, openapi, contracts
 Agents       mcp, docs-mcp, learn, context, runtime
+             nifra init-agents configures editor and agent discovery
 
-Run nifra <command> --help for command options or nifra help --all for the full catalog.`
+Run nifra <command> --help for command options or nifra help --all for the full catalog.
+
+nifra check accepts --lints-only to skip typechecking.
+With a contracts.lock.json, both modes import backend/app.ts (running its top-level code).`
 
 async function fullHelp(): Promise<string> {
   const { renderCommandCatalogHelp } = await import("./command-catalog.ts")
