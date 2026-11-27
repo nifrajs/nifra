@@ -1021,10 +1021,10 @@ unsafe fn drive_uring_conn(
                         if fa == FlushAction::DisarmWritable {
                             fire_writable = true;
                         }
-                        sync_conn_poll(&mut st_ref.ring, conn, conn_id, true);
+                        sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, true);
                     }
                 } else {
-                    sync_conn_poll(&mut st_ref.ring, conn, conn_id, true);
+                    sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, true);
                 }
             }
         }
