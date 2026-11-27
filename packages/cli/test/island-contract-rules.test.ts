@@ -97,6 +97,15 @@ describe("NF-C064 island host with no enhancer", () => {
     expect(codes(await scan(mounted, jsx("<div data-island={id} />")))).toEqual([])
   })
 
+  test.each([
+    "const mount = (mountIslands)",
+    "let mount; mount = mountIslands",
+    "const mount = wrapper.mountIslands",
+  ])("stays silent when a local alias hides mounted ids: %s", async (alias) => {
+    const indirect = client(alias, "mount({ cart: () => {} })", "mountIslands({ clock: () => {} })")
+    expect(codes(await scan(indirect, page('<div data-island="cart"></div>')))).toEqual([])
+  })
+
   test("enableSwap's map counts as mounting", async () => {
     const swap = {
       file: "routes/app.client.ts",
@@ -240,6 +249,28 @@ describe("NF-C065 island props contract", () => {
     expect(codes(await scan(typed, counter("{ ...rest, nope: 1 }")))).toEqual(["NF-C065"])
   })
 
+  test("checks a literal prop's type only if no later spread may replace it", async () => {
+    expect(codes(await scan(typed, counter("{ start: '0', ...overrides }")))).toEqual([])
+    const findings = await scan(typed, counter("{ ...overrides, start: '0' }"))
+    expect(findings.map((f) => f.code)).toEqual(["NF-C065"])
+    expect(findings[0]?.message).toContain('passes "start" as a string')
+  })
+
+  test("stays silent when a local enhancer has a shadowed name", async () => {
+    const mounted = client(
+      "const counter = defineIsland<{ start: number }>(() => {})",
+      "function preview() { const counter = defineIsland<{ start: string }>(() => {}) }",
+      "mountIslands({ counter })",
+    )
+    expect(codes(await scan(mounted, counter("{ start: 1 }")))).toEqual([])
+
+    const parameter = client(
+      "const counter = defineIsland<{ start: number }>(() => {})",
+      "function mount(counter: typeof otherEnhancer) { mountIslands({ counter }) }",
+    )
+    expect(codes(await scan(parameter, counter("{ start: 'a' }")))).toEqual([])
+  })
+
   test("reads a parameter annotation, a bindIsland type argument and literal JSON", async () => {
     const plain = (props: string) =>
       page(`<div data-island="plain" data-island-props='${props}'></div>`)
@@ -310,6 +341,26 @@ describe("NF-C065 island props contract", () => {
       codes(await scan(typed, page('<div data-island="counter" data-island-props="x${1}"></div>'))),
     ).toEqual([])
   })
+})
+
+test.each([
+  ["HTML", page],
+  ["JSX", jsx],
+] as const)("island rules skip ignored hosts and bindings in %s", async (_format, render) => {
+  const mounted = client(
+    "mountIslands({ cart: bindIsland<{ n: number }>(({ state }) => { state('click', '') }) })",
+  )
+  const markup = render(`
+    <main>
+      <section data-island-ignore data-island="ghost">
+        <div data-island="cart"><button data-bind-attr="onclick:click"></button></div>
+      </section>
+      <div data-island="cart">
+        <button data-island-ignore data-bind-attr="onclick:click"></button>
+        <button data-bind-attr="onclick:click"></button>
+      </div>
+    </main>`)
+  expect(codes(await scan(mounted, markup))).toEqual(["NF-C065", "NF-C066"])
 })
 
 describe("NF-C066 island attribute binding the runtime refuses", () => {

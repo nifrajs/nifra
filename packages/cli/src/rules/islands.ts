@@ -394,17 +394,17 @@ function passedFromObject(
   object: TSApi.ObjectLiteralExpression,
 ): PropsPassed | undefined {
   const entries = new Map<string, PropKind | "null" | undefined>()
-  let open = false
-  for (const prop of object.properties) {
-    if (ts.isSpreadAssignment(prop)) open = true
-    else if (ts.isShorthandPropertyAssignment(prop)) entries.set(prop.name.text, undefined)
+  const lastSpread = object.properties.findLastIndex(ts.isSpreadAssignment)
+  for (const [index, prop] of object.properties.entries()) {
+    if (ts.isSpreadAssignment(prop)) continue
+    if (ts.isShorthandPropertyAssignment(prop)) entries.set(prop.name.text, undefined)
     else if (ts.isPropertyAssignment(prop)) {
       const name = memberName(ts, prop.name)
       if (name === undefined) return undefined
-      entries.set(name, literalKind(ts, prop.initializer))
+      entries.set(name, index < lastSpread ? undefined : literalKind(ts, prop.initializer))
     } else return undefined
   }
-  return { entries, open }
+  return { entries, open: lastSpread !== -1 }
 }
 
 /** The props an expression passes when it is a literal object, `islandProps({...})` or
@@ -588,7 +588,7 @@ function parameterProps(
 function enhancerNames(
   ts: typeof TSApi,
   expr: TSApi.Expression,
-  locals: ReadonlyMap<string, TSApi.Expression>,
+  locals: ReadonlyMap<string, TSApi.Expression | undefined>,
 ): IslandNames | typeof UNKNOWN {
   let target: TSApi.Expression | undefined = expr
   if (ts.isIdentifier(expr)) target = locals.get(expr.text)
@@ -609,8 +609,24 @@ function enhancerNames(
   return UNKNOWN
 }
 
+function mountReference(ts: typeof TSApi, expr: TSApi.Expression | undefined): boolean {
+  let target = expr
+  while (
+    target !== undefined &&
+    (ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isSatisfiesExpression(target) ||
+      ts.isTypeAssertionExpression(target))
+  )
+    target = target.expression
+  if (target === undefined) return false
+  if (ts.isIdentifier(target)) return MOUNT_CALLS.has(target.text)
+  return ts.isPropertyAccessExpression(target) && MOUNT_CALLS.has(target.name.text)
+}
+
 /** What the project's mount calls cover. `open` is set when a call or an import hides ids this
- * cannot list (a map held in a variable, a spread, a renamed or namespaced `mountIslands`). */
+ * cannot list (a map held in a variable, a spread, or an indirect `mountIslands` call). */
 interface MountSurface {
   readonly ids: Map<string, IslandNames | typeof UNKNOWN>
   readonly open: boolean
@@ -625,15 +641,37 @@ function mountedIslands(ts: typeof TSApi, trees: ReadonlyArray<TSApi.SourceFile>
   let open = false
   let calls = 0
   for (const tree of trees) {
-    const locals = new Map<string, TSApi.Expression>()
+    // The AST walk has no lexical resolver, so a name declared more than once is ambiguous.
+    const locals = new Map<string, TSApi.Expression | undefined>()
     const mounts: TSApi.ObjectLiteralExpression[] = []
     const visit = (node: TSApi.Node): void => {
-      if (
-        ts.isVariableDeclaration(node) &&
-        ts.isIdentifier(node.name) &&
-        node.initializer !== undefined
+      if (ts.isVariableDeclaration(node)) {
+        if (ts.isIdentifier(node.name)) {
+          const name = node.name.text
+          locals.set(name, locals.has(name) ? undefined : node.initializer)
+        }
+        if (mountReference(ts, node.initializer)) open = true
+      } else if (
+        (ts.isParameter(node) ||
+          ts.isBindingElement(node) ||
+          ts.isImportSpecifier(node) ||
+          ts.isImportClause(node) ||
+          ts.isNamespaceImport(node) ||
+          ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isClassDeclaration(node) ||
+          ts.isClassExpression(node) ||
+          ts.isEnumDeclaration(node)) &&
+        node.name !== undefined &&
+        ts.isIdentifier(node.name)
       )
-        locals.set(node.name.text, node.initializer)
+        locals.set(node.name.text, undefined)
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        mountReference(ts, node.right)
+      )
+        open = true
       if (
         ts.isImportSpecifier(node) &&
         node.propertyName !== undefined &&
@@ -642,14 +680,13 @@ function mountedIslands(ts: typeof TSApi, trees: ReadonlyArray<TSApi.SourceFile>
         open = true
       if (ts.isCallExpression(node)) {
         const callee = node.expression
-        if (ts.isPropertyAccessExpression(callee) && MOUNT_CALLS.has(callee.name.text)) open = true
-        else if (ts.isIdentifier(callee) && MOUNT_CALLS.has(callee.text)) {
+        if (ts.isIdentifier(callee) && MOUNT_CALLS.has(callee.text)) {
           const map = node.arguments[0]
           if (map !== undefined && ts.isObjectLiteralExpression(map)) {
             calls++
             mounts.push(map)
           } else open = true
-        }
+        } else if (mountReference(ts, callee)) open = true
       }
       ts.forEachChild(node, visit)
     }
@@ -815,6 +852,7 @@ interface OpenElement {
   readonly tag: string
   readonly island: string | null | typeof UNKNOWN
   readonly slot: SwapMarkup | undefined
+  readonly ignored: boolean
   /** Where the element's content starts in the template text. */
   readonly start: number
 }
@@ -926,7 +964,8 @@ function templateMarkup(
       attributes.find(([key]) => key === name)?.[1]
     const literal = (value: string): string | typeof UNKNOWN =>
       value.includes(HOLE) ? UNKNOWN : value
-    const hostId = attribute("data-island")
+    const ignored = stack.at(-1)?.ignored === true || attribute("data-island-ignore") !== undefined
+    const hostId = ignored ? undefined : attribute("data-island")
     const island = hostId === undefined ? null : literal(hostId)
     if (island !== null) hasHost = true
     const owner = ownerOf(stack)
@@ -938,10 +977,13 @@ function templateMarkup(
         : hostProps(ts, attributes, inside, tag.length, holes, positions, tagAt)
       hosts.push({ id: island, props, node, line })
     }
-    for (const [name, value] of attributes) {
-      if (!name.startsWith("data-bind-")) continue
-      const names = bindingNames(name, value)
-      if (names !== undefined) bindings.push({ attribute: name, names, tag, ...owner, node, line })
+    if (!ignored) {
+      for (const [name, value] of attributes) {
+        if (!name.startsWith("data-bind-")) continue
+        const names = bindingNames(name, value)
+        if (names !== undefined)
+          bindings.push({ attribute: name, names, tag, ...owner, node, line })
+      }
     }
     const swap = attribute("data-swap")
     const url = tag === "a" ? attribute("href") : tag === "form" ? attribute("action") : undefined
@@ -954,7 +996,7 @@ function templateMarkup(
         : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node, line }
     if (slot !== undefined) swaps.push(slot)
     if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/"))
-      stack.push({ tag, island, slot, start: end + 1 })
+      stack.push({ tag, island, slot, ignored, start: end + 1 })
   }
   return { hasHost, hosts, bindings, swaps }
 }
@@ -1051,17 +1093,23 @@ function jsxMarkup(
   const swaps: SwapMarkup[] = []
   const hosts: MarkupHost[] = []
   let hasHost = false
-  const walk = (node: TSApi.Node, owner: Pick<MarkupBinding, "island" | "slot">): void => {
+  const walk = (
+    node: TSApi.Node,
+    owner: Pick<MarkupBinding, "island" | "slot">,
+    parentIgnored: boolean,
+  ): void => {
     let opening: TSApi.JsxOpeningLikeElement | undefined
     if (ts.isJsxElement(node)) opening = node.openingElement
     else if (ts.isJsxSelfClosingElement(node)) opening = node
+    const ignored =
+      parentIgnored ||
+      (opening !== undefined && jsxAttribute(ts, opening, "data-island-ignore") !== undefined)
     let inner = owner
     if (opening !== undefined) {
       const tag = opening.tagName.getText()
-      const host =
-        tag === "Island"
-          ? jsxAttribute(ts, opening, "id")
-          : jsxAttribute(ts, opening, "data-island")
+      const host = ignored
+        ? undefined
+        : jsxAttribute(ts, opening, tag === "Island" ? "id" : "data-island")
       if (host !== undefined) {
         hasHost = true
         inner = { island: host, slot: null }
@@ -1073,15 +1121,17 @@ function jsxMarkup(
             node: opening,
           })
       }
-      for (const attr of opening.attributes.properties) {
-        if (ts.isJsxSpreadAttribute(attr)) continue
-        const name = attr.name.getText()
-        if (!name.startsWith("data-bind-")) continue
-        const value = jsxAttribute(ts, opening, name)
-        if (value === UNKNOWN || value === undefined) continue
-        const names = bindingNames(name, value)
-        if (names !== undefined)
-          bindings.push({ attribute: name, names, tag: tag.toLowerCase(), ...owner, node: attr })
+      if (!ignored) {
+        for (const attr of opening.attributes.properties) {
+          if (ts.isJsxSpreadAttribute(attr)) continue
+          const name = attr.name.getText()
+          if (!name.startsWith("data-bind-")) continue
+          const value = jsxAttribute(ts, opening, name)
+          if (value === UNKNOWN || value === undefined) continue
+          const names = bindingNames(name, value)
+          if (names !== undefined)
+            bindings.push({ attribute: name, names, tag: tag.toLowerCase(), ...owner, node: attr })
+        }
       }
       const swap = jsxAttribute(ts, opening, "data-swap")
       if (swap !== undefined) {
@@ -1099,9 +1149,9 @@ function jsxMarkup(
         inner = { island: inner.island, slot }
       }
     }
-    ts.forEachChild(node, (child) => walk(child, inner))
+    ts.forEachChild(node, (child) => walk(child, inner, ignored))
   }
-  walk(root, { island: null, slot: null })
+  walk(root, { island: null, slot: null }, false)
   return { hasHost, hosts, bindings, swaps }
 }
 
