@@ -1377,11 +1377,11 @@ function expectationFor(
 ): "silenced" | "no-reason" | undefined {
   let lines = cache.get(file)
   if (lines === undefined) {
-    lines = (ctx.project.source.read(file) ?? "")
-      .split("\n")
-      .map((text) =>
-        /^\s*<!--/.test(text) ? text.replace("<!--", "//").replace(/-->\s*$/, "") : text,
-      )
+    lines = (ctx.project.source.read(file) ?? "").split("\n").map((text) => {
+      const comment = /^\s*<!--(?:-?>|(.*?)--!?>)/s.exec(text)
+      if (comment === null || text.slice(comment[0].length).trim() !== "") return text
+      return `//${comment[1] ?? ""}`
+    })
     cache.set(file, lines)
   }
   const found = commentBlockExpectation(lines, line, [code])

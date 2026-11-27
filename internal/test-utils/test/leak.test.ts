@@ -1,5 +1,24 @@
-import { describe, expect, test } from "bun:test"
-import { heapGrowth, isReleased } from "../src/leak.ts"
+import { describe, expect, mock, test } from "bun:test"
+import { forceGc, heapGrowth, isReleased } from "../src/leak.ts"
+
+test("forceGc uses the exposed collector and throws when no collector is available", () => {
+  const bunGc = Bun.gc
+  const exposedGc = Object.getOwnPropertyDescriptor(globalThis, "gc")
+  const gc = mock(() => {})
+  try {
+    Reflect.set(Bun, "gc", undefined)
+    Reflect.set(globalThis, "gc", gc)
+    forceGc()
+    expect(gc).toHaveBeenCalledWith(true)
+
+    Reflect.set(globalThis, "gc", undefined)
+    expect(forceGc).toThrow("leak checks need a forced GC")
+  } finally {
+    Bun.gc = bunGc
+    if (exposedGc === undefined) Reflect.deleteProperty(globalThis, "gc")
+    else Object.defineProperty(globalThis, "gc", exposedGc)
+  }
+})
 
 // The checks are only worth having if they fail on a real leak, so each is run against one.
 describe("isReleased", () => {

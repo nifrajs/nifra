@@ -128,6 +128,28 @@ describe("island rules: escape hatch and component identity", () => {
     expect(codes(await scan(mounted, inHtml))).toEqual([])
   })
 
+  test("an HTML comment ending in --!> still requires a reason", async () => {
+    const bare = page('\n<!-- nifra-expect NF-C064: --!>\n<p data-island="far"></p>')
+    const findings = await scan(mounted, bare)
+    expect(codes(findings)).toEqual(["NF-C064"])
+    expect(findings[0]?.message).toContain("gives no reason")
+
+    const explained = page(
+      '\n<!-- nifra-expect NF-C064: mounted by the host app --!>\n<p data-island="far"></p>',
+    )
+    expect(codes(await scan(mounted, explained))).toEqual([])
+  })
+
+  test.each(["-->", "--!>", ">", "->"])(
+    "ignores marker text after an HTML comment ends with %s",
+    async (end) => {
+      const markup = page(
+        `\n<!--${end} nifra-expect NF-C064: text outside the comment\n<p data-island="far"></p>`,
+      )
+      expect(codes(await scan(mounted, markup))).toEqual(["NF-C064"])
+    },
+  )
+
   test("a marker with no reason, or for another code, silences nothing and says why", async () => {
     const bare = {
       file: "routes/app.tsx",
