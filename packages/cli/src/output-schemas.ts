@@ -485,6 +485,37 @@ function schemaTokens(text: string): string {
   return out.replace(/,(?=[}\])])/g, "").replace(/(?<!;);+$/, "")
 }
 
+/**
+ * {@link schemaTokens} with every object's fields sorted. TypeScript 5/6 and 7 list the properties of
+ * a merged type in different orders, which changes the generated text but not what it declares.
+ */
+function fieldOrderFree(text: string): string {
+  const tokens = schemaTokens(text)
+  let at = 0
+  const group = (close: string): string[] => {
+    const parts: string[] = []
+    let part = ""
+    while (at < tokens.length) {
+      const c = tokens.charAt(at++)
+      if (c === close) break
+      if (c === ",") {
+        parts.push(part)
+        part = ""
+      } else if (c === "{") part += `{${group("}").sort(codeUnitOrder).join(",")}}`
+      else if (c === "[") part += `[${group("]").join(",")}]`
+      else if (c === "(") part += `(${group(")").join(",")})`
+      else if (c === '"') {
+        const start = at - 1
+        while (at < tokens.length && tokens[at] !== '"') at += tokens[at] === "\\" ? 2 : 1
+        part += tokens.slice(start, ++at)
+      } else part += c
+    }
+    parts.push(part)
+    return parts
+  }
+  return group("").join(",")
+}
+
 function declarationText(schema: OutputExport, fn: RouteFn, body: string): string {
   return [
     `// ${GENERATED_MARK} ${hashOf(body)} - drafted from the ${fn}'s return type; review that the browser may see every field it declares. \`nifra schemas --write\` keeps it current; delete this line to edit it by hand.`,
@@ -1121,8 +1152,9 @@ export async function planOutputSchemas(
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
       } else if (
-        declaration.hash === hashOf(body) &&
         schemaTokens(declaration.value) === schemaTokens(body)
+          ? declaration.hash === hashOf(body)
+          : fieldOrderFree(declaration.value) === fieldOrderFree(body)
       ) {
         entry("current", [], undefined, false, [], open)
       } else {

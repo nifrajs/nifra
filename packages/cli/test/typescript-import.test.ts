@@ -441,3 +441,81 @@ test("the TypeScript 7 check follows imports into modules outside its scanned se
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("the TypeScript 7 facade answers the 5/6 names the scanners call, as TypeScript 6 does", async () => {
+  const file = "routes/names.ts"
+  const source = [
+    'const cast = <string>"/a"',
+    "interface Shape { value: string; run(): void }",
+    "export default class Page {}",
+    "const plain = 1",
+  ].join("\n")
+  const seen: Record<string, Record<string, number>> = {}
+  for (const packageName of ["typescript", "typescript7"] as const) {
+    const root = await mkdtemp(join(tmpdir(), "nifra-ts-names-"))
+    try {
+      await writeFile(join(root, "package.json"), JSON.stringify({ name: "names" }))
+      await installTypeScriptPackage(root, packageName)
+      const loaded = await loadProjectTypeScript(root, undefined, {
+        files: [file],
+        read: () => source,
+      })
+      const ts = loaded.compiler
+      if (ts === undefined) throw new Error(`failed to load ${packageName}`)
+      try {
+        const counts = { casts: 0, properties: 0, methods: 0, exported: 0 }
+        const visit = (node: Parameters<typeof ts.isTypeAssertionExpression>[0]): void => {
+          if (ts.isTypeAssertionExpression(node)) counts.casts++
+          if (ts.isPropertySignature(node)) counts.properties++
+          if (ts.isMethodSignature(node)) counts.methods++
+          const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
+          if (modifiers?.some((item) => item.kind === ts.SyntaxKind.ExportKeyword))
+            counts.exported++
+          ts.forEachChild(node, visit)
+        }
+        visit(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true))
+        seen[packageName] = counts
+      } finally {
+        await loaded.session?.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+  const found = { casts: 1, properties: 1, methods: 1, exported: 1 }
+  expect(seen).toEqual({ typescript: found, typescript7: found })
+})
+
+test("every guard the scanners call exists on the TypeScript 7 facade", async () => {
+  // The files handed a project session's compiler. migrate-layout and server components load their own.
+  const scanned = [
+    ...new Bun.Glob("rules/*.ts").scanSync(join(import.meta.dir, "../src")),
+    "internal/source-facts.ts",
+    "check-scan.ts",
+    "component-check.ts",
+    "../../i18n/src/extract.ts",
+  ]
+  const called = new Set<string>()
+  for (const file of scanned) {
+    const text = await Bun.file(join(import.meta.dir, "../src", file)).text()
+    for (const match of text.matchAll(/\b(?:ts|compiler)\.((?:is|can|get)[A-Z]\w*)\b/g))
+      called.add(match[1] ?? "")
+  }
+  const root = await mkdtemp(join(tmpdir(), "nifra-ts-surface-"))
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "surface" }))
+    await installTypeScriptPackage(root, "typescript7")
+    const loaded = await loadProjectTypeScript(root)
+    try {
+      const facade = new Map(Object.entries(loaded.compiler ?? {}))
+      expect(called.size).toBeGreaterThan(30)
+      expect([...called].filter((name) => typeof facade.get(name) !== "function").sort()).toEqual(
+        [],
+      )
+    } finally {
+      await loaded.session?.close()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

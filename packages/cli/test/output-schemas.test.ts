@@ -192,6 +192,25 @@ describe("generating a missing schema", () => {
     ])
   }, 60_000)
 
+  test("a schema whose fields are only in another order is current, a changed type is not", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]:
+        'export const loader = () => ({ user: { id: 1, name: "Ada", tags: ["a,{b}"] }, ok: true })\n',
+    })
+    await outputSchemas(root, { write: true })
+    const written = read(root, file)
+    const reordered = written.replace(/^( +id: .*\n)( +name: .*\n)/m, "$2$1")
+    expect(reordered).not.toBe(written)
+    writeFileSync(join(root, file), reordered)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
+
+    const retyped = reordered.replace("id: t.number()", "id: t.string()")
+    expect(retyped).not.toBe(reordered)
+    writeFileSync(join(root, file), retyped)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+  }, 60_000)
+
   for (const typescript of ["typescript5", "typescript7"]) {
     test(`${typescript} reads the same shape`, async () => {
       const root = project({ "routes/feed.backend.ts": FEED }, typescript)
