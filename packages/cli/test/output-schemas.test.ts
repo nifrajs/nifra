@@ -344,6 +344,18 @@ describe("a generated schema over time", () => {
     })
     expect((await outputSchemas(root, { write: true })).written).toEqual([file])
     const generated = read(root, file)
+    const branchB = "t.object({\n  m: t.boolean(),\n  n: t.number(),\n})"
+    const branchA = "t.object({\n  z: t.string(),\n  a: t.number(),\n})"
+    const reorderedSchema = generated.replace(
+      `t.union([${branchB}, ${branchA}])`,
+      `t.union([${branchA}, ${branchB}])`,
+    )
+    expect(reorderedSchema).not.toBe(generated)
+    writeFileSync(join(root, file), reorderedSchema)
+    expect((await outputSchemas(root)).entries).toEqual([
+      expect.objectContaining({ status: "stale", edited: true }),
+    ])
+
     const reordered = generated.replace("z: string; a: number", "a: number; z: string")
     expect(reordered).not.toBe(generated)
     writeFileSync(join(root, file), reordered)
@@ -377,6 +389,41 @@ describe("a generated schema over time", () => {
     expect((await outputSchemas(root, { write: true })).written).toEqual([file])
     expect(read(root, file)).toContain("// left out: total - a bigint, which is not JSON")
     expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("a union that can decode a date keeps its branch order significant", async () => {
+    const file = "routes/pick.backend.ts"
+    const root = project({
+      [file]: [
+        "type A = { z?: number; at: Date }",
+        "type B = { at: string }",
+        "export function loader({ request }: { request: Request }): A | B {",
+        '  return request.url.endsWith("/a") ? { at: new Date(0) } : { at: "2026-01-01T00:00:00Z" }',
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const stringBranch = "t.object({\n  at: t.string(),\n})"
+    const dateBranch = "t.object({\n  z: t.optional(t.number()),\n  at: t.date(),\n})"
+    const original = `t.union([${stringBranch}, ${dateBranch}])`
+    expect(generated).toContain(original)
+    writeFileSync(
+      join(root, file),
+      generated.replace(original, `t.union([${dateBranch}, ${stringBranch}])`),
+    )
+    expect((await outputSchemas(root)).entries).toEqual([
+      expect.objectContaining({ status: "stale", edited: true }),
+    ])
+
+    writeFileSync(
+      join(root, file),
+      generated.replace("z?: number; at: Date", "at: Date; z?: number"),
+    )
+    expect((await outputSchemas(root)).entries).toEqual([
+      expect.objectContaining({ status: "stale" }),
+    ])
   }, 60_000)
 
   test("formatting the generated schema by hand keeps it current; deleting the marker hands it over", async () => {

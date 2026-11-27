@@ -500,13 +500,15 @@ function schemaTokens(text: string, keepDraftNotes = false): string {
 }
 
 /**
- * Sort object fields and union members after normalizing their contents. Compiler property order
- * can also change union order because the generator ranks members by their full shapes.
+ * Sort object fields after normalizing their contents. Compiler property order can also change
+ * union order because the generator ranks members by their full shapes. A union containing a date
+ * keeps its order because the first matching branch decides whether a string becomes a Date.
  */
-function schemaIgnoringOrder(text: string): string {
+function schemaIgnoringOrder(text: string, sortUnions: boolean): string {
   const tokens = schemaTokens(text, true)
-  const unionStart = "t.union(["
   let at = 0
+  let lastDate = -1
+  const follows = (prefix: string): boolean => tokens.startsWith(prefix, at - prefix.length)
   const group = (close: string): string[] => {
     const parts: string[] = []
     let part = ""
@@ -518,12 +520,15 @@ function schemaIgnoringOrder(text: string): string {
         part = ""
       } else if (c === "{") part += `{${group("}").sort(codeUnitOrder).join(",")}}`
       else if (c === "[") {
-        const isUnion = tokens.startsWith(unionStart, at - unionStart.length)
+        const sort = sortUnions && follows("t.union([")
+        const start = at
         const members = group("]")
-        if (isUnion) members.sort(codeUnitOrder)
+        if (sort && lastDate < start) members.sort(codeUnitOrder)
         part += `[${members.join(",")}]`
-      } else if (c === "(") part += `(${group(")").join(",")})`
-      else if (c === '"') {
+      } else if (c === "(") {
+        if (follows("t.date(")) lastDate = at
+        part += `(${group(")").join(",")})`
+      } else if (c === '"') {
         const start = at - 1
         while (at < tokens.length && tokens[at] !== '"') at += tokens[at] === "\\" ? 2 : 1
         part += tokens.slice(start, ++at)
@@ -1170,16 +1175,19 @@ export async function planOutputSchemas(
         const written = declarationText(target.schema, target.fn, body)
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
-      } else if (
-        schemaTokens(declaration.value) === schemaTokens(body)
-          ? declaration.hash === hashOf(body)
-          : schemaIgnoringOrder(declaration.value) === schemaIgnoringOrder(body)
-      ) {
-        entry("current", [], undefined, false, [], open)
       } else {
-        // The marker still matches what would be written, so the text under it was edited.
-        const edited = declaration.hash === hashOf(body)
-        const at = entry("stale", dropped, undefined, edited, omitted, open)
+        // A matching marker makes a union reorder an edit to the declaration.
+        const markerMatches = declaration.hash === hashOf(body)
+        const current =
+          schemaTokens(declaration.value) === schemaTokens(body)
+            ? markerMatches
+            : schemaIgnoringOrder(declaration.value, !markerMatches) ===
+              schemaIgnoringOrder(body, !markerMatches)
+        if (current) {
+          entry("current", [], undefined, false, [], open)
+          continue
+        }
+        const at = entry("stale", dropped, undefined, markerMatches, omitted, open)
         const text = declarationText(target.schema, target.fn, body)
         replacements.push({ start: declaration.start, end: declaration.end, text, entry: at })
       }
