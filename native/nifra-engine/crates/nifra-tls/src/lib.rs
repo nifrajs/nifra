@@ -630,18 +630,30 @@ fn resolve_kx_groups(
     Ok(Some(selected))
 }
 
-fn parse_ca_store(ca_pem: &[u8]) -> Result<RootCertStore, TlsError> {
-    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(ca_pem)
+fn parse_cert_pem<F>(pem: &[u8], on_error: F) -> Result<Vec<CertificateDer<'static>>, TlsError>
+where
+    F: Fn() -> TlsError,
+{
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(pem)
         .collect::<Result<_, _>>()
-        .map_err(|_| TlsError::InvalidCaCerts)?;
+        .map_err(|_| on_error())?;
     if certs.is_empty() {
-        return Err(TlsError::InvalidCaCerts);
+        return Err(on_error());
     }
+    Ok(certs)
+}
+
+fn parse_ca_store(ca_pem: &[u8]) -> Result<RootCertStore, TlsError> {
+    let certs = parse_cert_pem(ca_pem, || TlsError::InvalidCaCerts)?;
     let mut roots = RootCertStore::empty();
     for cert in certs {
         roots.add(cert).map_err(|_| TlsError::InvalidCaCerts)?;
     }
     Ok(roots)
+}
+
+fn parse_private_key(key_pem: &[u8]) -> Result<PrivateKeyDer<'static>, TlsError> {
+    PrivateKeyDer::from_pem_slice(key_pem).map_err(|_| TlsError::InvalidPrivateKey)
 }
 
 fn parse_crls(crl_pem: &[u8]) -> Result<Vec<CertificateRevocationListDer<'static>>, TlsError> {
@@ -691,15 +703,8 @@ fn build_config(
     mat: &ResolvedMaterial,
     ticketer: Arc<dyn ProducesTickets>,
 ) -> Result<ServerConfig, TlsError> {
-    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&mat.cert)
-        .collect::<Result<_, _>>()
-        .map_err(|_| TlsError::InvalidCertChain)?;
-    if certs.is_empty() {
-        return Err(TlsError::InvalidCertChain);
-    }
-
-    let key: PrivateKeyDer<'static> =
-        PrivateKeyDer::from_pem_slice(&mat.key).map_err(|_| TlsError::InvalidPrivateKey)?;
+    let certs = parse_cert_pem(&mat.cert, || TlsError::InvalidCertChain)?;
+    let key = parse_private_key(&mat.key)?;
 
     let versions =
         resolve_protocol_versions(input.min_version.as_deref(), input.max_version.as_deref())?;
@@ -1024,6 +1029,64 @@ mod tests {
         assert!(matches!(
             parse_ca_store(b"-----BEGIN CERTIFICATE-----\nAQID\n"),
             Err(TlsError::InvalidCaCerts)
+        ));
+    }
+
+    #[test]
+    fn private_key_pem_supports_pkcs1_pkcs8_sec1_and_rejects_missing_or_malformed() {
+        let pkcs1 = parse_private_key(
+            b"-----BEGIN RSA PRIVATE KEY-----\nAQID\n-----END RSA PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        assert!(matches!(pkcs1, PrivateKeyDer::Pkcs1(_)));
+        assert_eq!(pkcs1.secret_der(), &[1, 2, 3]);
+
+        let pkcs8 =
+            parse_private_key(b"-----BEGIN PRIVATE KEY-----\nBAUG\n-----END PRIVATE KEY-----\n")
+                .unwrap();
+        assert!(matches!(pkcs8, PrivateKeyDer::Pkcs8(_)));
+        assert_eq!(pkcs8.secret_der(), &[4, 5, 6]);
+
+        let sec1 = parse_private_key(
+            b"-----BEGIN EC PRIVATE KEY-----\nBwgJ\n-----END EC PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        assert!(matches!(sec1, PrivateKeyDer::Sec1(_)));
+        assert_eq!(sec1.secret_der(), &[7, 8, 9]);
+
+        // Leading non-key PEM sections are skipped until a supported private key block.
+        let cert_then_key = b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n\
+-----BEGIN PRIVATE KEY-----\nBAUG\n-----END PRIVATE KEY-----\n";
+        assert!(matches!(
+            parse_private_key(cert_then_key),
+            Ok(PrivateKeyDer::Pkcs8(_))
+        ));
+
+        // Missing key block (empty or cert-only) -> InvalidPrivateKey.
+        assert!(matches!(
+            parse_private_key(b""),
+            Err(TlsError::InvalidPrivateKey)
+        ));
+        assert!(matches!(
+            parse_private_key(b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n"),
+            Err(TlsError::InvalidPrivateKey)
+        ));
+
+        // Malformed PEM (missing END marker / invalid base64) -> InvalidPrivateKey.
+        assert!(matches!(
+            parse_private_key(b"-----BEGIN PRIVATE KEY-----\nBAUG\n"),
+            Err(TlsError::InvalidPrivateKey)
+        ));
+        assert!(matches!(
+            parse_private_key(b"-----BEGIN PRIVATE KEY-----\n!!!\n-----END PRIVATE KEY-----\n"),
+            Err(TlsError::InvalidPrivateKey)
+        ));
+
+        // `TlsStore::from_pem` reaches `parse_private_key` after parsing certificates.
+        let valid_cert_block = b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n";
+        assert!(matches!(
+            TlsStore::from_pem(valid_cert_block, b"not a key", vec![]),
+            Err(TlsError::InvalidPrivateKey)
         ));
     }
 }
