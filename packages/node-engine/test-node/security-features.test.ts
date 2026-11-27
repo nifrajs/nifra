@@ -1290,7 +1290,10 @@ test("terminating a worker_threads worker closes its engine server via env clean
 test("probe reports honest active transport and implemented security/feature capabilities", () => {
   const res = loadNativeProbe()
   assert.equal(res.ok, true)
-  const expectedTransport = process.platform === "linux" ? "epoll" : "libuv-poll"
+  const requested = process.env.NIFRA_ENGINE_TRANSPORT
+  const linuxTransport =
+    requested === "uring" ? "io_uring" : requested === "uv" ? "libuv-poll" : "epoll"
+  const expectedTransport = process.platform === "linux" ? linuxTransport : "libuv-poll"
   assert.equal(res.transport, expectedTransport)
   assert.equal(res.capabilities.tls, true)
   assert.equal(res.capabilities.tlsCrl, true)

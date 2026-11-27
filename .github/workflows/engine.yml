@@ -1,0 +1,95 @@
+name: Engine
+
+# The Rust engine behind @nifrajs/node-engine on each platform and transport it claims. CI's `node`
+# job covers Linux/epoll through Node; only this runs the crate tests and the other legs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - "packages/node-engine/**"
+      - "packages/node/**"
+      - "packages/core/**"
+      - "bun.lock"
+      - ".github/workflows/engine.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - "packages/node-engine/**"
+      - "packages/node/**"
+      - "packages/core/**"
+      - "bun.lock"
+      - ".github/workflows/engine.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  engine:
+    name: engine (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: linux-epoll, os: ubuntu-26.04, transport: epoll }
+          - { leg: linux-uring, os: ubuntu-26.04, transport: uring }
+          - { leg: linux-uv, os: ubuntu-26.04, transport: uv }
+          - { leg: macos, os: macos-latest, transport: "" }
+          - { leg: windows, os: windows-latest, transport: "" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Read on Linux only. The probe test fails when `uring` falls back to epoll.
+      NIFRA_ENGINE_TRANSPORT: ${{ matrix.transport }}
+      # aws-lc-sys otherwise needs NASM installed to build on Windows.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The root build leaves out the private engine package, whose dist rust-runtime.test.mjs imports.
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+
+      - name: Test the crates
+        run: cargo test --workspace --locked
+        working-directory: native/nifra-engine
+
+      - name: Build the addon
+        run: |
+          cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml
+          case "$RUNNER_OS" in
+            Linux) library=libnifra_napi.so ;;
+            macOS) library=libnifra_napi.dylib ;;
+            Windows) library=nifra_napi.dll ;;
+          esac
+          cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi.node"
+          echo "NIFRA_RUST_ENGINE_PATH=$RUNNER_TEMP/nifra_napi.node" >> "$GITHUB_ENV"
+
+      - name: Test the engine on Node
+        run: |
+          bun run scripts/link-for-node.ts
+          node --test --test-timeout=120000 packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs
