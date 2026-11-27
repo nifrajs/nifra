@@ -944,6 +944,18 @@ impl ConnCore {
         self.write_buf.len().saturating_sub(self.write_pos)
     }
 
+    pub fn queued_output(&self, deferred: usize, deferred_bp: bool, include_corked: bool) -> usize {
+        if include_corked || self.cork_depth == 0 {
+            return self.queued_bytes() + deferred;
+        }
+        let socket_backlog = if self.writable_armed {
+            self.queued_bytes()
+        } else {
+            0
+        };
+        socket_backlog + if deferred_bp { deferred } else { 0 }
+    }
+
     pub fn alpn_protocol(&self) -> Option<Vec<u8>> {
         self.tls
             .as_ref()
@@ -1055,45 +1067,31 @@ pub(crate) fn write_bytes_or_queue(
     bytes: &[u8],
     max_write: usize,
 ) -> FlushAction {
-    let mut budget = max_write.saturating_sub(core.queued_bytes());
+    let corked = core.cork_depth > 0;
+    let queued = core.queued_bytes();
+    let mut budget = max_write.saturating_sub(queued);
     let mut prior_action = FlushAction::None;
-    if core.cork_depth > 0 {
-        if bytes.len() > budget && core.queued_bytes() > 0 {
-            let fa = flush_write_buf_core(core);
-            if fa == FlushAction::Close {
-                return FlushAction::Close;
-            }
-            prior_action = fa;
-            budget = max_write.saturating_sub(core.queued_bytes());
-        }
-        if bytes.len() <= budget {
-            compact_sent_prefix(core);
-            if let Some(ref mut tls_conn) = core.tls {
-                if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
-                    return FlushAction::Close;
-                }
-            } else {
-                core.write_buf.extend_from_slice(bytes);
-            }
-            return prior_action;
-        }
-        // Queue was flushed and is empty, or remaining queue still can't fit `bytes`:
-        // for plaintext empty queues try an immediate direct write (same limit as uncorked).
-        if core.tls.is_some() || core.queued_bytes() > 0 {
+    if corked && bytes.len() > budget && queued > 0 {
+        prior_action = flush_write_buf_core(core);
+        if prior_action == FlushAction::Close {
             return FlushAction::Close;
         }
+        budget = max_write.saturating_sub(core.queued_bytes());
     }
-    if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
+    if (!corked || bytes.len() > budget)
+        && core.tls.is_none()
+        && core.write_pos == core.write_buf.len()
+        && !bytes.is_empty()
+    {
         match send_nonblock(core.fd, bytes) {
             SendOutcome::All => {
-                if core.close_after_write {
-                    return flush_write_buf_core(core);
+                if core.close_after_write || core.writable_armed {
+                    let action = flush_write_buf_core(core);
+                    if action != FlushAction::None {
+                        return action;
+                    }
                 }
-                if core.writable_armed {
-                    core.writable_armed = false;
-                    return FlushAction::DisarmWritable;
-                }
-                return FlushAction::None;
+                return prior_action;
             }
             SendOutcome::Partial(n) => {
                 let tail = &bytes[n..];
@@ -1129,7 +1127,39 @@ pub(crate) fn write_bytes_or_queue(
     } else {
         core.write_buf.extend_from_slice(bytes);
     }
-    flush_write_buf_core(core)
+    if corked && core.queued_bytes() <= max_write {
+        return prior_action;
+    }
+    let action = flush_write_buf_core(core);
+    if action == FlushAction::None {
+        prior_action
+    } else {
+        action
+    }
+}
+
+#[cfg(all(test, unix))]
+mod write_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn cork_overflow_preserves_the_drain_action_after_a_direct_write() {
+        let (sender, mut receiver) = UnixStream::pair().unwrap();
+        let mut core = ConnCore::new(sender.as_raw_fd(), None, None, Instant::now());
+        core.cork_depth = 1;
+        core.writable_armed = true;
+        core.write_buf.extend_from_slice(b"queued");
+
+        let action = write_bytes_or_queue(&mut core, b"direct write", 8);
+        assert_eq!(action, FlushAction::DisarmWritable);
+        assert_eq!(core.queued_bytes(), 0);
+        let mut output = [0; 18];
+        receiver.read_exact(&mut output).unwrap();
+        assert_eq!(&output, b"queueddirect write");
+    }
 }
 
 /// What one idle sweep decided.

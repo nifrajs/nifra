@@ -1312,6 +1312,11 @@ async function serveWithNodeFallback(
       "@nifrajs/node-engine: `oversizeWindow` is not supported by `@nifrajs/node` fallback",
     )
   }
+  if (options.wsMaxMessageSize !== undefined) {
+    throw new TypeError(
+      "@nifrajs/node-engine: `wsMaxMessageSize` is not supported by `@nifrajs/node` fallback",
+    )
+  }
   const tlsOpt = options.tls
   const certVal =
     tlsOpt === undefined
@@ -1399,9 +1404,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       )
     }
   } else if (
-    typeof options.port !== "number" ||
-    !Number.isInteger(options.port) ||
-    options.port < 0
+    (options.port !== undefined || options.engine?.listenerFd === undefined) &&
+    (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port < 0)
   ) {
     throw new TypeError("@nifrajs/node-engine: `port` must be a non-negative integer")
   }

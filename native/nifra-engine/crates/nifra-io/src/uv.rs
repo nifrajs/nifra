@@ -163,7 +163,7 @@ impl UvServer {
         )
     }
 
-    /// Start on a duplicated existing listener file descriptor (for shared cluster sockets).
+    /// Start on a duplicated listener descriptor and return its TCP port (0 for a Unix socket).
     ///
     /// # Safety
     /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
@@ -174,7 +174,7 @@ impl UvServer {
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
-    ) -> io::Result<Self> {
+    ) -> io::Result<(Self, u16)> {
         let sock = crate::sys::dup_listener_sock(raw_fd)?;
         if !crate::sys::is_sock_nonblocking(as_raw_sock(&sock))? {
             return Err(io::Error::new(
@@ -182,7 +182,11 @@ impl UvServer {
                 "listenerFd must refer to a non-blocking socket",
             ));
         }
-        Self::start_sock_with_tls(uv_loop, sock, true, None, cfg, tls, callbacks)
+        let addr = socket2::SockRef::from(&sock).local_addr()?;
+        let tcp = addr.as_socket();
+        let server =
+            Self::start_sock_with_tls(uv_loop, sock, tcp.is_some(), None, cfg, tls, callbacks)?;
+        Ok((server, tcp.map_or(0, |addr| addr.port())))
     }
 
     unsafe fn start_sock_with_tls(
@@ -372,6 +376,15 @@ impl UvServer {
 
     /// Queued outbound bytes buffered for `conn_id`.
     pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        self.queued_bytes_for(conn_id, true)
+    }
+
+    /// Queued outbound bytes subject to backpressure limits, excluding writes only held by corking.
+    pub fn backpressured_bytes(&self, conn_id: u32) -> usize {
+        self.queued_bytes_for(conn_id, false)
+    }
+
+    fn queued_bytes_for(&self, conn_id: u32, include_corked: bool) -> usize {
         match &self.backend {
             ServerBackend::Uv(state) => {
                 let st = state.borrow();
@@ -380,12 +393,15 @@ impl UvServer {
                 } else {
                     0
                 };
-                deferred + st.conns.get(conn_id).map_or(0, |c| c.core.queued_bytes())
+                st.conns.get(conn_id).map_or(deferred, |c| {
+                    c.core
+                        .queued_output(deferred, st.deferred_bp, include_corked)
+                })
             }
             #[cfg(target_os = "linux")]
-            ServerBackend::Epoll(ep) => ep.queued_bytes(conn_id),
+            ServerBackend::Epoll(ep) => ep.queued_bytes_for(conn_id, include_corked),
             #[cfg(target_os = "linux")]
-            ServerBackend::Uring(ur) => ur.queued_bytes(conn_id),
+            ServerBackend::Uring(ur) => ur.queued_bytes_for(conn_id, include_corked),
         }
     }
 
@@ -726,7 +742,9 @@ impl UvPollState {
         conn.core.last_activity = now;
         let effective_close =
             close_after || (close_if_read_ended && conn.core.read_ended && !conn.core.dispatching);
-        if conn.core.queued_bytes() >= max_write {
+        if conn.core.queued_bytes() >= max_write
+            && (conn.core.cork_depth == 0 || conn.core.writable_armed)
+        {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
             }

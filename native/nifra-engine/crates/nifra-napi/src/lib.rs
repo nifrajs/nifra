@@ -4508,10 +4508,7 @@ impl UvHttpServer {
                     }
                     out_cid
                 } else {
-                    match ws_conn_id_for_socket(&st, socket_id) {
-                        Some(cid) => cid,
-                        None => return false,
-                    }
+                    return false;
                 }
             } else {
                 match ws_conn_id_for_socket(&st, socket_id) {
@@ -4955,7 +4952,9 @@ fn send_ws_frame(
                 .get(conn_id)
                 .and_then(|s| s.h2.as_deref())
                 .map_or(0, |h2| h2.stream_queued_bytes(stream_id));
-            if max_bp > 0 && (stream_queued >= max_bp || server.queued_bytes(conn_id) >= max_bp) {
+            if max_bp > 0
+                && (stream_queued >= max_bp || server.backpressured_bytes(conn_id) >= max_bp)
+            {
                 if close_on_bp {
                     close_h2_stream = Some((conn_id, stream_id));
                 }
@@ -5003,7 +5002,7 @@ fn send_ws_frame(
                     SendWsOutcome::Sent
                 }
             }
-        } else if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+        } else if max_bp > 0 && server.backpressured_bytes(socket_id) >= max_bp {
             if close_on_bp {
                 server.close_conn(socket_id);
             }
@@ -5088,7 +5087,7 @@ fn publish_ws_topic(
             continue;
         }
         let mut st = st;
-        if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+        if max_bp > 0 && server.backpressured_bytes(socket_id) >= max_bp {
             if close_on_bp {
                 server.close_conn(socket_id);
             }
@@ -5323,7 +5322,7 @@ pub fn create_uv_server(
         #[cfg(unix)]
         Unix(BoundUnixSocket),
         #[cfg(unix)]
-        Fd(i32, u16),
+        Fd(i32),
     }
 
     let bound = if let Some(ref path) = unix_path {
@@ -5344,7 +5343,7 @@ pub fn create_uv_server(
     } else if let Some(fd) = listener_fd {
         #[cfg(unix)]
         {
-            BoundListener::Fd(fd, port)
+            BoundListener::Fd(fd)
         }
         #[cfg(not(unix))]
         {
@@ -5359,14 +5358,6 @@ pub fn create_uv_server(
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
         BoundListener::Tcp(listener, local_addr.port())
     };
-    let bound_port = match &bound {
-        BoundListener::Tcp(_, p) => *p,
-        #[cfg(unix)]
-        BoundListener::Unix(_) => 0,
-        #[cfg(unix)]
-        BoundListener::Fd(_, p) => *p,
-    };
-
     // Taken only once the options are valid and the port/path is bound, so a failed start holds no callback.
     let mut cb_ref: sys::napi_ref = std::ptr::null_mut();
     let status = unsafe { sys::napi_create_reference(env.raw(), on_batch.raw(), 1, &mut cb_ref) };
@@ -5453,10 +5444,11 @@ pub fn create_uv_server(
     });
 
     // SAFETY: `uv_loop` came from `napi_get_uv_event_loop` for this thread's environment just above.
-    let server = unsafe {
+    let (server, bound_port) = unsafe {
         match bound {
-            BoundListener::Tcp(listener, _) => {
+            BoundListener::Tcp(listener, port) => {
                 UvServer::start_with_tls(uv_loop.cast(), listener, sock_cfg, tls_store, callbacks)
+                    .map(|server| (server, port))
             }
             #[cfg(unix)]
             BoundListener::Unix(bound_unix) => UvServer::start_unix_with_tls(
@@ -5465,9 +5457,10 @@ pub fn create_uv_server(
                 sock_cfg,
                 tls_store,
                 callbacks,
-            ),
+            )
+            .map(|server| (server, 0)),
             #[cfg(unix)]
-            BoundListener::Fd(fd, _) => UvServer::start_from_raw_fd_with_tls(
+            BoundListener::Fd(fd) => UvServer::start_from_raw_fd_with_tls(
                 uv_loop.cast(),
                 fd,
                 sock_cfg,

@@ -495,7 +495,7 @@ impl EpollServer {
         let read_ended = conn.read_ended;
         let effective_close =
             close_after || (close_if_read_ended && read_ended && !conn.dispatching);
-        if conn.queued_bytes() >= max_write {
+        if conn.queued_bytes() >= max_write && (conn.cork_depth == 0 || conn.writable_armed) {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
@@ -598,13 +598,19 @@ impl EpollServer {
     }
 
     pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        self.queued_bytes_for(conn_id, true)
+    }
+
+    pub(crate) fn queued_bytes_for(&self, conn_id: u32, include_corked: bool) -> usize {
         let st = self.state.borrow();
         let deferred = if st.dispatching == Some(conn_id) {
             st.deferred.len()
         } else {
             0
         };
-        deferred + st.conns.get(conn_id).map_or(0, |c| c.queued_bytes())
+        st.conns.get(conn_id).map_or(deferred, |c| {
+            c.queued_output(deferred, st.deferred_bp, include_corked)
+        })
     }
 
     pub fn set_read_paused(&self, conn_id: u32, paused: bool) -> bool {

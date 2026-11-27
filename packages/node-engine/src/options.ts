@@ -187,7 +187,7 @@ export interface FetchHandler {
 }
 
 export interface ServeOptions extends HostPolicyOptions {
-  /** TCP port to bind (`0` for ephemeral). Omit when binding a Unix domain socket via {@link path}. */
+  /** TCP port to bind (`0` for ephemeral). Omit for {@link path} or an inherited listener descriptor. */
   readonly port?: number
   readonly hostname?: string
   /** Unix domain socket path to listen on (mutually exclusive with a TCP `hostname`/`port` bind). */
@@ -238,7 +238,8 @@ export interface ServeOptions extends HostPolicyOptions {
   /**
    * Largest WebSocket message the engine accepts before it fails the connection with 1009. Defaults to
    * the largest `wsMaxPayloadBytes` among the app and the apps mounted in it that serve sockets (a
-   * route whose app declares less is held to its own), else the engine's 16 MiB.
+   * route whose app declares less is held to its own), else the engine's 16 MiB. The Node fallback
+   * rejects this option at startup.
    */
   readonly wsMaxMessageSize?: number
   /** Enable RFC 7692 WebSocket `permessage-deflate` compression (`true` for defaults, or options). */

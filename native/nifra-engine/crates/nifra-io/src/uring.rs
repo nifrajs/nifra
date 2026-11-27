@@ -28,6 +28,7 @@ use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
 
 const LISTENER_EVENT_ID: u64 = 0;
+const LISTENER_CANCEL_EVENT_ID: u64 = 1;
 const CANCEL_EVENT_ID: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy)]
@@ -165,6 +166,13 @@ struct TimerCtx {
     state: Rc<RefCell<UringState>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListenerCancel {
+    Unqueued,
+    Queued,
+    Submitted,
+}
+
 struct UringState {
     uv: &'static UvApi,
     uv_loop: *mut c_void,
@@ -176,6 +184,8 @@ struct UringState {
     evfd: RawFd,
     listener_fd: RawSock,
     listener_armed: bool,
+    listener_stopping: bool,
+    listener_cancel: ListenerCancel,
     unix_guard: Option<crate::UnixSocketGuard>,
     uring_handle: *mut c_void,
     check_handle: *mut c_void,
@@ -217,7 +227,7 @@ impl UringState {
 
     #[inline]
     fn arm_listener(&mut self) -> io::Result<()> {
-        if is_valid_sock(self.listener_fd) && !self.listener_armed {
+        if !self.listener_stopping && is_valid_sock(self.listener_fd) && !self.listener_armed {
             let Some(ref mut ring) = self.ring else {
                 return Err(io::Error::other("io_uring ring has already closed"));
             };
@@ -228,6 +238,37 @@ impl UringState {
             self.listener_armed = true;
         }
         Ok(())
+    }
+
+    fn release_listener(&mut self) {
+        if is_valid_sock(self.listener_fd) {
+            unsafe { close_sock(self.listener_fd) };
+            self.listener_fd = INVALID_SOCK;
+        }
+    }
+
+    fn cancel_listener_poll(&mut self) {
+        let Some(ring) = self.ring.as_mut().filter(|_| self.listener_armed) else {
+            self.release_listener();
+            return;
+        };
+        if self.listener_cancel == ListenerCancel::Unqueued {
+            let entry = opcode::PollRemove::new(LISTENER_EVENT_ID)
+                .build()
+                .user_data(LISTENER_CANCEL_EVENT_ID);
+            if push_sqe(ring, entry).is_err() {
+                return;
+            }
+            self.listener_cancel = ListenerCancel::Queued;
+        }
+        // The timer retries after enqueue or submit failures. The original poll's completion
+        // releases the fd because the kernel may still hold the socket after a successful submit.
+        if self.listener_cancel == ListenerCancel::Queued
+            && ring.submit().is_ok()
+            && ring.submission().is_empty()
+        {
+            self.listener_cancel = ListenerCancel::Submitted;
+        }
     }
 
     fn remove_and_close_conn(&mut self, conn_id: u32) -> bool {
@@ -341,6 +382,8 @@ impl UringServer {
             evfd: evfd_raw,
             listener_fd: owned_listener,
             listener_armed: false,
+            listener_stopping: false,
+            listener_cancel: ListenerCancel::Unqueued,
             unix_guard,
             uring_handle,
             check_handle,
@@ -538,7 +581,9 @@ impl UringServer {
         let read_ended = conn.core.read_ended;
         let effective_close =
             close_after || (close_if_read_ended && read_ended && !conn.core.dispatching);
-        if conn.core.queued_bytes() >= max_write {
+        if conn.core.queued_bytes() >= max_write
+            && (conn.core.cork_depth == 0 || conn.core.writable_armed)
+        {
             st_ref.remove_and_close_conn(conn_id);
             st_ref.submit_ring();
             return WriteResult::Closed;
@@ -661,13 +706,20 @@ impl UringServer {
     }
 
     pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        self.queued_bytes_for(conn_id, true)
+    }
+
+    pub(crate) fn queued_bytes_for(&self, conn_id: u32, include_corked: bool) -> usize {
         let st = self.state.borrow();
         let deferred = if st.dispatching == Some(conn_id) {
             st.deferred.len()
         } else {
             0
         };
-        deferred + st.conns.get(conn_id).map_or(0, |c| c.core.queued_bytes())
+        st.conns.get(conn_id).map_or(deferred, |c| {
+            c.core
+                .queued_output(deferred, st.deferred_bp, include_corked)
+        })
     }
 
     pub fn set_read_paused(&self, conn_id: u32, paused: bool) -> bool {
@@ -691,22 +743,8 @@ impl UringServer {
 
     pub fn stop_listening(&self) {
         let mut st = self.state.borrow_mut();
-        if is_valid_sock(st.listener_fd) {
-            if st.listener_armed {
-                if let Some(ref mut ring) = st.ring {
-                    let _ = push_sqe(
-                        ring,
-                        opcode::PollRemove::new(LISTENER_EVENT_ID)
-                            .build()
-                            .user_data(CANCEL_EVENT_ID),
-                    );
-                    let _ = ring.submit();
-                }
-                st.listener_armed = false;
-            }
-            unsafe { close_sock(st.listener_fd) };
-            st.listener_fd = INVALID_SOCK;
-        }
+        st.listener_stopping = true;
+        st.cancel_listener_poll();
         if let Some(mut guard) = st.unix_guard.take() {
             guard.cleanup_now();
         }
@@ -741,6 +779,7 @@ impl UringServer {
             unsafe { close_sock(conn.core.fd) };
         }
         drop(ring);
+        st.release_listener();
         if !st.uring_handle.is_null() {
             let h = st.uring_handle;
             st.uring_handle = std::ptr::null_mut();
@@ -786,7 +825,6 @@ unsafe fn accept_ready_uring(state_rc: &Rc<RefCell<UringState>>, now: std::time:
     if st.closed || !is_valid_sock(st.listener_fd) {
         return;
     }
-    st.listener_armed = false;
     let nodelay = st.is_tcp && st.cfg.tcp_nodelay;
     loop {
         let listener_fd = st.listener_fd;
@@ -1232,13 +1270,22 @@ unsafe extern "C" fn on_uring_event(handle: *mut c_void, status: c_int, _events:
         if ud == CANCEL_EVENT_ID {
             continue;
         }
+        if ud == LISTENER_CANCEL_EVENT_ID {
+            if res < 0 {
+                state_rc.borrow_mut().listener_cancel = ListenerCancel::Unqueued;
+            }
+            continue;
+        }
         if ud == LISTENER_EVENT_ID {
-            if res >= 0 {
-                accept_ready_uring(&state_rc, now);
-            } else {
-                let mut st = state_rc.borrow_mut();
-                st.listener_armed = false;
+            let mut st = state_rc.borrow_mut();
+            st.listener_armed = false;
+            if st.listener_stopping {
+                st.release_listener();
+            } else if res < 0 {
                 let _ = st.arm_listener();
+            } else {
+                drop(st);
+                accept_ready_uring(&state_rc, now);
             }
             continue;
         }
@@ -1367,6 +1414,9 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
+        }
+        if st.listener_stopping && st.listener_armed {
+            st.cancel_listener_poll();
         }
         let uv_ms = (uv.now)(st.uv_loop);
         if !st.clock.on_timer_tick(uv_ms) {
