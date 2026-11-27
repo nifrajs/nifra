@@ -601,13 +601,12 @@ test("a plain handler that throws or rejects gets a flat 500", async () => {
   }
 })
 
-test("options the adapter cannot honour are refused up front", () => {
+test("invalid server options are refused up front", () => {
   const app = server()
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the option is deliberately not part of the type
-  assert.throws(() => serve(app, { port: 0, static: () => undefined } as never), /static/)
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the option is deliberately not part of the type
-  assert.throws(() => serve(app, { port: 0, fastResponse: true } as never), /fastResponse/)
   assert.throws(() => serve(app, { port: -1 }), /port/)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an invalid value, to prove the runtime check
+  assert.throws(() => serve(app, { port: 0, fastResponse: "yes" as never }), /fastResponse/)
+  assert.throws(() => serve(app, { port: 0, path: "/tmp/x.sock" }), /cannot both/)
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an invalid value, to prove the runtime check
   assert.throws(() => serve(app, { port: 0, protocol: "ftp" as never }), /protocol/)
   assert.throws(() => serve(app, { port: 0, allowedHosts: ["bad host"] }), /invalid allowed host/)

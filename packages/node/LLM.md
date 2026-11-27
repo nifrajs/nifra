@@ -17,19 +17,19 @@ Run a nifra app on Node's http server - a Request<->stream adapter with a gracef
 - **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<NodeServer>` · from `@nifrajs/node`
 - **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined` · from `@nifrajs/node`
 - **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void` · from `@nifrajs/node/transport`
+- **createStaticResolver** _(const)_ - `createStaticResolver: (staticOption: unknown) => StaticRequestResolver` · from `@nifrajs/node/transport`
 - **enableNodeDirect** _(const)_ - `enableNodeDirect: (app: object) => void` · from `@nifrajs/node/transport`
 - **errorReporterOf** _(const)_ - `errorReporterOf: (app: object) => ((error: unknown) => void) | undefined` · from `@nifrajs/node/transport`
 - **hostPolicyOf** _(const)_ - `hostPolicyOf: (options: HostPolicyOptions) => HostPolicy` · from `@nifrajs/node/transport`
+- **installFastResponse** _(const)_ - `installFastResponse: () => void` · from `@nifrajs/node/transport`
 - **lifecycleOf** _(const)_ - `lifecycleOf: (app: object) => (phase: "stopping" | "stopped") => Promise<void>` · from `@nifrajs/node/transport`
 - **nodeOutcomeRuntime** _(const)_ - `nodeOutcomeRuntime: object` · from `@nifrajs/node/transport`
 - **resolveRequestHost** _(const)_ - `resolveRequestHost: (host: string | null | undefined, policy: HostPolicy) => string | undefined` · from `@nifrajs/node/transport`
 - **resolveRequestTarget** _(const)_ - `resolveRequestTarget: (target: string, normalizeTarget: boolean) => string` · from `@nifrajs/node/transport`
 - **FetchHandler** _(interface)_ - `interface FetchHandler` · from `@nifrajs/node`
 - **HostPolicy** _(interface)_ - `interface HostPolicy` · from `@nifrajs/node/transport`
-- **HostPolicyOptions** _(interface)_ - `interface HostPolicyOptions` · from `@nifrajs/node/transport`
-- **NodeServer** _(interface)_ - `interface NodeServer` · from `@nifrajs/node`
 
-_…and 7 more - see [`api-reference.md`](../../api-reference.md#nifrajsnode) for the complete list._
+_…and 10 more - see [`api-reference.md`](../../api-reference.md#nifrajsnode) for the complete list._
 
 ## Footguns
 

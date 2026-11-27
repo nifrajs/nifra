@@ -312,6 +312,7 @@
       "name": "@nifrajs/cache",
       "version": "5.17.0",
       "devDependencies": {
+        "@nifrajs/test-utils": "workspace:*",
         "@nifrajs/testing": "workspace:*",
       },
     },
@@ -569,6 +570,7 @@
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/schema": "workspace:*",
+        "@nifrajs/test-utils": "workspace:*",
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",

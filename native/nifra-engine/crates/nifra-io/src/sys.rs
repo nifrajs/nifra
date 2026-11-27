@@ -1,16 +1,28 @@
 //! Shared OS/libuv primitives, O(1) generational connection slab, loop-synced clock,
 //! and zero-copy read/write helpers for `uv` and Linux `epoll` backends.
 
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::os::fd::RawFd;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener as StdTcpListener};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, FromRawSocket, IntoRawSocket, OwnedSocket, RawSocket};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+#[cfg(windows)]
+use windows_sys::Win32::Networking::WinSock;
+#[cfg(windows)]
+use windows_sys::Win32::System::LibraryLoader::{
+    GetModuleHandleA, GetModuleHandleW, GetProcAddress,
+};
 
 use nifra_http::date::{self, ClockLeaseGuard};
 use nifra_tls::ServerConnection;
@@ -43,11 +55,11 @@ pub(crate) const WS_PING_FRAME: [u8; 2] = [0x89, 0x00];
 /// Number of low bits reserved for the slot index inside a `conn_id`.
 ///
 /// A retired id is refused only until its slot has been reused `MAX_GEN` times, so the generation
-/// takes the 13 bits a 262,144-connection slab leaves free.
+/// takes 12 of the bits a 262,144-connection slab leaves free (keeping bit 30 free for virtual H2 WebSocket ids).
 pub const SLOT_BITS: u32 = 18;
 pub const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
 const MAX_SLOTS: usize = 1 << SLOT_BITS;
-const MAX_GEN: u16 = 8191; // keeps bit 31 = 0 so `conn_id as i32 > 0` always holds
+const MAX_GEN: u16 = 4095; // keeps bits 30..31 = 0 so every conn_id stays below H2_WS_ID_BIT (1 << 30)
 
 /// Extract the direct O(1) slot index from a `conn_id`.
 #[inline]
@@ -60,12 +72,83 @@ pub(crate) type UvCheckCb = unsafe extern "C" fn(handle: *mut c_void);
 pub(crate) type UvTimerCb = unsafe extern "C" fn(handle: *mut c_void);
 pub(crate) type UvCloseCb = unsafe extern "C" fn(handle: *mut c_void);
 
+#[cfg(unix)]
+pub(crate) type RawSock = RawFd;
+#[cfg(unix)]
+pub(crate) type OwnedSock = OwnedFd;
+#[cfg(unix)]
+pub(crate) type UvOsSock = c_int;
+#[cfg(unix)]
+pub(crate) const INVALID_SOCK: RawSock = -1;
+
+#[cfg(windows)]
+pub(crate) type RawSock = RawSocket;
+#[cfg(windows)]
+pub(crate) type OwnedSock = OwnedSocket;
+#[cfg(windows)]
+pub(crate) type UvOsSock = usize;
+#[cfg(windows)]
+pub(crate) const INVALID_SOCK: RawSock = WinSock::INVALID_SOCKET as RawSock;
+
+#[inline]
+pub(crate) fn is_valid_sock(sock: RawSock) -> bool {
+    #[cfg(unix)]
+    {
+        sock >= 0
+    }
+    #[cfg(windows)]
+    {
+        sock != INVALID_SOCK
+    }
+}
+
+#[inline]
+pub(crate) fn into_raw_sock(sock: OwnedSock) -> RawSock {
+    #[cfg(unix)]
+    {
+        sock.into_raw_fd()
+    }
+    #[cfg(windows)]
+    {
+        sock.into_raw_socket()
+    }
+}
+
+#[inline]
+pub(crate) fn as_raw_sock(sock: &OwnedSock) -> RawSock {
+    #[cfg(unix)]
+    {
+        sock.as_raw_fd()
+    }
+    #[cfg(windows)]
+    {
+        sock.as_raw_socket()
+    }
+}
+
+#[inline]
+pub(crate) fn tcp_into_owned_sock(listener: StdTcpListener) -> OwnedSock {
+    #[cfg(unix)]
+    {
+        OwnedFd::from(listener)
+    }
+    #[cfg(windows)]
+    {
+        OwnedSocket::from(listener)
+    }
+}
+
+#[inline]
+pub(crate) fn to_uv_os_sock(sock: RawSock) -> UvOsSock {
+    sock as UvOsSock
+}
+
 pub(crate) struct UvApi {
     pub handle_get_data: unsafe extern "C" fn(*const c_void) -> *mut c_void,
     pub handle_set_data: unsafe extern "C" fn(*mut c_void, *mut c_void),
     #[allow(dead_code)]
     pub poll_init: unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int,
-    pub poll_init_socket: unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int,
+    pub poll_init_socket: unsafe extern "C" fn(*mut c_void, *mut c_void, UvOsSock) -> c_int,
     pub poll_start: unsafe extern "C" fn(*mut c_void, c_int, UvPollCb) -> c_int,
     pub poll_stop: unsafe extern "C" fn(*mut c_void) -> c_int,
     pub check_init: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
@@ -89,7 +172,32 @@ unsafe impl Sync for UvApi {}
 static UV_API: OnceLock<Result<UvApi, String>> = OnceLock::new();
 
 unsafe fn resolve_sym<T>(name: &'static [u8]) -> Result<T, String> {
+    #[cfg(unix)]
     let ptr = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr().cast());
+    #[cfg(windows)]
+    let ptr = {
+        let candidates: [*const u8; 4] = [
+            std::ptr::null(),
+            b"libnode.dll\0".as_ptr(),
+            b"node.dll\0".as_ptr(),
+            b"libuv.dll\0".as_ptr(),
+        ];
+        let mut found: *mut c_void = std::ptr::null_mut();
+        for mod_name in candidates {
+            let hmod = if mod_name.is_null() {
+                GetModuleHandleW(std::ptr::null())
+            } else {
+                GetModuleHandleA(mod_name)
+            };
+            if hmod != 0 {
+                if let Some(sym) = GetProcAddress(hmod, name.as_ptr()) {
+                    found = sym as *mut c_void;
+                    break;
+                }
+            }
+        }
+        found
+    };
     if ptr.is_null() {
         let s = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("unknown");
         return Err(format!("libuv symbol `{s}` not found in host process"));
@@ -148,37 +256,251 @@ pub(crate) unsafe fn free_handle(ptr: *mut c_void, size: usize) {
     dealloc(ptr.cast(), layout);
 }
 
+#[cfg(unix)]
+pub(crate) type SockaddrStorage = libc::sockaddr_storage;
+#[cfg(windows)]
+pub(crate) type SockaddrStorage = WinSock::SOCKADDR_STORAGE;
+
 #[inline]
-pub(crate) unsafe fn peer_ip_from_storage(storage: &libc::sockaddr_storage) -> Option<IpAddr> {
-    match storage.ss_family as c_int {
-        libc::AF_INET => {
-            let sin = &*(storage as *const libc::sockaddr_storage as *const libc::sockaddr_in);
-            Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(
-                sin.sin_addr.s_addr,
-            ))))
+pub(crate) unsafe fn peer_ip_from_storage(storage: &SockaddrStorage) -> Option<IpAddr> {
+    #[cfg(unix)]
+    {
+        match storage.ss_family as c_int {
+            libc::AF_INET => {
+                let sin = &*(storage as *const libc::sockaddr_storage as *const libc::sockaddr_in);
+                Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(
+                    sin.sin_addr.s_addr,
+                ))))
+            }
+            libc::AF_INET6 => {
+                let sin6 =
+                    &*(storage as *const libc::sockaddr_storage as *const libc::sockaddr_in6);
+                Some(IpAddr::V6(Ipv6Addr::from(sin6.sin6_addr.s6_addr)))
+            }
+            _ => None,
         }
-        libc::AF_INET6 => {
-            let sin6 = &*(storage as *const libc::sockaddr_storage as *const libc::sockaddr_in6);
-            Some(IpAddr::V6(Ipv6Addr::from(sin6.sin6_addr.s6_addr)))
+    }
+    #[cfg(windows)]
+    {
+        match storage.ss_family {
+            WinSock::AF_INET => {
+                let sin =
+                    &*(storage as *const WinSock::SOCKADDR_STORAGE as *const WinSock::SOCKADDR_IN);
+                Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(
+                    sin.sin_addr.S_un.S_addr,
+                ))))
+            }
+            WinSock::AF_INET6 => {
+                let sin6 =
+                    &*(storage as *const WinSock::SOCKADDR_STORAGE as *const WinSock::SOCKADDR_IN6);
+                Some(IpAddr::V6(Ipv6Addr::from(sin6.sin6_addr.u.Byte)))
+            }
+            _ => None,
         }
-        _ => None,
     }
 }
 
-pub(crate) fn open_spare_fd() -> RawFd {
-    unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) }
+pub(crate) fn open_spare_fd() -> RawSock {
+    #[cfg(unix)]
+    {
+        unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) }
+    }
+    #[cfg(windows)]
+    {
+        INVALID_SOCK
+    }
 }
 
 #[inline]
-pub(crate) unsafe fn set_tcp_nodelay(fd: RawFd) -> bool {
+pub(crate) unsafe fn close_sock(sock: RawSock) {
+    #[cfg(unix)]
+    if sock >= 0 {
+        libc::close(sock);
+    }
+    #[cfg(windows)]
+    if sock != INVALID_SOCK {
+        WinSock::closesocket(sock as WinSock::SOCKET);
+    }
+}
+
+#[inline]
+pub(crate) unsafe fn shutdown_write(sock: RawSock) {
+    #[cfg(unix)]
+    {
+        libc::shutdown(sock, libc::SHUT_WR);
+    }
+    #[cfg(windows)]
+    {
+        WinSock::shutdown(sock as WinSock::SOCKET, WinSock::SD_SEND);
+    }
+}
+
+#[inline]
+pub(crate) unsafe fn configure_accepted_socket(sock: RawSock, nodelay: bool) {
+    #[cfg(unix)]
+    {
+        libc::fcntl(sock, libc::F_SETFD, libc::FD_CLOEXEC);
+        let flags = libc::fcntl(sock, libc::F_GETFL, 0);
+        if flags >= 0 {
+            libc::fcntl(sock, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+        set_nosigpipe_if_supported(sock);
+    }
+    #[cfg(windows)]
+    {
+        let _ = SetHandleInformation(sock as HANDLE, HANDLE_FLAG_INHERIT, 0);
+        let mut nonblocking: u32 = 1;
+        WinSock::ioctlsocket(sock as WinSock::SOCKET, WinSock::FIONBIO, &mut nonblocking);
+    }
+    if nodelay {
+        set_tcp_nodelay(sock);
+    }
+}
+
+pub(crate) enum AcceptOutcome {
+    Accepted {
+        sock: RawSock,
+        peer_ip: Option<IpAddr>,
+    },
+    Emfile,
+    Retry,
+    WouldBlock,
+}
+
+#[inline]
+pub(crate) unsafe fn accept_nonblock(listener: RawSock) -> AcceptOutcome {
+    let mut storage: SockaddrStorage = std::mem::zeroed();
+    #[cfg(unix)]
+    {
+        let mut addr_len = std::mem::size_of::<SockaddrStorage>() as libc::socklen_t;
+        let client_fd = libc::accept(
+            listener,
+            (&mut storage as *mut SockaddrStorage).cast(),
+            &mut addr_len,
+        );
+        if client_fd >= 0 {
+            return AcceptOutcome::Accepted {
+                sock: client_fd,
+                peer_ip: peer_ip_from_storage(&storage),
+            };
+        }
+        let err = io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::EMFILE | libc::ENFILE) => AcceptOutcome::Emfile,
+            Some(libc::ECONNABORTED | libc::EPROTO | libc::EINTR) => AcceptOutcome::Retry,
+            _ => AcceptOutcome::WouldBlock,
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut addr_len = std::mem::size_of::<SockaddrStorage>() as i32;
+        let client = WinSock::accept(
+            listener as WinSock::SOCKET,
+            (&mut storage as *mut SockaddrStorage).cast(),
+            &mut addr_len,
+        );
+        if client != WinSock::INVALID_SOCKET {
+            return AcceptOutcome::Accepted {
+                sock: client as RawSock,
+                peer_ip: peer_ip_from_storage(&storage),
+            };
+        }
+        match WinSock::WSAGetLastError() {
+            WinSock::WSAEMFILE | WinSock::WSAENOBUFS => AcceptOutcome::Emfile,
+            WinSock::WSAECONNRESET | WinSock::WSAEINTR | WinSock::WSAECONNABORTED => {
+                AcceptOutcome::Retry
+            }
+            _ => AcceptOutcome::WouldBlock,
+        }
+    }
+}
+
+#[inline]
+pub(crate) unsafe fn accept_and_discard(listener: RawSock) {
+    #[cfg(unix)]
+    {
+        let shed = libc::accept(listener, std::ptr::null_mut(), std::ptr::null_mut());
+        if shed >= 0 {
+            libc::close(shed);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let shed = WinSock::accept(
+            listener as WinSock::SOCKET,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        if shed != WinSock::INVALID_SOCKET {
+            WinSock::closesocket(shed);
+        }
+    }
+}
+
+#[inline]
+pub(crate) unsafe fn set_tcp_nodelay(sock: RawSock) -> bool {
     let one: c_int = 1;
-    libc::setsockopt(
-        fd,
-        libc::IPPROTO_TCP,
-        libc::TCP_NODELAY,
-        (&one as *const c_int).cast(),
-        std::mem::size_of::<c_int>() as libc::socklen_t,
-    ) == 0
+    #[cfg(unix)]
+    {
+        libc::setsockopt(
+            sock,
+            libc::IPPROTO_TCP,
+            libc::TCP_NODELAY,
+            (&one as *const c_int).cast(),
+            std::mem::size_of::<c_int>() as libc::socklen_t,
+        ) == 0
+    }
+    #[cfg(windows)]
+    {
+        WinSock::setsockopt(
+            sock as WinSock::SOCKET,
+            WinSock::IPPROTO_TCP,
+            WinSock::TCP_NODELAY,
+            (&one as *const c_int).cast(),
+            std::mem::size_of::<c_int>() as i32,
+        ) == 0
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn is_sock_nonblocking(sock: RawSock) -> io::Result<bool> {
+    let flags = unsafe { libc::fcntl(sock, libc::F_GETFL, 0) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((flags & libc::O_NONBLOCK) != 0)
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn is_sock_nonblocking(_sock: RawSock) -> io::Result<bool> {
+    Ok(true)
+}
+
+#[cfg(unix)]
+pub fn dup_listener_sock(raw_fd: i32) -> io::Result<OwnedSock> {
+    use std::os::fd::FromRawFd;
+    if raw_fd < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "listenerFd must be a non-negative descriptor",
+        ));
+    }
+    let duped = unsafe { libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if duped < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `F_DUPFD_CLOEXEC` returned a fresh owned file descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(duped) })
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub fn dup_listener_sock(_raw_fd: i32) -> io::Result<OwnedSock> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "duplicating raw integer listener descriptors is unsupported on Windows",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -200,6 +522,7 @@ pub(crate) unsafe fn socket_incoming_cpu(fd: RawFd) -> i32 {
     }
 }
 
+#[cfg(unix)]
 #[inline]
 pub(crate) unsafe fn set_nosigpipe_if_supported(fd: RawFd) {
     #[cfg(any(
@@ -440,8 +763,44 @@ pub(crate) fn ensure_read_scratch(scratch: &mut Vec<MaybeUninit<u8>>) {
 }
 
 #[inline]
-pub(crate) fn recv_nonblock(fd: RawFd, ptr: *mut MaybeUninit<u8>, len: usize) -> isize {
-    unsafe { libc::recv(fd, ptr.cast(), len, libc::MSG_DONTWAIT) }
+pub(crate) fn recv_nonblock(fd: RawSock, ptr: *mut MaybeUninit<u8>, len: usize) -> isize {
+    #[cfg(unix)]
+    {
+        unsafe { libc::recv(fd, ptr.cast(), len, libc::MSG_DONTWAIT) }
+    }
+    #[cfg(windows)]
+    {
+        let max_len = len.min(c_int::MAX as usize) as c_int;
+        unsafe { WinSock::recv(fd as WinSock::SOCKET, ptr.cast(), max_len, 0) as isize }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecvErrKind {
+    WouldBlock,
+    Interrupted,
+    Fatal,
+}
+
+#[inline]
+pub(crate) fn last_recv_error() -> RecvErrKind {
+    #[cfg(unix)]
+    {
+        let err = io::Error::last_os_error();
+        match err.kind() {
+            io::ErrorKind::WouldBlock => RecvErrKind::WouldBlock,
+            io::ErrorKind::Interrupted => RecvErrKind::Interrupted,
+            _ => RecvErrKind::Fatal,
+        }
+    }
+    #[cfg(windows)]
+    {
+        match unsafe { WinSock::WSAGetLastError() } {
+            WinSock::WSAEWOULDBLOCK => RecvErrKind::WouldBlock,
+            WinSock::WSAEINTR => RecvErrKind::Interrupted,
+            _ => RecvErrKind::Fatal,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -453,35 +812,61 @@ pub(crate) enum SendOutcome {
 }
 
 #[inline]
-pub(crate) fn send_nonblock(fd: RawFd, bytes: &[u8]) -> SendOutcome {
-    #[cfg(target_os = "linux")]
-    const FLAGS: c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    #[cfg(not(target_os = "linux"))]
-    const FLAGS: c_int = libc::MSG_DONTWAIT;
+pub(crate) fn send_nonblock(fd: RawSock, bytes: &[u8]) -> SendOutcome {
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "linux")]
+        const FLAGS: c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+        #[cfg(not(target_os = "linux"))]
+        const FLAGS: c_int = libc::MSG_DONTWAIT;
 
-    loop {
-        let n = unsafe { libc::send(fd, bytes.as_ptr().cast(), bytes.len(), FLAGS) };
-        if n > 0 {
-            let written = n as usize;
-            if written == bytes.len() {
-                return SendOutcome::All;
+        loop {
+            let n = unsafe { libc::send(fd, bytes.as_ptr().cast(), bytes.len(), FLAGS) };
+            if n > 0 {
+                let written = n as usize;
+                if written == bytes.len() {
+                    return SendOutcome::All;
+                }
+                return SendOutcome::Partial(written);
             }
-            return SendOutcome::Partial(written);
+            if n == 0 {
+                return SendOutcome::Closed;
+            }
+            let err = io::Error::last_os_error();
+            match err.kind() {
+                io::ErrorKind::WouldBlock => return SendOutcome::WouldBlock,
+                io::ErrorKind::Interrupted => continue,
+                _ => return SendOutcome::Closed,
+            }
         }
-        if n == 0 {
-            return SendOutcome::Closed;
-        }
-        let err = io::Error::last_os_error();
-        match err.kind() {
-            io::ErrorKind::WouldBlock => return SendOutcome::WouldBlock,
-            io::ErrorKind::Interrupted => continue,
-            _ => return SendOutcome::Closed,
+    }
+    #[cfg(windows)]
+    {
+        let max_len = bytes.len().min(c_int::MAX as usize) as c_int;
+        loop {
+            let n =
+                unsafe { WinSock::send(fd as WinSock::SOCKET, bytes.as_ptr().cast(), max_len, 0) };
+            if n > 0 {
+                let written = n as usize;
+                if written == bytes.len() {
+                    return SendOutcome::All;
+                }
+                return SendOutcome::Partial(written);
+            }
+            if n == 0 {
+                return SendOutcome::Closed;
+            }
+            match unsafe { WinSock::WSAGetLastError() } {
+                WinSock::WSAEWOULDBLOCK => return SendOutcome::WouldBlock,
+                WinSock::WSAEINTR => continue,
+                _ => return SendOutcome::Closed,
+            }
         }
     }
 }
 
 pub(crate) struct ConnCore {
-    pub fd: RawFd,
+    pub fd: RawSock,
     #[cfg(target_os = "linux")]
     pub incoming_cpu: i32,
     #[cfg(target_os = "linux")]
@@ -505,6 +890,10 @@ pub(crate) struct ConnCore {
     pub accepted_at: Instant,
     /// Output is backed up far enough that the socket is not being read.
     pub read_paused: bool,
+    /// Application-level read pause (e.g. streaming request body backpressure).
+    pub app_read_paused: bool,
+    /// Active `ws.cork()` nesting depth deferring socket flushes until the outer callback returns.
+    pub cork_depth: u32,
     /// When unsent output last stopped making progress.
     pub stalled_since: Option<Instant>,
 }
@@ -512,7 +901,7 @@ pub(crate) struct ConnCore {
 impl ConnCore {
     #[inline]
     pub fn new(
-        fd: RawFd,
+        fd: RawSock,
         peer_ip: Option<IpAddr>,
         tls: Option<ServerConnection>,
         now: Instant,
@@ -539,13 +928,32 @@ impl ConnCore {
             close_deadline: None,
             accepted_at: now,
             read_paused: false,
+            app_read_paused: false,
+            cork_depth: 0,
             stalled_since: None,
         }
     }
 
     #[inline]
+    pub fn is_read_paused(&self) -> bool {
+        self.read_paused || self.app_read_paused
+    }
+
+    #[inline]
     pub fn queued_bytes(&self) -> usize {
         self.write_buf.len().saturating_sub(self.write_pos)
+    }
+
+    pub fn queued_output(&self, deferred: usize, deferred_bp: bool, include_corked: bool) -> usize {
+        if include_corked || self.cork_depth == 0 {
+            return self.queued_bytes() + deferred;
+        }
+        let socket_backlog = if self.writable_armed {
+            self.queued_bytes()
+        } else {
+            0
+        };
+        socket_backlog + if deferred_bp { deferred } else { 0 }
     }
 
     pub fn alpn_protocol(&self) -> Option<Vec<u8>> {
@@ -618,7 +1026,7 @@ pub(crate) fn flush_write_buf_core(core: &mut ConnCore) -> FlushAction {
             return FlushAction::Close;
         }
         if core.close_deadline.is_none() {
-            unsafe { libc::shutdown(core.fd, libc::SHUT_WR) };
+            unsafe { shutdown_write(core.fd) };
             core.close_deadline = Some(Instant::now() + LINGER);
         }
     }
@@ -643,26 +1051,62 @@ fn compact_sent_prefix(core: &mut ConnCore) {
 /// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
 /// falling back to buffering the tail only on partial writes, backpressure, or TLS.
 #[inline]
-pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAction {
-    if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
+pub(crate) fn write_buf_limit(cfg: SocketConfig) -> usize {
+    if cfg.max_write_buf_bytes > 0 {
+        cfg.max_write_buf_bytes
+    } else {
+        MAX_WRITE_BUF_BYTES
+    }
+}
+
+/// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
+/// falling back to buffering the tail only on partial writes, backpressure, or TLS.
+#[inline]
+pub(crate) fn write_bytes_or_queue(
+    core: &mut ConnCore,
+    bytes: &[u8],
+    max_write: usize,
+) -> FlushAction {
+    let corked = core.cork_depth > 0;
+    let queued = core.queued_bytes();
+    let mut budget = max_write.saturating_sub(queued);
+    let mut prior_action = FlushAction::None;
+    if corked && bytes.len() > budget && queued > 0 {
+        prior_action = flush_write_buf_core(core);
+        if prior_action == FlushAction::Close {
+            return FlushAction::Close;
+        }
+        budget = max_write.saturating_sub(core.queued_bytes());
+    }
+    if (!corked || bytes.len() > budget)
+        && core.tls.is_none()
+        && core.write_pos == core.write_buf.len()
+        && !bytes.is_empty()
+    {
         match send_nonblock(core.fd, bytes) {
             SendOutcome::All => {
-                if core.close_after_write {
-                    return flush_write_buf_core(core);
+                if core.close_after_write || core.writable_armed {
+                    let action = flush_write_buf_core(core);
+                    if action != FlushAction::None {
+                        return action;
+                    }
                 }
-                if core.writable_armed {
-                    core.writable_armed = false;
-                    return FlushAction::DisarmWritable;
-                }
-                return FlushAction::None;
+                return prior_action;
             }
             SendOutcome::Partial(n) => {
+                let tail = &bytes[n..];
+                if tail.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
-                core.write_buf.extend_from_slice(&bytes[n..]);
+                core.write_buf.extend_from_slice(tail);
                 core.write_pos = 0;
                 return backed_up(core, true);
             }
             SendOutcome::WouldBlock => {
+                if bytes.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
                 core.write_buf.extend_from_slice(bytes);
                 core.write_pos = 0;
@@ -672,6 +1116,9 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
         }
     }
 
+    if bytes.len() > budget {
+        return FlushAction::Close;
+    }
     compact_sent_prefix(core);
     if let Some(ref mut tls_conn) = core.tls {
         if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
@@ -680,7 +1127,39 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
     } else {
         core.write_buf.extend_from_slice(bytes);
     }
-    flush_write_buf_core(core)
+    if corked && core.queued_bytes() <= max_write {
+        return prior_action;
+    }
+    let action = flush_write_buf_core(core);
+    if action == FlushAction::None {
+        prior_action
+    } else {
+        action
+    }
+}
+
+#[cfg(all(test, unix))]
+mod write_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn cork_overflow_preserves_the_drain_action_after_a_direct_write() {
+        let (sender, mut receiver) = UnixStream::pair().unwrap();
+        let mut core = ConnCore::new(sender.as_raw_fd(), None, None, Instant::now());
+        core.cork_depth = 1;
+        core.writable_armed = true;
+        core.write_buf.extend_from_slice(b"queued");
+
+        let action = write_bytes_or_queue(&mut core, b"direct write", 8);
+        assert_eq!(action, FlushAction::DisarmWritable);
+        assert_eq!(core.queued_bytes(), 0);
+        let mut output = [0; 18];
+        receiver.read_exact(&mut output).unwrap();
+        assert_eq!(&output, b"queueddirect write");
+    }
 }
 
 /// What one idle sweep decided.
@@ -700,6 +1179,8 @@ pub(crate) fn collect_timeouts<'a>(
 ) -> Sweep {
     let limit = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
     let idle_limit = limit(cfg.idle_timeout_ms);
+    let response_limit = limit(cfg.response_timeout_ms.unwrap_or(cfg.idle_timeout_ms));
+    let ws_lifetime_limit = limit(cfg.ws_max_lifetime_ms);
     let request_limit = limit(cfg.request_timeout_ms);
     // A request head (and a TLS handshake before it) gets the shorter of the two budgets.
     let head_limit = limit(cfg.headers_timeout_ms)
@@ -717,7 +1198,12 @@ pub(crate) fn collect_timeouts<'a>(
     let mut reply = Vec::new();
 
     for (id, c) in conns {
-        if past(c.last_activity, idle_limit) {
+        if past(c.accepted_at, ws_lifetime_limit)
+            && callbacks.as_deref().is_some_and(|cb| cb.is_websocket(id))
+        {
+            overdue.push(id);
+        }
+        if c.queued_bytes() == 0 && past(c.last_activity, idle_limit) {
             idle.push(id);
         }
         if c.partial_since.is_some_and(|at| past(at, request_limit))
@@ -753,7 +1239,11 @@ pub(crate) fn collect_timeouts<'a>(
                 .as_deref()
                 .and_then(|cb| cb.output_stalled_since(id)),
         ];
-        if stalled.into_iter().flatten().any(|at| past(at, idle_limit)) {
+        if stalled
+            .into_iter()
+            .flatten()
+            .any(|at| past(at, response_limit))
+        {
             overdue.push(id);
         }
         if c.close_deadline.is_some_and(|d| now >= d) {

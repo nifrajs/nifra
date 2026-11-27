@@ -9,6 +9,8 @@ export interface NifraWs {
   readonly readyState: number
   subscribe(topic: string): void
   unsubscribe(topic: string): void
+  getBufferedAmount?(): number
+  cork?(callback: () => void): void
   data: unknown
   readonly raw: unknown
 }
@@ -23,7 +25,20 @@ export interface NifraWsHandler {
   open?(ws: NifraWs): void | Promise<void>
   message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
   close?(ws: NifraWs, code: number, reason: string): void | Promise<void>
+  drain?(ws: NifraWs): void | Promise<void>
   error?(ws: NifraWs, error: unknown): void | Promise<void>
+  deflate?:
+    | boolean
+    | {
+        readonly serverNoContextTakeover?: boolean
+        readonly clientNoContextTakeover?: boolean
+        readonly serverMaxWindowBits?: number
+        readonly clientMaxWindowBits?: number
+        readonly threshold?: number
+        readonly maxDecompressedSize?: number
+        readonly level?: number
+        readonly sharedCompressor?: boolean
+      }
 }
 
 export type WsUpgradeOutcome =

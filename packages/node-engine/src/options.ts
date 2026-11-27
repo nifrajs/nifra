@@ -19,19 +19,105 @@ export interface EngineSocket {
   query(): string
   /** The peer's address, once the socket is open. */
   remoteAddress(): string | undefined
+  /** Queued outbound socket bytes currently waiting for the peer to read. */
+  getBufferedAmount(): number
 }
 
-/** In-process TLS: inline PEM or file names. */
+/** Per-hostname certificate entry for TLS Server Name Indication (SNI), matching exact or single-level wildcard (`*.example.com`). */
+export interface TlsSniEntry {
+  readonly serverName: string
+  readonly cert?: string | ArrayBuffer | Uint8Array
+  readonly key?: string | ArrayBuffer | Uint8Array
+  readonly cert_file_name?: string
+  readonly key_file_name?: string
+  /** Passphrase protecting an encrypted private key PEM (`key` or `key_file_name`). */
+  readonly passphrase?: string
+}
+
+/** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+export interface CompressionOptions {
+  /** Enable or disable compression. Default `true` when an options object is passed. */
+  readonly enabled?: boolean
+  /** Allow Zstandard (`zstd`). Default `true`. */
+  readonly zstd?: boolean
+  /** Allow Brotli (`br`). Default `true`. */
+  readonly brotli?: boolean
+  /** Allow Gzip (`gzip`). Default `true`. */
+  readonly gzip?: boolean
+  /** Allow Deflate (`deflate`). Default `true`. */
+  readonly deflate?: boolean
+  /** Minimum uncompressed body length in bytes before compressing. Default `1024`. */
+  readonly minBytes?: number
+}
+
+/** Native engine probe result describing loaded platform, transport, and capability flags. */
+export interface ProbeResult {
+  readonly ok: boolean
+  readonly version: string
+  readonly platform: string
+  readonly arch: string
+  readonly transport: string
+  readonly reason?: string
+  readonly capabilities: Readonly<Record<string, boolean>>
+}
+
+/** In-process TLS: inline PEM or file names, encrypted key passphrase, mTLS & TLS policy. */
 export interface TlsOptions {
   readonly cert?: string | ArrayBuffer | Uint8Array
   readonly key?: string | ArrayBuffer | Uint8Array
   readonly cert_file_name?: string
   readonly key_file_name?: string
+  /** Passphrase protecting an encrypted private key PEM (`key` or `key_file_name`). */
+  readonly passphrase?: string
+  /** Trusted CA PEM certificates for verifying client certificates (mTLS). */
+  readonly ca?: string | ArrayBuffer | Uint8Array | readonly (string | ArrayBuffer | Uint8Array)[]
+  /** Path to a PEM bundle of trusted CA certificates for client certificate verification (mTLS). */
+  readonly ca_file_name?: string
+  /** PEM Certificate Revocation List(s) checked during mTLS client authentication. */
+  readonly crl?: string | ArrayBuffer | Uint8Array | readonly (string | ArrayBuffer | Uint8Array)[]
+  /** Path to a PEM Certificate Revocation List file checked during mTLS client authentication. */
+  readonly crl_file_name?: string
+  /** Request a client certificate during TLS handshake. */
+  readonly requestCert?: boolean
+  /** Reject clients whose certificate fails verification or is absent when `requestCert` is true. Default `true` when `requestCert` is set. */
+  readonly rejectUnauthorized?: boolean
+  /** Minimum TLS protocol version allowed (`"TLSv1.2"` or `"TLSv1.3"`). */
+  readonly minVersion?: "TLSv1.2" | "TLSv1.3"
+  /** Maximum TLS protocol version allowed (`"TLSv1.2"` or `"TLSv1.3"`). */
+  readonly maxVersion?: "TLSv1.2" | "TLSv1.3"
+  /** Colon/space-separated TLS cipher list (IANA or OpenSSL names, or `!EXCLUDED`). */
+  readonly ciphers?: string
+  /** TLS 1.3 cipher suite list merged with {@link ciphers}. */
+  readonly ciphersuites?: string
+  /** Colon-separated ECDH/KEM key exchange group list (e.g. `"X25519:P-256:P-384"`). */
+  readonly ecdhCurve?: string
+  /** Additional SNI certificates keyed by hostname or single-level `*.domain` wildcard. */
+  readonly serverNames?: readonly TlsSniEntry[]
   /**
    * Session-ticket keys: one or more 48-byte entries (16-byte name, 16-byte HMAC secret, 16-byte AES
    * key), newest first, so a rotation keeps resuming sessions. Share them across workers.
    */
   readonly ticketKeys?: string | ArrayBuffer | Uint8Array
+}
+
+/** RFC 7692 WebSocket `permessage-deflate` negotiation and compression settings. */
+export interface WsDeflateOptions {
+  /** Disallow server LZ77 context reuse across messages (`server_no_context_takeover`). */
+  readonly serverNoContextTakeover?: boolean
+  /** Request client to reset its LZ77 window per message (`client_no_context_takeover`). */
+  readonly clientNoContextTakeover?: boolean
+  /** Server deflate LZ77 window bits (9..15; 8 is rejected on server config and declined if offered by client). Default 15. */
+  readonly serverMaxWindowBits?: number
+  /** Client deflate LZ77 window bits (8..15). Default 15. */
+  readonly clientMaxWindowBits?: number
+  /** Minimum outgoing payload bytes before compressing (`0` compresses all frames). Default 0. */
+  readonly threshold?: number
+  /** Upper limit in bytes on decompressed incoming message size (zip-bomb defense). Defaults to `wsMaxMessageSize`. */
+  readonly maxDecompressedSize?: number
+  /** Compression level 1..9. Default 6. */
+  readonly level?: number
+  /** Reuse a single stateless compressor instead of allocating one per open WebSocket. */
+  readonly sharedCompressor?: boolean
 }
 
 /** HTTP/2 settings the server advertises. */
@@ -41,20 +127,42 @@ export interface Http2Options {
 
 /** Engine limits and timeouts beyond the first-class options. */
 export interface EngineTuning {
-  /**
-   * Close a connection after this many ms with no bytes moving while it owes no response, or with a
-   * response the peer takes none of. A quiet WebSocket is pinged first and closed only if the next
-   * window passes unanswered. 0 disables. Default 30 s.
-   */
+  /** Idle connection budget in ms. Quiet WebSockets receive a Ping before closing. 0 disables. Default 30 s. */
   readonly idleTimeoutMs?: number
   /** Budget in ms for a request head, and for a TLS handshake. 0 disables. Default 60 s. */
   readonly headersTimeoutMs?: number
   /** Largest request head, 431 beyond it. Default 16 KiB, as `node:http`. */
   readonly maxHeaderBytes?: number
+  /** Stalled response budget in ms. Defaults to idleTimeoutMs. 0 disables. */
+  readonly responseTimeoutMs?: number
   /** Budget in ms for one complete request, from its first byte; does not reset on activity. 0 disables. */
   readonly requestTimeoutMs?: number
   /** Most simultaneous connections; accepts beyond it are dropped. */
   readonly maxConnections?: number
+  /** TCP listen backlog passed to `listen(2)`. Default 4096. */
+  readonly backlog?: number
+  /** Alias for maxHeaderBytes. maxHeaderBytes takes precedence. */
+  readonly maxHeadSize?: number
+  /** Maximum number of headers allowed on a request before replying 431. */
+  readonly maxHeaders?: number
+  /** Maximum length in bytes of the request target (URI + query) before replying 414. */
+  readonly maxUriSize?: number
+  /** Maximum queued bytes per HTTP/1.1 connection waiting behind an earlier pipelined request. Default 8 MiB. */
+  readonly maxPendingBytes?: number
+  /** Maximum queued outbound socket bytes before dropping a non-reading peer. Default 16 MiB. */
+  readonly responseBackpressureLimit?: number
+  /** Streaming chunk buffer / buffered response threshold in bytes. Default 2 MiB. */
+  readonly writeHighWaterMark?: number
+  /** Optional maximum lifetime in ms for any WebSocket connection. 0 disables. */
+  readonly wsMaxLifetimeMs?: number
+  /** Per-socket queued outbound byte threshold at which `ws.send()` rejects backpressured sends (0 = unlimited). */
+  readonly wsMaxBackpressure?: number
+  /** Close the WebSocket connection when queued bytes hit `wsMaxBackpressure`. */
+  readonly wsCloseOnBackpressureLimit?: boolean
+  /** Stream HTTP/1.1 & HTTP/2 request bodies incrementally to `req.body` instead of buffering whole payloads. */
+  readonly streamRequestBodies?: boolean
+  /** Inherit a pre-bound TCP listener descriptor (used by `serveCluster` with `sharedListener`). */
+  readonly listenerFd?: number
   /** Bind with `SO_REUSEPORT` so several processes share the port. Off by default; `serveCluster` sets it. */
   readonly reusePort?: boolean
 }
@@ -79,12 +187,23 @@ export interface FetchHandler {
 }
 
 export interface ServeOptions extends HostPolicyOptions {
-  readonly port: number
+  /** TCP port to bind (`0` for ephemeral). Omit for {@link path} or an inherited listener descriptor. */
+  readonly port?: number
   readonly hostname?: string
+  /** Unix domain socket path to listen on (mutually exclusive with a TCP `hostname`/`port` bind). */
+  readonly path?: string
   /** The scheme `Request.url` carries. `"https"` by default when {@link tls} is set, else `"http"`. */
   readonly protocol?: "http" | "https"
   /** In-process TLS, inline PEM or file names. */
   readonly tls?: TlsOptions
+  /** Static file handler (`serveStatic(...)`) or custom middleware consulted before routes on GET/HEAD. */
+  readonly static?: (request: Request) => Response | undefined | Promise<Response | undefined>
+  /** Replace `globalThis.Response` with the lazy direct-write response wrapper to skip stream drains. */
+  readonly fastResponse?: boolean
+  /** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+  readonly compression?: boolean | CompressionOptions
+  /** Fall back to `@nifrajs/node` (`node:http`/`node:https`) if the native addon binary cannot be loaded. Default `false`. */
+  readonly fallback?: boolean
   /**
    * Largest request body the engine accepts, 413 beyond it. The engine buffers a body whole before
    * the app runs, so this bounds the memory one request can hold. Default: 1 MiB, or the largest
@@ -119,9 +238,12 @@ export interface ServeOptions extends HostPolicyOptions {
   /**
    * Largest WebSocket message the engine accepts before it fails the connection with 1009. Defaults to
    * the largest `wsMaxPayloadBytes` among the app and the apps mounted in it that serve sockets (a
-   * route whose app declares less is held to its own), else the engine's 16 MiB.
+   * route whose app declares less is held to its own), else the engine's 16 MiB. The Node fallback
+   * rejects this option at startup.
    */
   readonly wsMaxMessageSize?: number
+  /** Enable RFC 7692 WebSocket `permessage-deflate` compression (`true` for defaults, or options). */
+  readonly wsDeflate?: boolean | WsDeflateOptions
   /** Any other engine limit or timeout, passed through as given. */
   readonly engine?: EngineTuning
   /** SIGTERM/SIGINT call `stop()`; off by default, as in `@nifrajs/node`. */
@@ -129,8 +251,10 @@ export interface ServeOptions extends HostPolicyOptions {
 }
 
 export interface EngineServer {
-  /** The bound port (resolved when `port: 0` is requested). */
+  /** The bound port (resolved when `port: 0` is requested, or `0` for Unix domain sockets). */
   readonly port: number
+  /** Bound Unix domain socket path when started with `ServeOptions.path`. */
+  readonly path?: string
   /**
    * Run the app's `onStopping` hooks, keep serving for `delayMs`, stop accepting connections, let
    * in-flight requests finish for up to `drainMs`, then close what is left and run `onStop`.
@@ -145,6 +269,10 @@ export interface EngineServer {
    * when the server has no TLS or has stopped.
    */
   reloadTls(tls?: NonNullable<ServeOptions["tls"]>): void
+  /** Add or replace an SNI certificate entry at runtime without restarting the listener. */
+  addServerName(entry: TlsSniEntry): void
+  /** Remove an SNI certificate entry at runtime. Returns `true` if one was removed. */
+  removeServerName(serverName: string): boolean
   [Symbol.asyncDispose](): Promise<void>
 }
 

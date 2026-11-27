@@ -4103,8 +4103,8 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/island-trigger
 
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string }`
-  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **IslandStrategy** _(type)_ - `type IslandStrategy = | "load" | "idle" | "visible" | "interaction" | { readonly media: string }`
+  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element. A click mounts during capture on the host. Listeners attached during mount can receive the click at a descendant target or in the host's non-capture phase. An object strategy …
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
 - **TriggerOptions** _(interface)_ - `interface TriggerOptions`
@@ -4727,14 +4727,20 @@ _No named exports (side-effect entrypoint)._
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
   How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
+- **StaticRequestResolver** _(type)_ - `type StaticRequestResolver = ( method: string, pathname: string, getHeader: (name: string) => string | null, buildRequest: () => Request, authority?: string, ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined>…`
+  Resolver built by {@link createStaticResolver} for sibling HTTP adapters supporting `static`.
 - **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void`
   Node's async-context bookkeeping flips on lazily; flipping it before listening keeps the tick loop monomorphic.
+- **createStaticResolver** _(const)_ - `createStaticResolver: (staticOption: unknown) => StaticRequestResolver`
+  Compile a `static` option (`serveStatic(...)` or fallback handler) into a zero-alloc request resolver.
 - **enableNodeDirect** _(const)_ - `enableNodeDirect: (app: object) => void`
   Install the app's node-direct hooks (a no-op for a plain `{ fetch }` handler or an already-served app).
 - **errorReporterOf** _(const)_ - `errorReporterOf: (app: object) => ((error: unknown) => void) | undefined`
   The app's own error log, when it has one.
 - **hostPolicyOf** _(const)_ - `hostPolicyOf: (options: HostPolicyOptions) => HostPolicy`
   Validate and normalize `allowedHosts` / `canonicalHost` / `normalizeTarget`; throws a `TypeError` on a malformed entry.
+- **installFastResponse** _(const)_ - `installFastResponse: () => void`
+  Swap `globalThis.Response` for the lazy direct-write `DeferringResponse` (`fastResponse: true`).
 - **lifecycleOf** _(const)_ - `lifecycleOf: (app: object) => (phase: "stopping" | "stopped") => Promise<void>`
   The app's `onStopping` / `onStop` hooks as one function; a no-op for a plain handler.
 - **nodeOutcomeRuntime** _(const)_ - `nodeOutcomeRuntime: object`
@@ -6632,8 +6638,8 @@ _No named exports (side-effect entrypoint)._
   Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`.
 - **IslandEnhancer** _(type)_ - `type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void`
   Enhances one island element with its (typed) props. Return a cleanup function to tear down on `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing. The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
-  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | "interaction" | { readonly media: string; }`
+  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element. A click mounts during capture on the host. Listeners attached during mount can receive the click at a descendant target or in the host's non-capture phase. An object strategy …
 - **ListContainer** _(interface)_ - `interface ListContainer<E extends ListNode>`
   The container surface `bindList` uses; an `Element` has it.
 - **ListNode** _(interface)_ - `interface ListNode`

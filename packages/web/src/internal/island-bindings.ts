@@ -24,7 +24,7 @@
  * nested host element itself is still the outer island's markup, so the outer island may bind it.
  */
 
-import { type Signal, watch } from "./island-signals.ts"
+import { type Signal, untrack, watch } from "./island-signals.ts"
 
 export type IslandScope = {
   readonly signals: Readonly<Record<string, Signal<unknown>>>
@@ -39,6 +39,20 @@ function warnOnce(kind: string, name: string): void {
   if (warned.has(key)) return
   warned.add(key)
   console.warn(`[nifra/islands] unknown ${kind} ${JSON.stringify(name)} - binding skipped`)
+}
+
+/** Development only: a binding whose first value differs from the server-rendered markup changes the
+ * page on mount. Reached only behind a `process.env.NODE_ENV` test, so a production build drops it. */
+function warnDrift(binding: string, name: string, server: string, state: string): void {
+  const key = `drift:${binding}:${name}`
+  if (warned.has(key)) return
+  warned.add(key)
+  // Server text can be a whole article: show only its start.
+  const clip = (text: string): string =>
+    JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}...` : text)
+  console.warn(
+    `[nifra/islands] ${binding}="${name}": the server rendered ${clip(server)} but the island starts with ${clip(state)}, so the page changes on mount - render the same value on the server`,
+  )
 }
 
 // Own keys only: a name such as `constructor` must not resolve to what a plain object inherits.
@@ -63,8 +77,8 @@ function pairs(spec: string): Array<[string, string]> {
 
 // A bound value is data (often from island state the markup carries), so an attribute that would run
 // it as code, or navigate to it as a script URL, is refused.
-const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
-const URL_ATTRIBUTE =
+export const CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
+export const URL_ATTRIBUTE =
   /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
 // HTTP(S) URL parsers strip leading controls and read backslashes as slashes.
 const SAFE_URL =
@@ -72,10 +86,10 @@ const SAFE_URL =
   /^(?![\x00-\x1f]|[\\/][\t\r\n]*[\\/])(?:(?:https?|mailto|tel):|[^:/?#]*(?:[/?#]|$))/i
 // Elements whose URL attribute loads code or restyles and rebases the page: a bound value never
 // reaches them, whatever its scheme.
-const URL_BLOCKED_TAG = /^(?:script|iframe|object|embed|link|base)$/i
+export const URL_BLOCKED_TAG = /^(?:script|iframe|object|embed|link|base)$/i
 // An SVG animation sets an attribute of its parent from its own attributes: a bound `to` or `values`
 // can animate a link's `href` to a script URL, which the link then follows. No attribute of one binds.
-const SMIL_TAG = /^(?:set|animate|animatemotion|animatetransform)$/i
+export const SMIL_TAG = /^(?:set|animate|animatemotion|animatetransform)$/i
 
 /** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
@@ -118,6 +132,13 @@ export function bindScope(
   for (const [el, name] of each("text")) {
     const s = named("signal", scope.signals, name)
     if (s) {
+      if (process.env.NODE_ENV !== "production") {
+        // Empty server text is a slot the island fills, not a mismatch.
+        // Untracked: a read here must not subscribe an effect this mount runs inside.
+        const server = (el.textContent ?? "").trim()
+        const state = untrack(() => String(s())).trim()
+        if (server !== "" && server !== state) warnDrift("data-bind-text", name, server, state)
+      }
       stops.push(
         watch(s, (v) => {
           el.textContent = String(v)
@@ -129,6 +150,11 @@ export function bindScope(
   for (const [el, name] of each("show")) {
     const s = named("signal", scope.signals, name)
     if (s) {
+      if (process.env.NODE_ENV !== "production") {
+        const hidden = untrack(() => !s())
+        if (el.hidden !== hidden)
+          warnDrift("data-bind-show", name, `hidden=${el.hidden}`, `hidden=${hidden}`)
+      }
       stops.push(
         watch(s, (v) => {
           el.hidden = !v

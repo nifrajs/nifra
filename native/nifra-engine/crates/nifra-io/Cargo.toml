@@ -15,3 +15,10 @@ socket2.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Networking_WinSock",
+  "Win32_System_LibraryLoader",
+] }

@@ -18,8 +18,10 @@ repository = "https://github.com/nifrajs/nifra"
 [workspace.dependencies]
 arc-swap = "1"
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys"] }
+brotli = "9"
 bytes = "1"
 fastwebsockets = "0.10"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 httparse = "1.9"
 itoa = "1"
 libc = "0.2"
@@ -29,7 +31,6 @@ napi = { version = "2", default-features = false, features = ["napi9"] }
 napi-build = "2"
 napi-derive = "2"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-pemfile = "2"
 socket2 = { version = "0.5", features = ["all"] }
 
 [profile.release]

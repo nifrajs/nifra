@@ -9,3 +9,4 @@ description = "RFC 6455 WebSocket framing, per-route payload caps, back-pressure
 [dependencies]
 bytes.workspace = true
 fastwebsockets.workspace = true
+flate2.workspace = true

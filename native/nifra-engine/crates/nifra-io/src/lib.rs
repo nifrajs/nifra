@@ -7,14 +7,14 @@
 
 #[cfg(target_os = "linux")]
 pub mod epoll;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod uv;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use sys::conn_slot;
 
 use std::collections::HashMap;
@@ -31,6 +31,7 @@ const READ_BUF_SIZE: usize = 16 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
     Epoll,
+    IoUring,
     LibuvPoll,
     Mio,
 }
@@ -39,6 +40,7 @@ impl TransportKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Epoll => "epoll",
+            Self::IoUring => "io_uring",
             Self::LibuvPoll => "libuv-poll",
             Self::Mio => "mio",
         }
@@ -52,6 +54,9 @@ pub struct SocketConfig {
     pub backlog: i32,
     /// Idle connection timeout in milliseconds (`0` disables the sweep). Default 30s.
     pub idle_timeout_ms: u64,
+    /// Maximum ms an actively draining outbound response may go with zero socket write progress
+    /// before closing a stalled peer (`0` disables). Defaults to the idle timeout.
+    pub response_timeout_ms: Option<u64>,
     /// Open connections above which a new one is closed at accept (`0` is unlimited).
     pub max_connections: usize,
     /// Most time a request may take to arrive, from its first byte; unlike the idle timeout it does not
@@ -59,6 +64,10 @@ pub struct SocketConfig {
     pub request_timeout_ms: u64,
     /// Budget for a request head, and for a TLS handshake. 0 leaves them to `request_timeout_ms`.
     pub headers_timeout_ms: u64,
+    /// Per-connection queued outbound buffer cap before closing a slow peer. Default 16 MiB.
+    pub max_write_buf_bytes: usize,
+    /// Optional WebSocket connection maximum lifetime in ms (`0` disables).
+    pub ws_max_lifetime_ms: u64,
 }
 
 impl Default for SocketConfig {
@@ -70,20 +79,30 @@ impl Default for SocketConfig {
             tcp_nodelay: true,
             backlog: 4096,
             idle_timeout_ms: 30_000,
+            response_timeout_ms: None,
             max_connections: 0,
             request_timeout_ms: 300_000,
             headers_timeout_ms: 60_000,
+            max_write_buf_bytes: 16 * 1024 * 1024,
+            ws_max_lifetime_ms: 0,
         }
     }
 }
 
-/// The transport the engine will actually run: the epoll loop on Linux unless
-/// `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere.
+/// Predicted transport the engine selects for a new server start (`io_uring` when requested via
+/// `NIFRA_ENGINE_TRANSPORT=uring` and ring+eventfd initialization succeeds, `epoll` on Linux
+/// unless `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere).
 pub fn detect_transport() -> TransportKind {
     #[cfg(target_os = "linux")]
     {
         match std::env::var("NIFRA_ENGINE_TRANSPORT").as_deref() {
             Ok("uv") => return TransportKind::LibuvPoll,
+            Ok("uring") => {
+                if uring::probe_uring_support(uring::UringConfig::default()).unwrap_or(false) {
+                    return TransportKind::IoUring;
+                }
+                return TransportKind::Epoll;
+            }
             _ => return TransportKind::Epoll,
         }
     }
@@ -119,6 +138,88 @@ pub fn bind_tcp_listener(
         }
     }
     Err(failure)
+}
+
+/// Stub guard on non-Unix platforms (where filesystem-bound Unix domain sockets are not used).
+#[cfg(not(unix))]
+pub struct UnixSocketGuard;
+
+#[cfg(not(unix))]
+impl UnixSocketGuard {
+    pub fn disarm(&mut self) {}
+    pub fn cleanup_now(&mut self) {}
+}
+
+/// Bound non-blocking Unix domain socket listener paired with an ownership-checked unlink guard.
+#[cfg(unix)]
+pub struct BoundUnixSocket {
+    pub listener: std::os::unix::net::UnixListener,
+    pub guard: UnixSocketGuard,
+}
+
+/// Removes a created Unix domain socket path on drop only if the entry still matches `(dev, ino)`.
+#[cfg(unix)]
+pub struct UnixSocketGuard {
+    path: std::path::PathBuf,
+    dev: u64,
+    ino: u64,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl UnixSocketGuard {
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    pub fn cleanup_now(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        if let Ok(meta) = std::fs::symlink_metadata(&self.path) {
+            use std::os::unix::fs::MetadataExt;
+            if meta.dev() == self.dev && meta.ino() == self.ino {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnixSocketGuard {
+    fn drop(&mut self) {
+        self.cleanup_now();
+    }
+}
+
+/// Bind a non-blocking Unix domain socket listener with the configured backlog.
+#[cfg(unix)]
+pub fn bind_unix_listener(path: &str, cfg: SocketConfig) -> io::Result<BoundUnixSocket> {
+    use std::os::unix::fs::MetadataExt;
+    let addr = socket2::SockAddr::unix(path)?;
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr)?;
+    let guard = if !path.is_empty() && !path.starts_with('\0') {
+        let meta = std::fs::symlink_metadata(path)?;
+        UnixSocketGuard {
+            path: std::path::PathBuf::from(path),
+            dev: meta.dev(),
+            ino: meta.ino(),
+            armed: true,
+        }
+    } else {
+        UnixSocketGuard {
+            path: std::path::PathBuf::new(),
+            dev: 0,
+            ino: 0,
+            armed: false,
+        }
+    };
+    socket.listen(cfg.backlog)?;
+    let listener: std::os::unix::net::UnixListener = socket.into();
+    Ok(BoundUnixSocket { listener, guard })
 }
 
 fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, SocketAddr)> {

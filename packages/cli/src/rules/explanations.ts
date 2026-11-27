@@ -329,6 +329,21 @@ export const RULE_EXPLANATIONS: Readonly<Record<BuiltInCode, RuleExplanation>> =
     fix: 'Describe the image in `alt`, or write `alt=""` when it is decoration. Use `tabindex="0"` or `-1`. Use the native element. Remove the repeated role. Give `<html>` a `lang` naming the page\'s language, such as `lang="en"` for English. A use kept on purpose takes `{/* nifra-expect NF-C063: <reason> */}` above the element in JSX (`// nifra-expect NF-C063: <reason>` outside JSX braces), or `<!-- nifra-expect NF-C063: <reason> -->` in a Vue or Svelte template; `nifra-expect a11y: <reason>` covers both codes.',
     docs: "/docs/errors",
   },
+  "NF-C064": {
+    why: "A data-island host names an id that no mountIslands or enableSwap call in the project lists, so no enhancer ever runs on it. The server-rendered markup stays as it is and nothing warns at runtime.",
+    fix: "Add the id to the mountIslands map, or fix the id in the markup (the check lists the ids the project mounts). For a host mounted from outside the project, put `// nifra-expect NF-C064: <reason>` above it. In an html template, put `<!-- nifra-expect NF-C064: <reason> -->` on its own line directly above the host.",
+    docs: "/docs/islands",
+  },
+  "NF-C065": {
+    why: "The props a host passes in data-island-props do not match the props type the enhancer declares: a required prop is missing, a prop is not declared, or a literal has another primitive type. The props travel as JSON in an attribute, so TypeScript never compares the two.",
+    fix: "Pass what the enhancer's props type declares, or change the type. The check reads plain type literals from enhancer type arguments and inline props parameter annotations. It reads literal JSON, JSX object props, and object literals passed to `islandProps` or `JSON.stringify`. It checks only types and values it can establish from these forms. To keep an intentional difference, put `// nifra-expect NF-C065: <reason>` above the host. In an html template, put `<!-- nifra-expect NF-C065: <reason> -->` on its own line directly above the host.",
+    docs: "/docs/islands",
+  },
+  "NF-C066": {
+    why: "A data-bind-attr pair names an attribute the binding runtime refuses to set: an event-handler or srcdoc attribute, a URL attribute on a script, iframe, object, embed, link or base element, or any attribute of an SVG animation element (set, animate, animateMotion, animateTransform: an animation can set a link's href to a script URL). The binding is skipped with a console warning, so the attribute never changes.",
+    fix: "Bind a different attribute. A URL that must change on such an element is set by the server render, or by an enhancer you review.",
+    docs: "/docs/islands",
+  },
   "NF-D001": {
     why: "The doctor gate of `nifra assure` found an undeclared import or a package installed more than once.",
     fix: "Run `nifra doctor` for the details and the fix of each finding.",

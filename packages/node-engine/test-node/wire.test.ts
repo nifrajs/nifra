@@ -47,11 +47,32 @@ test("a TLS response larger than the record buffer arrives whole", async () => {
   }
 })
 
-test("a Content-Length too large to frame is refused without waiting for the body", async () => {
+test("a Content-Length over 4 GiB frames on HEAD and past Number.MAX_SAFE_INTEGER is refused", async () => {
+  const over4g = await serve(
+    server().get(
+      "/large",
+      () => new Response(new ReadableStream(), { headers: { "content-length": "4294967296" } }),
+    ),
+    loopback,
+  )
+  try {
+    const headReply = await raw(
+      over4g.port,
+      "HEAD /large HTTP/1.1\r\nHost: x\r\nconnection: close\r\n\r\n",
+    )
+    assert.match(headReply, /^HTTP\/1\.1 200 /)
+    assert.match(headReply, /content-length: 4294967296\r\n/i)
+  } finally {
+    await over4g.stop({ drainMs: 50 })
+  }
+
   const running = await serve(
     server().get(
       "/huge",
-      () => new Response(new ReadableStream(), { headers: { "content-length": "4294967296" } }),
+      () =>
+        new Response(new ReadableStream(), {
+          headers: { "content-length": "9007199254740992" },
+        }),
     ),
     loopback,
   )
@@ -122,6 +143,46 @@ test("pipelined answers keep request order when a finished request's id is used 
       "answer-b",
       "answer-d",
     ])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("streamed GET responses support 64-bit Content-Length >= 4 GiB", async () => {
+  const app = server().get("/huge", () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("prefix-"))
+      },
+    })
+    return new Response(body, {
+      status: 200,
+      headers: { "content-length": "4294967296" },
+    })
+  })
+  const running = await serve(app, loopback)
+  try {
+    const received = await new Promise<string>((resolve, reject) => {
+      let text = ""
+      const socket = connect(running.port, "127.0.0.1", () => {
+        socket.write("GET /huge HTTP/1.1\r\nHost: x\r\n\r\n")
+      })
+      socket.on("data", (data) => {
+        text += data.toString("latin1")
+        if (text.includes("prefix-")) {
+          socket.destroy()
+          resolve(text)
+        }
+      })
+      socket.on("error", reject)
+      setTimeout(() => {
+        socket.destroy()
+        reject(new Error(`timed out reading 4 GiB header: ${text}`))
+      }, 3000).unref()
+    })
+    assert.match(received, /HTTP\/1\.1 200 OK/i)
+    assert.match(received, /content-length:\s*4294967296/i)
+    assert.ok(received.includes("prefix-"))
   } finally {
     await running.stop({ drainMs: 50 })
   }

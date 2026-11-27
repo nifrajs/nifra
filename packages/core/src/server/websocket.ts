@@ -45,6 +45,10 @@ export interface NifraWebSocket<Data = unknown> {
   subscribe(topic: string): void
   /** Leave a pub/sub topic. Idempotent. (All topics are dropped automatically on close.) */
   unsubscribe(topic: string): void
+  /** Current queued outbound bytes on the underlying socket, when the transport reports backpressure. */
+  getBufferedAmount?(): number
+  /** Batch multiple outbound operations (e.g. `send`) inside `callback` into a single flush. */
+  cork?(callback: () => void): void
   /** Per-connection state - seeded by `upgrade()`, mutable for the connection's lifetime. */
   data: Data
   /** Escape hatch to the runtime's native socket (Bun `ServerWebSocket`, Web `WebSocket`, `ws`). */
@@ -234,7 +238,22 @@ export interface WebSocketHandler<
    * (`ws.close()`, or 1009 for a message over the cap), the peer's when the peer did, and 1006 when
    * the connection dropped without a close frame. */
   close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>
+  /** Fires when a backpressured socket becomes writable again (native transports that track queued bytes). */
+  drain?(ws: NifraWebSocket<Data>): MaybePromise<void>
   error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>
+  /** Per-route RFC 7692 `permessage-deflate` override on native transports that support it. */
+  deflate?:
+    | boolean
+    | {
+        readonly serverNoContextTakeover?: boolean
+        readonly clientNoContextTakeover?: boolean
+        readonly serverMaxWindowBits?: number
+        readonly clientMaxWindowBits?: number
+        readonly threshold?: number
+        readonly maxDecompressedSize?: number
+        readonly level?: number
+        readonly sharedCompressor?: boolean
+      }
 }
 
 /**

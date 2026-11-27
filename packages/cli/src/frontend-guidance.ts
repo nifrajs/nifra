@@ -421,7 +421,7 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "An imperative defineIsland enhancer has no state primitive, so each update is hand-wired and a list means rebuilding the container.",
     fix: "Mount the island with `bindIsland`: `state(key, fallback)` for state, `data-bind-*` attributes for the markup, `bindList` for a keyed list, `resource` for async. Everything the setup creates stops when the island unmounts.",
     verify:
-      "nifra_check runs NF-C047 (a binding names no state or handler), NF-C048 (a binding outside a bindIsland host) and NF-C022 (a positional list key) over the island code.",
+      "nifra_check runs NF-C047 (a binding names no state or handler), NF-C048 (a binding outside a bindIsland host), NF-C022 (a positional list key), NF-C064 (a host no mountIslands map lists), NF-C065 (props that differ from the enhancer's props type) and NF-C066 (a data-bind-attr the runtime refuses) over the island code.",
     seeAlso: "bindIsland state data-bind bindList resource islands",
     category: "seam",
   },

@@ -553,8 +553,23 @@ async function createTypeScript7Session(
   const isParameter = (node: unknown): boolean => hasNodeKind(node, parameterKinds)
   const isStringLiteralLike = (node: unknown): boolean => hasNodeKind(node, stringLiteralKinds)
 
+  // TypeScript 7 renamed some guards and dropped the modifier helpers; the scanners use the 5/6 names.
+  // A missing one is a TypeError only on the input that reaches it, so each is listed here.
+  const isModifier = (node: unknown): boolean =>
+    typeof astModule.isModifier === "function" && astModule.isModifier(node) === true
+  const canHaveModifiers = (node: unknown): boolean => typeof node === "object" && node !== null
+  const getModifiers = (node: { readonly modifiers?: Iterable<unknown> }) => {
+    const modifiers = Array.from(node.modifiers ?? []).filter(isModifier)
+    return modifiers.length === 0 ? undefined : modifiers
+  }
+
   const facade: UnknownRecord = {
     ...astModule,
+    isTypeAssertionExpression: astModule.isTypeAssertion,
+    isMethodSignature: astModule.isMethodSignatureDeclaration,
+    isPropertySignature: astModule.isPropertySignatureDeclaration,
+    canHaveModifiers,
+    getModifiers,
     version,
     createSourceFile,
     forEachChild,

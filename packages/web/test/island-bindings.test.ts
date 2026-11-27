@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { bindScope, type IslandScope } from "../src/internal/island-bindings.ts"
-import { type Signal, signal } from "../src/internal/island-signals.ts"
+import { effect, type Signal, signal } from "../src/internal/island-signals.ts"
 import { FakeElement, FakeHost, FakeRoot } from "./_island-fake-dom.ts"
 
 const scopeOf = <S extends Record<string, unknown>>(
@@ -258,5 +258,97 @@ describe("bindScope - ignored subtrees", () => {
     for (const el of [own, userButton, ignoredItself]) el.dispatch("click")
     expect(saves).toBe(1)
     expect(userText.textContent).toBeNull()
+  })
+})
+
+describe("bindScope - first value against the server markup (development)", () => {
+  const warnings = (run: () => void): string[] => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      run()
+      return warn.mock.calls.map((call) => String(call[0]))
+    } finally {
+      warn.mockRestore()
+    }
+  }
+
+  test("text: warns once when the server rendered another value, naming both", () => {
+    const run = (): void => {
+      const el = new FakeElement({ "data-bind-text": "drift_text" })
+      el.textContent = "0"
+      bindScope(new FakeRoot([el]), scopeOf({ drift_text: signal(5) }))
+    }
+    const first = warnings(run)
+    expect(first).toHaveLength(1)
+    expect(first[0]).toContain('data-bind-text="drift_text"')
+    expect(first[0]).toContain('server rendered "0"')
+    expect(first[0]).toContain('starts with "5"')
+    expect(warnings(run)).toEqual([])
+  })
+
+  test("text: matching text, surrounding whitespace and an empty slot stay silent", () => {
+    const seen = warnings(() => {
+      for (const server of ["5", "  5\n", ""]) {
+        const el = new FakeElement({ "data-bind-text": "ok_text" })
+        el.textContent = server
+        bindScope(new FakeRoot([el]), scopeOf({ ok_text: signal(5) }))
+      }
+      const unrendered = new FakeElement({ "data-bind-text": "ok_text" })
+      bindScope(new FakeRoot([unrendered]), scopeOf({ ok_text: signal(5) }))
+    })
+    expect(seen).toEqual([])
+  })
+
+  test("show: warns when the server's hidden state is not the signal's", () => {
+    const seen = warnings(() => {
+      const shown = new FakeElement({ "data-bind-show": "drift_show" })
+      bindScope(new FakeRoot([shown]), scopeOf({ drift_show: signal(false) }))
+      const hidden = new FakeElement({ "data-bind-show": "drift_show_2" })
+      hidden.hidden = true
+      bindScope(new FakeRoot([hidden]), scopeOf({ drift_show_2: signal(true) }))
+    })
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toContain(
+      'server rendered "hidden=false" but the island starts with "hidden=true"',
+    )
+  })
+
+  test("the check reads the signal untracked, so an effect the mount runs inside never reruns for it", () => {
+    const n = signal("1")
+    const shown = signal(true)
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      const el = new FakeElement({ "data-bind-text": "n", "data-bind-show": "shown" })
+      el.textContent = "1"
+      bindScope(new FakeRoot([el]), scopeOf({ n, shown }))
+    })
+    const seen = warnings(() => {
+      n.set("2")
+      shown.set(false)
+    })
+    stop()
+    expect(runs).toBe(1)
+    expect(seen).toEqual([])
+  })
+
+  test("text: a long server value is clipped in the warning", () => {
+    const seen = warnings(() => {
+      const el = new FakeElement({ "data-bind-text": "drift_long" })
+      el.textContent = "x".repeat(5000)
+      bindScope(new FakeRoot([el]), scopeOf({ drift_long: signal("y") }))
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.length).toBeLessThan(300)
+    expect(seen[0]).toContain("...")
+  })
+
+  test("show: a matching hidden state stays silent", () => {
+    const seen = warnings(() => {
+      const el = new FakeElement({ "data-bind-show": "ok_show" })
+      el.hidden = true
+      bindScope(new FakeRoot([el]), scopeOf({ ok_show: signal(false) }))
+    })
+    expect(seen).toEqual([])
   })
 })

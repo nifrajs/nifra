@@ -13,7 +13,7 @@ use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::TcpListener as StdTcpListener;
-use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -22,9 +22,9 @@ use nifra_tls::{feed_ciphertext, TlsError, TlsInput, TlsStore};
 use crate::sys::{
     alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
     free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_tcp_nodelay,
-    socket_incoming_cpu, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
-    UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
-    SHRINK_THRESHOLD, UV_READABLE, WS_PING_FRAME,
+    socket_incoming_cpu, uv_api, write_buf_limit, write_bytes_or_queue, ConnCore, ConnSlab,
+    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
+    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, WS_PING_FRAME,
 };
 use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
@@ -91,7 +91,7 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, acti
         match action {
             FlushAction::ArmWritable => {
                 let events = (libc::EPOLLOUT as u32)
-                    | if core.read_ended || core.read_paused {
+                    | if core.read_ended || core.is_read_paused() {
                         0
                     } else {
                         libc::EPOLLIN as u32
@@ -102,7 +102,7 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, acti
                 }
             }
             FlushAction::DisarmWritable => {
-                if core.read_ended {
+                if core.read_ended || core.is_read_paused() {
                     libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, core.fd, std::ptr::null_mut());
                 } else {
                     epoll_ctl_mod(epfd, core.fd, conn_id, libc::EPOLLIN as u32);
@@ -129,11 +129,13 @@ struct TimerCtx {
 struct EpollState {
     uv: &'static UvApi,
     uv_loop: *mut c_void,
+    is_tcp: bool,
     cfg: SocketConfig,
     tls: Option<Arc<TlsStore>>,
     clock: LoopClock,
     epfd: RawFd,
     listener_fd: RawFd,
+    unix_guard: Option<crate::UnixSocketGuard>,
     epoll_handle: *mut c_void,
     check_handle: *mut c_void,
     check_armed: bool,
@@ -154,6 +156,7 @@ struct EpollState {
     dispatching: Option<u32>,
     deferred: Vec<u8>,
     deferred_close: bool,
+    deferred_bp: bool,
     flush_chunk: usize,
     max_drain_rounds: usize,
     cpu_order: bool,
@@ -211,6 +214,7 @@ impl EpollState {
 }
 
 /// Linux `epoll`-backed server handle matching `UvServer` method signatures.
+#[derive(Clone)]
 pub struct EpollServer {
     state: Rc<RefCell<EpollState>>,
 }
@@ -225,6 +229,31 @@ impl EpollServer {
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
+        // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
+        // would stall Node's thread once the backlog is empty.
+        listener.set_nonblocking(true)?;
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(listener),
+            true,
+            None,
+            cfg,
+            tls,
+            callbacks,
+        )
+    }
+
+    /// # Safety
+    /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
+    pub(crate) unsafe fn start_fd_with_tls(
+        uv_loop: *mut c_void,
+        listener: OwnedFd,
+        is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
+        cfg: SocketConfig,
+        tls: Option<Arc<TlsStore>>,
+        callbacks: Box<dyn UvCallbacks>,
+    ) -> io::Result<Self> {
         if uv_loop.is_null() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -232,16 +261,13 @@ impl EpollServer {
             ));
         }
         let uv = uv_api()?;
-        // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
-        // would stall Node's thread once the backlog is empty.
-        listener.set_nonblocking(true)?;
         let epfd = libc::epoll_create1(libc::EPOLL_CLOEXEC);
         if epfd < 0 {
             return Err(io::Error::last_os_error());
         }
 
         let listener_fd = listener.as_raw_fd();
-        let nodelay_inherited = if cfg.tcp_nodelay {
+        let nodelay_inherited = if is_tcp && cfg.tcp_nodelay {
             set_tcp_nodelay(listener_fd)
         } else {
             true
@@ -281,11 +307,13 @@ impl EpollServer {
         let state = Rc::new(RefCell::new(EpollState {
             uv,
             uv_loop,
+            is_tcp,
             cfg,
             tls,
             clock: LoopClock::new(initial_uv_ms),
             epfd,
             listener_fd: owned_listener_fd,
+            unix_guard,
             epoll_handle,
             check_handle,
             check_armed: false,
@@ -306,6 +334,7 @@ impl EpollServer {
             dispatching: None,
             deferred: Vec::new(),
             deferred_close: false,
+            deferred_bp: false,
             flush_chunk,
             max_drain_rounds,
             cpu_order,
@@ -372,6 +401,34 @@ impl EpollServer {
         store.reload_input(input)
     }
 
+    pub fn add_server_name(&self, entry: nifra_tls::SniCertInput) -> Result<(), TlsError> {
+        let store = {
+            let st = self.state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Err(TlsError::MissingMaterial);
+        };
+        store.add_server_name(entry)
+    }
+
+    pub fn remove_server_name(&self, server_name: &str) -> Result<bool, TlsError> {
+        let store = {
+            let st = self.state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Ok(false);
+        };
+        store.remove_server_name(server_name)
+    }
+
     pub fn remote_addr(&self, conn_id: u32) -> Option<String> {
         self.state
             .borrow()
@@ -411,16 +468,22 @@ impl EpollServer {
             let uv_ms = unsafe { (uv.now)(st.uv_loop) };
             st.clock.tick(uv_ms)
         };
+        let max_write = write_buf_limit(st.cfg);
         if st.dispatching == Some(conn_id) {
             if let Some(conn) = st.conns.get(conn_id) {
                 let effective_close =
                     close_after || (close_if_read_ended && conn.read_ended && !conn.dispatching);
-                if st.deferred.len().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+                let next_len = st.deferred.len().saturating_add(bytes.len());
+                if next_len > max_write.max(MAX_WRITE_BUF_BYTES) {
                     st.remove_and_close_conn(conn_id);
                     return WriteResult::Closed;
                 }
                 st.deferred.extend_from_slice(bytes);
                 st.deferred_close |= effective_close;
+                if next_len > (max_write / 2).max(1) {
+                    st.deferred_bp = true;
+                    return WriteResult::Backpressured;
+                }
                 return WriteResult::Written;
             }
         }
@@ -432,20 +495,20 @@ impl EpollServer {
         let read_ended = conn.read_ended;
         let effective_close =
             close_after || (close_if_read_ended && read_ended && !conn.dispatching);
-        if conn.queued_bytes().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+        if conn.queued_bytes() >= max_write && (conn.cork_depth == 0 || conn.writable_armed) {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
         if effective_close {
             conn.close_after_write = true;
         }
-        let fa = write_bytes_or_queue(conn, bytes);
-        let armed = conn.writable_armed;
-        apply_epoll_flush_action(epfd, conn, conn_id, fa);
-        if fa == FlushAction::Close {
+        let fa = write_bytes_or_queue(conn, bytes, max_write);
+        if fa == FlushAction::Close || conn.queued_bytes() > max_write {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
+        let armed = conn.writable_armed;
+        apply_epoll_flush_action(epfd, conn, conn_id, fa);
         if fa == FlushAction::DisarmWritable {
             // A producer waiting for the queue to drain is woken at the turn's end.
             st.pending_writable.push(conn_id);
@@ -470,6 +533,56 @@ impl EpollServer {
         self.state.borrow_mut().remove_and_close_conn(conn_id)
     }
 
+    pub fn cork_begin(&self, conn_id: u32) -> bool {
+        let mut st = self.state.borrow_mut();
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        conn.cork_depth = conn.cork_depth.saturating_add(1);
+        true
+    }
+
+    pub fn cork_end(&self, conn_id: u32) -> WriteResult {
+        let mut st = self.state.borrow_mut();
+        let epfd = st.epfd;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return WriteResult::Closed;
+        };
+        conn.cork_depth = conn.cork_depth.saturating_sub(1);
+        if conn.cork_depth > 0 {
+            return if conn.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        if conn.queued_bytes() == 0 && !conn.close_after_write {
+            return if conn.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        let fa = flush_write_buf_core(conn);
+        if fa == FlushAction::Close {
+            st.remove_and_close_conn(conn_id);
+            return WriteResult::Closed;
+        }
+        let armed = conn.writable_armed;
+        apply_epoll_flush_action(epfd, conn, conn_id, fa);
+        if fa == FlushAction::DisarmWritable {
+            st.pending_writable.push(conn_id);
+            if !st.in_poll_loop {
+                st.arm_check();
+            }
+        }
+        if armed {
+            WriteResult::Backpressured
+        } else {
+            WriteResult::Written
+        }
+    }
+
     pub fn close_within(&self, conn_id: u32, wait: std::time::Duration) {
         let mut st = self.state.borrow_mut();
         let at = st.clock.now() + wait;
@@ -484,12 +597,68 @@ impl EpollServer {
         !st.deferred.is_empty() || st.conns.iter().any(|(_, c)| c.queued_bytes() > 0)
     }
 
+    pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        self.queued_bytes_for(conn_id, true)
+    }
+
+    pub(crate) fn queued_bytes_for(&self, conn_id: u32, include_corked: bool) -> usize {
+        let st = self.state.borrow();
+        let deferred = if st.dispatching == Some(conn_id) {
+            st.deferred.len()
+        } else {
+            0
+        };
+        st.conns.get(conn_id).map_or(deferred, |c| {
+            c.queued_output(deferred, st.deferred_bp, include_corked)
+        })
+    }
+
+    pub fn set_read_paused(&self, conn_id: u32, paused: bool) -> bool {
+        let mut st = self.state.borrow_mut();
+        let epfd = st.epfd;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        if conn.app_read_paused == paused {
+            return true;
+        }
+        let events = (if conn.writable_armed {
+            libc::EPOLLOUT as u32
+        } else {
+            0
+        }) | (if conn.read_ended || conn.is_read_paused() {
+            0
+        } else {
+            libc::EPOLLIN as u32
+        });
+        let applied = unsafe {
+            if events == 0 {
+                if epfd >= 0 {
+                    libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, conn.fd, std::ptr::null_mut());
+                    true
+                } else {
+                    false
+                }
+            } else {
+                epoll_ctl_mod(epfd, conn.fd, conn_id, events)
+            }
+        };
+        if !applied {
+            return false;
+        }
+        conn.app_read_paused = paused;
+        true
+    }
+
     pub fn stop_listening(&self) {
         let mut st = self.state.borrow_mut();
         if st.listener_fd >= 0 {
             let lfd = st.listener_fd;
             st.listener_fd = -1;
             unsafe { epoll_ctl_del_and_close(st.epfd, lfd) };
+        }
+        if let Some(mut guard) = st.unix_guard.take() {
+            guard.cleanup_now();
         }
     }
 
@@ -562,7 +731,7 @@ unsafe fn accept_pending(st: &mut EpollState, now: std::time::Instant) {
     if lfd < 0 || st.epfd < 0 {
         return;
     }
-    let nodelay = st.cfg.tcp_nodelay && !st.listener_tcp_nodelay_inherited;
+    let nodelay = st.is_tcp && st.cfg.tcp_nodelay && !st.listener_tcp_nodelay_inherited;
 
     loop {
         let mut storage: libc::sockaddr_storage = std::mem::zeroed();
@@ -871,6 +1040,7 @@ unsafe fn handle_client_readable(
     st.dispatching = None;
     let mut deferred = std::mem::take(&mut st.deferred);
     let deferred_close = std::mem::take(&mut st.deferred_close);
+    let deferred_bp = std::mem::take(&mut st.deferred_bp);
     if st.closed {
         return false;
     }
@@ -887,6 +1057,7 @@ unsafe fn handle_client_readable(
     st.turn_dirty = true;
 
     let epfd = st.epfd;
+    let max_write = write_buf_limit(st.cfg);
     let mut drained_from_bp = false;
     if let Some(conn) = st.conns.get_mut(conn_id) {
         conn.dispatching = false;
@@ -948,8 +1119,8 @@ unsafe fn handle_client_readable(
             conn.read_buf = read_buf;
         }
         if !remove && !cleartext_write.is_empty() {
-            let fa = write_bytes_or_queue(conn, &cleartext_write);
-            if fa == FlushAction::Close || conn.queued_bytes() > MAX_WRITE_BUF_BYTES {
+            let fa = write_bytes_or_queue(conn, &cleartext_write, max_write);
+            if fa == FlushAction::Close || conn.queued_bytes() > max_write {
                 remove = true;
             } else if fa != FlushAction::None {
                 apply_epoll_flush_action(epfd, conn, conn_id, fa);
@@ -972,6 +1143,9 @@ unsafe fn handle_client_readable(
                     drained_from_bp = true;
                 }
             }
+        }
+        if !remove && deferred_bp && !conn.writable_armed {
+            drained_from_bp = true;
         }
     }
     if drained_from_bp {
@@ -1331,7 +1505,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     let ctx = &*(data as *const TimerCtx);
     let state_rc = Rc::clone(&ctx.state);
 
-    let replies = {
+    let (replies, cb) = {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
@@ -1344,11 +1518,12 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         let now = st.clock.now();
         let sweep = collect_timeouts(st.conns.iter(), now, st.cfg, st.callbacks.as_deref_mut());
         let epfd = st.epfd;
+        let max_write = write_buf_limit(st.cfg);
         let mut close = sweep.close;
         for id in sweep.ping {
             if let Some(conn) = st.conns.get_mut(id) {
                 conn.last_activity = now;
-                let fa = write_bytes_or_queue(conn, &WS_PING_FRAME);
+                let fa = write_bytes_or_queue(conn, &WS_PING_FRAME, max_write);
                 if fa == FlushAction::Close {
                     close.push(id);
                 } else {
@@ -1359,9 +1534,16 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         for id in close {
             st.remove_and_close_conn(id);
         }
-        sweep.replies
+        (sweep.replies, st.callbacks.take())
     };
 
+    if let Some(mut handler) = cb {
+        handler.flush_aborted();
+        let mut st = state_rc.borrow_mut();
+        if !st.closed {
+            st.callbacks = Some(handler);
+        }
+    }
     let server = EpollServer {
         state: Rc::clone(&state_rc),
     };

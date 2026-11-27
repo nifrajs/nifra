@@ -1,6 +1,7 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { scriptKindOf } from "../internal/script-kind.ts"
+import { commentBlockExpectation, MISSING_EXPECTATION_REASON } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
 import { loadRuleTypeScript } from "./typescript.ts"
 
@@ -296,10 +297,173 @@ type IslandNames =
       readonly kind: "bind"
       readonly state: ReadonlySet<string> | undefined
       readonly handlers: ReadonlySet<string> | undefined
+      readonly props?: PropsShape | undefined
     }
-  | { readonly kind: "imperative" }
+  | { readonly kind: "imperative"; readonly props?: PropsShape | undefined }
+
+/** The primitive a prop's type or literal value is, when it is one and only one. */
+type PropKind = "string" | "number" | "boolean"
+const OMITTED = Symbol("omitted from JSON")
+type PropValue = PropKind | "null" | typeof OMITTED | undefined
+
+/** The props an enhancer's type literal declares: `undefined` where the type is not a plain literal. */
+type PropsShape = ReadonlyMap<
+  string,
+  { readonly optional: boolean; readonly kind: PropKind | undefined }
+>
+
+/** Explicit prop keys, their known serialized values, and whether a spread may add more. */
+interface PropsPassed {
+  readonly entries: ReadonlyMap<string, PropValue>
+  readonly open: boolean
+}
 
 export const UNKNOWN = Symbol("unknown")
+
+const memberName = (ts: typeof TSApi, name: TSApi.PropertyName): string | undefined =>
+  ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)
+    ? name.text
+    : undefined
+
+/** The one primitive a type node is: a keyword, a literal, or a union of literals of one kind. */
+function typeKind(ts: typeof TSApi, type: TSApi.TypeNode): PropKind | undefined {
+  if (ts.isParenthesizedTypeNode(type)) return typeKind(ts, type.type)
+  if (type.kind === ts.SyntaxKind.StringKeyword) return "string"
+  if (type.kind === ts.SyntaxKind.NumberKeyword) return "number"
+  if (type.kind === ts.SyntaxKind.BooleanKeyword) return "boolean"
+  if (ts.isLiteralTypeNode(type)) {
+    const literal = type.literal
+    if (ts.isStringLiteralLike(literal)) return "string"
+    if (ts.isNumericLiteral(literal)) return "number"
+    if (literal.kind === ts.SyntaxKind.TrueKeyword || literal.kind === ts.SyntaxKind.FalseKeyword)
+      return "boolean"
+    return undefined
+  }
+  if (ts.isUnionTypeNode(type)) {
+    const kinds = new Set(type.types.map((member) => typeKind(ts, member)))
+    const [only] = kinds
+    return kinds.size === 1 ? only : undefined
+  }
+  return undefined
+}
+
+/** Whether a type node admits `undefined`, which JSON drops: the prop may then be left out. */
+function admitsUndefined(ts: typeof TSApi, type: TSApi.TypeNode): boolean {
+  if (type.kind === ts.SyntaxKind.UndefinedKeyword) return true
+  if (ts.isParenthesizedTypeNode(type)) return admitsUndefined(ts, type.type)
+  return ts.isUnionTypeNode(type) && type.types.some((member) => admitsUndefined(ts, member))
+}
+
+/** The props of a plain type literal (`{ start: number; label?: string }`); anything else - a
+ * reference, an index signature, a method - is not judged. */
+function propsShape(ts: typeof TSApi, type: TSApi.TypeNode | undefined): PropsShape | undefined {
+  if (type === undefined || !ts.isTypeLiteralNode(type)) return undefined
+  const shape = new Map<string, { optional: boolean; kind: PropKind | undefined }>()
+  for (const member of type.members) {
+    if (!ts.isPropertySignature(member) || member.type === undefined) return undefined
+    const name = memberName(ts, member.name)
+    if (name === undefined) return undefined
+    shape.set(name, {
+      optional: member.questionToken !== undefined || admitsUndefined(ts, member.type),
+      kind: typeKind(ts, member.type),
+    })
+  }
+  return shape
+}
+
+/** What JSON writes for this value, leaving expressions it cannot settle unknown. */
+function literalKind(ts: typeof TSApi, node: TSApi.Expression): PropValue {
+  let inner = node
+  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner)) inner = inner.expression
+  if (ts.isVoidExpression(inner) || (ts.isIdentifier(inner) && inner.text === "undefined"))
+    return OMITTED
+  if (ts.isStringLiteralLike(inner) || ts.isTemplateExpression(inner)) return "string"
+  if (ts.isNumericLiteral(inner)) return "number"
+  if (
+    ts.isPrefixUnaryExpression(inner) &&
+    inner.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(inner.operand)
+  )
+    return "number"
+  if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword)
+    return "boolean"
+  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null"
+  return undefined
+}
+
+/** The props an object literal passes; `undefined` when a member is one this cannot read. */
+function passedFromObject(
+  ts: typeof TSApi,
+  object: TSApi.ObjectLiteralExpression,
+): PropsPassed | undefined {
+  const entries = new Map<string, PropValue>()
+  const lastSpread = object.properties.findLastIndex(ts.isSpreadAssignment)
+  for (const [index, prop] of object.properties.entries()) {
+    if (ts.isSpreadAssignment(prop)) continue
+    if (ts.isShorthandPropertyAssignment(prop)) entries.set(prop.name.text, undefined)
+    else if (ts.isPropertyAssignment(prop)) {
+      const name = memberName(ts, prop.name)
+      if (name === undefined) return undefined
+      entries.set(name, index < lastSpread ? undefined : literalKind(ts, prop.initializer))
+    } else return undefined
+  }
+  return { entries, open: lastSpread !== -1 }
+}
+
+/** The props an expression passes when it is a literal object, `islandProps({...})` or
+ * `JSON.stringify({...})`; `undefined` otherwise. */
+function passedFromExpression(
+  ts: typeof TSApi,
+  expr: TSApi.Expression | undefined,
+): PropsPassed | undefined {
+  let inner = expr
+  while (inner !== undefined && (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner)))
+    inner = inner.expression
+  if (inner === undefined) return undefined
+  if (ts.isObjectLiteralExpression(inner)) return passedFromObject(ts, inner)
+  if (!ts.isCallExpression(inner)) return undefined
+  const callee = inner.expression
+  const serializer =
+    (ts.isIdentifier(callee) && callee.text === "islandProps") ||
+    (ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "JSON" &&
+      callee.name.text === "stringify")
+  const arg = inner.arguments[0]
+  return serializer &&
+    arg !== undefined &&
+    ts.isObjectLiteralExpression(arg) &&
+    inner.arguments.length === 1
+    ? passedFromObject(ts, arg)
+    : undefined
+}
+
+/** The props of a literal `data-island-props` attribute value: its JSON, after the HTML entities an
+ * attribute value may hold. `undefined` when it is not a JSON object. */
+function passedFromJson(text: string): PropsPassed | undefined {
+  const decoded = text
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&")
+  let value: unknown
+  try {
+    value = JSON.parse(decoded)
+  } catch {
+    return undefined
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const entries = new Map<string, PropKind | "null" | undefined>()
+  for (const [key, item] of Object.entries(value)) {
+    if (item === null) entries.set(key, "null")
+    else if (typeof item === "string") entries.set(key, "string")
+    else if (typeof item === "number") entries.set(key, "number")
+    else if (typeof item === "boolean") entries.set(key, "boolean")
+    else entries.set(key, undefined)
+  }
+  return { entries, open: false }
+}
 
 function literalKeys(
   ts: typeof TSApi,
@@ -413,47 +577,118 @@ function bindIslandNames(
   return { kind: "bind", state, handlers }
 }
 
+/** The props annotated on an inline enhancer's second parameter. */
+function parameterProps(
+  ts: typeof TSApi,
+  fn: TSApi.Expression | undefined,
+): PropsShape | undefined {
+  return fn !== undefined && isEnhancerFn(ts, fn)
+    ? propsShape(ts, fn.parameters[1]?.type)
+    : undefined
+}
+
 /** What an enhancer expression mounts: a `bindIsland(...)`, an imperative enhancer, or unknown. */
 function enhancerNames(
   ts: typeof TSApi,
   expr: TSApi.Expression,
-  locals: ReadonlyMap<string, TSApi.Expression>,
+  locals: ReadonlyMap<string, TSApi.Expression | undefined>,
 ): IslandNames | typeof UNKNOWN {
   let target: TSApi.Expression | undefined = expr
   if (ts.isIdentifier(expr)) target = locals.get(expr.text)
   if (target === undefined) return UNKNOWN
-  if (isEnhancerFn(ts, target)) return { kind: "imperative" }
+  if (isEnhancerFn(ts, target)) return { kind: "imperative", props: parameterProps(ts, target) }
   if (ts.isCallExpression(target) && ts.isIdentifier(target.expression)) {
-    if (target.expression.text === "defineIsland") return { kind: "imperative" }
-    if (target.expression.text === "bindIsland") return bindIslandNames(ts, target.arguments[0])
+    const declared = propsShape(ts, target.typeArguments?.[0])
+    if (target.expression.text === "defineIsland")
+      return {
+        kind: "imperative",
+        props: declared ?? parameterProps(ts, target.arguments[0]),
+      }
+    if (target.expression.text === "bindIsland") {
+      const names = bindIslandNames(ts, target.arguments[0])
+      return names === UNKNOWN ? UNKNOWN : { ...names, props: declared }
+    }
   }
   return UNKNOWN
 }
 
+function mountReference(ts: typeof TSApi, expr: TSApi.Expression | undefined): boolean {
+  let target = expr
+  while (
+    target !== undefined &&
+    (ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isSatisfiesExpression(target))
+  )
+    target = target.expression
+  if (target === undefined) return false
+  if (ts.isIdentifier(target)) return MOUNT_CALLS.has(target.text)
+  return ts.isPropertyAccessExpression(target) && MOUNT_CALLS.has(target.name.text)
+}
+
+/** What the project's mount calls cover. `open` is set when a call or an import hides ids this
+ * cannot list (a map held in a variable, a spread, or an indirect `mountIslands` call). */
+interface MountSurface {
+  readonly ids: Map<string, IslandNames | typeof UNKNOWN>
+  readonly open: boolean
+  /** How many literal mount calls were read. */
+  readonly calls: number
+}
+
 /** Every island id mounted in the project, with what its markup may name. An id mounted with
  * different or unresolvable enhancers maps to UNKNOWN. */
-function mountedIslands(
-  ts: typeof TSApi,
-  trees: ReadonlyArray<TSApi.SourceFile>,
-): Map<string, IslandNames | typeof UNKNOWN> {
+function mountedIslands(ts: typeof TSApi, trees: ReadonlyArray<TSApi.SourceFile>): MountSurface {
   const ids = new Map<string, IslandNames | typeof UNKNOWN>()
+  let open = false
+  let calls = 0
   for (const tree of trees) {
-    const locals = new Map<string, TSApi.Expression>()
+    // The AST walk has no lexical resolver, so a name declared more than once is ambiguous.
+    const locals = new Map<string, TSApi.Expression | undefined>()
     const mounts: TSApi.ObjectLiteralExpression[] = []
     const visit = (node: TSApi.Node): void => {
-      if (
-        ts.isVariableDeclaration(node) &&
-        ts.isIdentifier(node.name) &&
-        node.initializer !== undefined
+      if (ts.isVariableDeclaration(node)) {
+        if (ts.isIdentifier(node.name)) {
+          const name = node.name.text
+          locals.set(name, locals.has(name) ? undefined : node.initializer)
+        }
+        if (mountReference(ts, node.initializer)) open = true
+      } else if (
+        (ts.isParameter(node) ||
+          ts.isBindingElement(node) ||
+          ts.isImportSpecifier(node) ||
+          ts.isImportClause(node) ||
+          ts.isNamespaceImport(node) ||
+          ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isClassDeclaration(node) ||
+          ts.isClassExpression(node) ||
+          ts.isEnumDeclaration(node)) &&
+        node.name !== undefined &&
+        ts.isIdentifier(node.name)
       )
-        locals.set(node.name.text, node.initializer)
+        locals.set(node.name.text, undefined)
       if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        MOUNT_CALLS.has(node.expression.text)
-      ) {
-        const map = node.arguments[0]
-        if (map !== undefined && ts.isObjectLiteralExpression(map)) mounts.push(map)
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        mountReference(ts, node.right)
+      )
+        open = true
+      if (
+        ts.isImportSpecifier(node) &&
+        node.propertyName !== undefined &&
+        MOUNT_CALLS.has(node.propertyName.text)
+      )
+        open = true
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression
+        if (ts.isIdentifier(callee) && MOUNT_CALLS.has(callee.text)) {
+          const map = node.arguments[0]
+          if (map !== undefined && ts.isObjectLiteralExpression(map)) {
+            calls++
+            mounts.push(map)
+          } else open = true
+        } else if (mountReference(ts, callee)) open = true
       }
       ts.forEachChild(node, visit)
     }
@@ -465,26 +700,33 @@ function mountedIslands(
         if (ts.isShorthandPropertyAssignment(prop)) {
           id = prop.name.text
           names = enhancerNames(ts, prop.name, locals)
-        } else if (
-          ts.isPropertyAssignment(prop) &&
-          (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
-        ) {
-          id = prop.name.text
+        } else if (ts.isPropertyAssignment(prop)) {
+          id = memberName(ts, prop.name)
           names = enhancerNames(ts, prop.initializer, locals)
+        } else if (ts.isMethodDeclaration(prop)) {
+          id = memberName(ts, prop.name)
+          names = { kind: "imperative", props: propsShape(ts, prop.parameters[1]?.type) }
         }
-        if (id === undefined) continue
-        ids.set(id, ids.has(id) ? UNKNOWN : names)
+        if (id === undefined) open = true
+        else ids.set(id, ids.has(id) ? UNKNOWN : names)
       }
     }
   }
-  return ids
+  return { ids, open, calls }
 }
 
 /** One `data-bind-*` attribute in markup, with the island host it belongs to. */
 interface MarkupBinding {
   readonly attribute: string
   /** Signal names (`handler: false`) or handler names (`handler: true`) the attribute refers to. */
-  readonly names: ReadonlyArray<{ readonly name: string; readonly handler: boolean }>
+  readonly names: ReadonlyArray<{
+    readonly name: string
+    readonly handler: boolean
+    /** The class, attribute or event the pair names: `aria-expanded` in `aria-expanded:open`. */
+    readonly key: string | undefined
+  }>
+  /** The element's tag, lowercased; a JSX component keeps its own name. */
+  readonly tag: string | undefined
   /** The nearest enclosing host's id: `null` when there is none, UNKNOWN when it is not literal. */
   readonly island: string | null | typeof UNKNOWN
   /** A `data-swap-slot` between the binding and its host, whose swap replaces the bound element. */
@@ -519,8 +761,20 @@ export interface HolePlacement {
   readonly sole: boolean
 }
 
+/** One island host in markup: a `data-island` element or an `<Island>`. */
+interface MarkupHost {
+  /** The host's id: UNKNOWN when it is not literal. */
+  readonly id: string | typeof UNKNOWN
+  /** What it passes as props: `absent` when it has none, `unknown` when they cannot be read. */
+  readonly props: PropsPassed | "absent" | "unknown"
+  readonly node: TSApi.Node
+  /** The line of its tag, when `node` is the whole template. */
+  readonly line?: number
+}
+
 interface MarkupFacts {
   readonly hasHost: boolean
+  readonly hosts: MarkupHost[]
   readonly bindings: MarkupBinding[]
   readonly swaps: SwapMarkup[]
 }
@@ -532,14 +786,15 @@ function bindingNames(attribute: string, value: string): MarkupBinding["names"] 
   if (value.includes(HOLE)) return undefined
   const kind = attribute.slice("data-bind-".length)
   if (kind === "text" || kind === "show" || kind === "value")
-    return value.trim() === "" ? [] : [{ name: value.trim(), handler: false }]
+    return value.trim() === "" ? [] : [{ name: value.trim(), handler: false, key: undefined }]
   if (kind !== "class" && kind !== "attr" && kind !== "on") return undefined
-  const out: Array<{ name: string; handler: boolean }> = []
+  const out: Array<{ name: string; handler: boolean; key: string | undefined }> = []
   for (const part of value.split(",")) {
     const sep = part.indexOf(":")
     if (sep <= 0) continue
     const name = part.slice(sep + 1).trim()
-    if (part.slice(0, sep).trim() && name) out.push({ name, handler: kind === "on" })
+    const key = part.slice(0, sep).trim()
+    if (key && name) out.push({ name, handler: kind === "on", key })
   }
   return out
 }
@@ -560,9 +815,35 @@ const VOID_ELEMENTS = new Set([
   "wbr",
 ])
 
-/** The attributes of one tag's inside (`name a="1" b`), in order. */
-function tagAttributes(inside: string): Array<[string, string]> {
-  const out: Array<[string, string]> = []
+const TEXT_ELEMENTS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+])
+
+function htmlCommentAt(text: string, offset: number): RegExpExecArray | null {
+  const pattern = /<!--(?:-?>|(.*?)--!?>)/sy
+  pattern.lastIndex = offset
+  return pattern.exec(text)
+}
+
+function textElementClose(text: string, tag: string, start: number): number {
+  const closer = /<\/([a-z][\w-]*)(?=[\t\n\f\r />])/gi
+  closer.lastIndex = start
+  for (let match = closer.exec(text); match !== null; match = closer.exec(text))
+    if (match[1]?.toLowerCase() === tag) return match.index
+  return -1
+}
+
+/** The attributes of one tag's inside (`name a="1" b`), in order, each with where its value starts
+ * in `inside` (-1 when it has none). */
+function tagAttributes(inside: string): Array<[string, string, number]> {
+  const out: Array<[string, string, number]> = []
   let i = 0
   while (i < inside.length) {
     while (i < inside.length && /[\s/]/.test(inside.charAt(i))) i++
@@ -572,6 +853,7 @@ function tagAttributes(inside: string): Array<[string, string]> {
     if (name === "") break
     while (i < inside.length && /\s/.test(inside.charAt(i))) i++
     let value = ""
+    let valueAt = -1
     if (inside.charAt(i) === "=") {
       i++
       while (i < inside.length && /\s/.test(inside.charAt(i))) i++
@@ -579,15 +861,16 @@ function tagAttributes(inside: string): Array<[string, string]> {
       if (quote === '"' || quote === "'") {
         const end = inside.indexOf(quote, i + 1)
         const stop = end < 0 ? inside.length : end
-        value = inside.slice(i + 1, stop)
+        valueAt = i + 1
+        value = inside.slice(valueAt, stop)
         i = stop + 1
       } else {
-        const begin = i
+        valueAt = i
         while (i < inside.length && !/\s/.test(inside.charAt(i))) i++
-        value = inside.slice(begin, i)
+        value = inside.slice(valueAt, i)
       }
     }
-    out.push([name, value])
+    out.push([name, value, valueAt])
   }
   return out
 }
@@ -596,6 +879,7 @@ interface OpenElement {
   readonly tag: string
   readonly island: string | null | typeof UNKNOWN
   readonly slot: SwapMarkup | undefined
+  readonly ignored: boolean
   /** Where the element's content starts in the template text. */
   readonly start: number
 }
@@ -612,12 +896,35 @@ function ownerOf(stack: readonly OpenElement[]): Pick<MarkupBinding, "island" | 
   return { island: null, slot: null }
 }
 
+/** What a template host passes as props, read from its `data-island-props` attribute: the JSON text
+ * it holds, or the one interpolation that is its whole value. */
+function hostProps(
+  ts: typeof TSApi,
+  attributes: ReadonlyArray<readonly [string, string, number]>,
+  inside: string,
+  nameLength: number,
+  holes: readonly TSApi.Expression[],
+  positions: readonly number[],
+  tagAt: number,
+): PropsPassed | "absent" | "unknown" {
+  const found = attributes.find(([name]) => name === "data-island-props")
+  if (found === undefined) return "absent"
+  const [, value, valueAt] = found
+  if (!value.includes(HOLE)) return passedFromJson(value) ?? "unknown"
+  if (value.trim() !== HOLE) return "unknown"
+  // Interpolations come in text order: those before this tag, then those inside it ahead of the value.
+  const before = positions.filter((position) => position < tagAt).length
+  const inTag = inside.slice(0, nameLength + valueAt).split(HOLE).length - 1
+  return passedFromExpression(ts, holes[before + inTag]) ?? "unknown"
+}
+
 /**
  * The bindings, swap links, forms and slots of an `html` template's text, and whether it holds an
  * island host. `holes` are the template's interpolations, in order; `placement` learns where each
  * one sits. A linear scan: an unclosed tag ends it.
  */
 function templateMarkup(
+  ts: typeof TSApi,
   text: string,
   holes: readonly TSApi.Expression[],
   node: TSApi.Node,
@@ -627,6 +934,7 @@ function templateMarkup(
   const stack: OpenElement[] = []
   const bindings: MarkupBinding[] = []
   const swaps: SwapMarkup[] = []
+  const hosts: MarkupHost[] = []
   const positions: number[] = []
   for (let i = text.indexOf(HOLE); i >= 0; i = text.indexOf(HOLE, i + 1)) positions.push(i)
   const holesIn = (from: number, to: number): TSApi.Expression[] => {
@@ -654,6 +962,12 @@ function templateMarkup(
   let hasHost = false
   let at = text.indexOf("<")
   while (at >= 0) {
+    if (text.startsWith("<!--", at)) {
+      const comment = htmlCommentAt(text, at)
+      if (comment === null) break
+      at = text.indexOf("<", at + comment[0].length)
+      continue
+    }
     let end = at + 1
     let quote = ""
     while (end < text.length) {
@@ -671,7 +985,8 @@ function templateMarkup(
     const tagAt = at
     at = text.indexOf("<", end + 1)
     if (inside.startsWith("/")) {
-      const tag = inside.slice(1).trim().toLowerCase()
+      const tag = /^\/([a-z][\w-]*)/i.exec(inside)?.[1]?.toLowerCase()
+      if (tag === undefined) continue
       const open = stack.map((entry) => entry.tag).lastIndexOf(tag)
       if (open >= 0) close(open, tagAt)
       continue
@@ -683,15 +998,26 @@ function templateMarkup(
       attributes.find(([key]) => key === name)?.[1]
     const literal = (value: string): string | typeof UNKNOWN =>
       value.includes(HOLE) ? UNKNOWN : value
-    const hostId = attribute("data-island")
+    const ignored = stack.at(-1)?.ignored === true || attribute("data-island-ignore") !== undefined
+    const hostId = ignored ? undefined : attribute("data-island")
     const island = hostId === undefined ? null : literal(hostId)
     if (island !== null) hasHost = true
     const owner = ownerOf(stack)
     const line = lineAt(tagAt)
-    for (const [name, value] of attributes) {
-      if (!name.startsWith("data-bind-")) continue
-      const names = bindingNames(name, value)
-      if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node, line })
+    if (island !== null) {
+      // An attribute name that holds an interpolation may add props this cannot see.
+      const props = attributes.some(([name]) => name.includes(HOLE))
+        ? "unknown"
+        : hostProps(ts, attributes, inside, tag.length, holes, positions, tagAt)
+      hosts.push({ id: island, props, node, line })
+    }
+    if (!ignored) {
+      for (const [name, value] of attributes) {
+        if (!name.startsWith("data-bind-")) continue
+        const names = bindingNames(name, value)
+        if (names !== undefined)
+          bindings.push({ attribute: name, names, tag, ...owner, node, line })
+      }
     }
     const swap = attribute("data-swap")
     const url = tag === "a" ? attribute("href") : tag === "form" ? attribute("action") : undefined
@@ -703,10 +1029,12 @@ function templateMarkup(
         ? undefined
         : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node, line }
     if (slot !== undefined) swaps.push(slot)
-    if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/"))
-      stack.push({ tag, island, slot, start: end + 1 })
+    const textElement = TEXT_ELEMENTS.has(tag)
+    if (!VOID_ELEMENTS.has(tag) && (textElement || !inside.trimEnd().endsWith("/")))
+      stack.push({ tag, island, slot, ignored, start: end + 1 })
+    if (textElement) at = textElementClose(text, tag, end + 1)
   }
-  return { hasHost, bindings, swaps }
+  return { hasHost, hosts, bindings, swaps }
 }
 
 /** The source line of an offset in a template's text: its newlines, and the lines each
@@ -746,27 +1074,60 @@ function templateText(ts: typeof TSApi, template: TSApi.TemplateLiteral): string
   return text
 }
 
-/** The literal string value of a JSX attribute, `undefined` when absent, UNKNOWN when not literal. */
+/** The last explicit attribute, unless a later spread can replace it. */
+function jsxAttributeNode(
+  ts: typeof TSApi,
+  element: TSApi.JsxOpeningLikeElement,
+  name: string,
+): TSApi.JsxAttribute | undefined | typeof UNKNOWN {
+  let spread = false
+  const { properties } = element.attributes
+  for (let index = properties.length - 1; index >= 0; index--) {
+    const attr = properties[index]
+    if (attr === undefined) continue
+    if (ts.isJsxSpreadAttribute(attr)) spread = true
+    else if (attr.name.getText() === name) return spread ? UNKNOWN : attr
+  }
+  return undefined
+}
+
+/** The literal string value of a JSX attribute, `undefined` when absent, UNKNOWN when uncertain. */
 function jsxAttribute(
   ts: typeof TSApi,
   element: TSApi.JsxOpeningLikeElement,
   name: string,
 ): string | undefined | typeof UNKNOWN {
-  for (const attr of element.attributes.properties) {
-    if (ts.isJsxSpreadAttribute(attr)) continue
-    if (attr.name.getText() !== name) continue
-    const init = attr.initializer
-    if (init === undefined) return ""
-    if (ts.isStringLiteral(init)) return init.text
-    if (
-      ts.isJsxExpression(init) &&
-      init.expression !== undefined &&
-      ts.isStringLiteralLike(init.expression)
-    )
-      return init.expression.text
-    return UNKNOWN
-  }
-  return undefined
+  const attr = jsxAttributeNode(ts, element, name)
+  if (attr === undefined || attr === UNKNOWN) return attr
+  const init = attr.initializer
+  if (init === undefined) return ""
+  if (ts.isStringLiteral(init)) return init.text
+  if (
+    ts.isJsxExpression(init) &&
+    init.expression !== undefined &&
+    ts.isStringLiteralLike(init.expression)
+  )
+    return init.expression.text
+  return UNKNOWN
+}
+
+/** What a JSX host passes in its `props` (an `<Island>`) or `data-island-props` attribute. */
+function jsxHostProps(
+  ts: typeof TSApi,
+  element: TSApi.JsxOpeningLikeElement,
+  name: string,
+): PropsPassed | "absent" | "unknown" {
+  const attr = jsxAttributeNode(ts, element, name)
+  if (attr === UNKNOWN) return "unknown"
+  if (attr === undefined)
+    return element.attributes.properties.some(ts.isJsxSpreadAttribute) ? "unknown" : "absent"
+  const init = attr.initializer
+  if (init === undefined) return "unknown"
+  if (ts.isStringLiteral(init)) return passedFromJson(init.text) ?? "unknown"
+  if (!ts.isJsxExpression(init) || init.expression === undefined) return "unknown"
+  const expression = init.expression
+  if (ts.isStringLiteralLike(expression)) return passedFromJson(expression.text) ?? "unknown"
+  return passedFromExpression(ts, expression) ?? "unknown"
 }
 
 /** The bindings, swap links, forms and slots of one outermost JSX tree, and whether it holds an
@@ -774,33 +1135,54 @@ function jsxAttribute(
 function jsxMarkup(
   ts: typeof TSApi,
   root: TSApi.JsxElement | TSApi.JsxSelfClosingElement | TSApi.JsxFragment,
+  islandNames: ReadonlySet<string>,
 ): MarkupFacts {
   const bindings: MarkupBinding[] = []
   const swaps: SwapMarkup[] = []
+  const hosts: MarkupHost[] = []
   let hasHost = false
-  const walk = (node: TSApi.Node, owner: Pick<MarkupBinding, "island" | "slot">): void => {
+  const walk = (
+    node: TSApi.Node,
+    owner: Pick<MarkupBinding, "island" | "slot">,
+    parentIgnored: boolean,
+  ): void => {
     let opening: TSApi.JsxOpeningLikeElement | undefined
     if (ts.isJsxElement(node)) opening = node.openingElement
     else if (ts.isJsxSelfClosingElement(node)) opening = node
+    const ignored =
+      parentIgnored ||
+      (opening !== undefined && jsxAttribute(ts, opening, "data-island-ignore") !== undefined)
     let inner = owner
     if (opening !== undefined) {
       const tag = opening.tagName.getText()
-      const host =
-        tag === "Island"
-          ? jsxAttribute(ts, opening, "id")
-          : jsxAttribute(ts, opening, "data-island")
+      const nifraIsland = islandNames.has(tag)
+      const host = ignored
+        ? undefined
+        : jsxAttribute(ts, opening, nifraIsland || tag === "Island" ? "id" : "data-island")
       if (host !== undefined) {
         hasHost = true
         inner = { island: host, slot: null }
+        // An `Island` that is not Nifra's own may take other props, so only Nifra's is judged.
+        if (tag !== "Island" || nifraIsland)
+          hosts.push({
+            id: host,
+            props: jsxHostProps(ts, opening, nifraIsland ? "props" : "data-island-props"),
+            node: opening,
+          })
       }
-      for (const attr of opening.attributes.properties) {
-        if (ts.isJsxSpreadAttribute(attr)) continue
-        const name = attr.name.getText()
-        if (!name.startsWith("data-bind-")) continue
-        const value = jsxAttribute(ts, opening, name)
-        if (value === UNKNOWN || value === undefined) continue
-        const names = bindingNames(name, value)
-        if (names !== undefined) bindings.push({ attribute: name, names, ...owner, node: attr })
+      if (!ignored) {
+        const domTag =
+          ts.isIdentifier(opening.tagName) && /^[a-z]/.test(tag) ? tag.toLowerCase() : undefined
+        for (const attr of opening.attributes.properties) {
+          if (ts.isJsxSpreadAttribute(attr)) continue
+          const name = attr.name.getText()
+          if (!name.startsWith("data-bind-")) continue
+          const value = jsxAttribute(ts, opening, name)
+          if (value === UNKNOWN || value === undefined) continue
+          const names = bindingNames(name, value)
+          if (names !== undefined)
+            bindings.push({ attribute: name, names, tag: domTag, ...owner, node: attr })
+        }
       }
       const swap = jsxAttribute(ts, opening, "data-swap")
       if (swap !== undefined) {
@@ -818,10 +1200,10 @@ function jsxMarkup(
         inner = { island: inner.island, slot }
       }
     }
-    ts.forEachChild(node, (child) => walk(child, inner))
+    ts.forEachChild(node, (child) => walk(child, inner, ignored))
   }
-  walk(root, { island: null, slot: null })
-  return { hasHost, bindings, swaps }
+  walk(root, { island: null, slot: null }, false)
+  return { hasHost, hosts, bindings, swaps }
 }
 
 /** The `slot` names a file imports from `@nifrajs/web-vanilla`. */
@@ -842,6 +1224,26 @@ function slotImports(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string> {
   return names
 }
 
+/** Local names for `Island` from Nifra packages such as `@nifrajs/web-react/island`. */
+function islandImports(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
+  for (const statement of tree.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !statement.moduleSpecifier.text.startsWith("@nifrajs/")
+    )
+      continue
+    const bound = statement.importClause?.namedBindings
+    if (statement.importClause?.isTypeOnly || bound === undefined || !ts.isNamedImports(bound))
+      continue
+    for (const element of bound.elements)
+      if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "Island")
+        names.add(element.name.text)
+  }
+  return names
+}
+
 /** One `slot(name, content)` call of `@nifrajs/web-vanilla`. */
 export interface SlotCall {
   readonly name: string | typeof UNKNOWN
@@ -854,18 +1256,22 @@ function fileMarkup(
   tree: TSApi.SourceFile,
 ): {
   readonly bindings: MarkupBinding[]
+  readonly hosts: MarkupHost[]
   readonly swaps: SwapMarkup[]
   readonly slotCalls: SlotCall[]
   readonly placement: Map<TSApi.Node, HolePlacement>
 } {
   const bindings: MarkupBinding[] = []
+  const hosts: MarkupHost[] = []
   const swaps: SwapMarkup[] = []
   const slotCalls: SlotCall[] = []
   const placement = new Map<TSApi.Node, HolePlacement>()
   const slotNames = slotImports(ts, tree)
+  const islandNames = islandImports(ts, tree)
   const take = (found: MarkupFacts): void => {
     // A fragment with no host of its own may render inside one elsewhere, so it is not judged.
     if (found.hasHost) bindings.push(...found.bindings)
+    hosts.push(...found.hosts)
     swaps.push(...found.swaps)
   }
   const visit = (node: TSApi.Node): void => {
@@ -878,13 +1284,13 @@ function fileMarkup(
       const text = templateText(ts, node.template)
       const holes = spans.map((span) => span.expression)
       const lineAt = templateLines(tree, node.template, text, spans)
-      take(templateMarkup(text, holes, node, placement, lineAt))
+      take(templateMarkup(ts, text, holes, node, placement, lineAt))
     } else if (
       ts.isJsxElement(node) ||
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxFragment(node)
     ) {
-      take(jsxMarkup(ts, node))
+      take(jsxMarkup(ts, node, islandNames))
       return
     } else if (
       ts.isCallExpression(node) &&
@@ -900,13 +1306,20 @@ function fileMarkup(
     ts.forEachChild(node, visit)
   }
   visit(tree)
-  return { bindings, swaps, slotCalls, placement }
+  return { bindings, hosts, swaps, slotCalls, placement }
 }
 
 interface MarkupFinding {
   readonly file: string
   readonly line: number
   readonly binding: MarkupBinding
+  readonly islands: Map<string, IslandNames | typeof UNKNOWN>
+}
+
+interface HostFinding {
+  readonly file: string
+  readonly line: number
+  readonly host: MarkupHost
   readonly islands: Map<string, IslandNames | typeof UNKNOWN>
 }
 
@@ -921,6 +1334,9 @@ export interface FileMarkup {
 
 export interface ProjectMarkup {
   readonly bindings: readonly MarkupFinding[]
+  readonly hosts: readonly HostFinding[]
+  /** Whether every island id the project mounts could be read, and from how many mount calls. */
+  readonly mounts: Pick<MountSurface, "open" | "calls">
   readonly files: readonly FileMarkup[]
 }
 
@@ -938,7 +1354,12 @@ export async function projectMarkup(
   readonly ts?: typeof TSApi
   readonly markup: ProjectMarkup
 }> {
-  const empty: ProjectMarkup = { bindings: [], files: [] }
+  const empty: ProjectMarkup = {
+    bindings: [],
+    hosts: [],
+    mounts: { open: true, calls: 0 },
+    files: [],
+  }
   const loaded = await loadRuleTypeScript(ctx)
   if (loaded.diagnostics !== undefined) return { diagnostics: loaded.diagnostics, markup: empty }
   const ts = loaded.compiler
@@ -950,19 +1371,23 @@ export async function projectMarkup(
     const tree = parsedTree(ts, ctx.project.source, file)
     if (tree !== undefined) trees.push({ file, tree })
   }
-  const islands = mountedIslands(
+  const surface = mountedIslands(
     ts,
     trees.map((entry) => entry.tree),
   )
+  const islands = surface.ids
   const bindings: MarkupFinding[] = []
+  const hosts: HostFinding[] = []
   const files: FileMarkup[] = []
   for (const { file, tree } of trees) {
     const found = fileMarkup(ts, tree)
     for (const binding of found.bindings)
       bindings.push({ file, line: binding.line ?? lineOf(tree, binding.node), binding, islands })
+    for (const host of found.hosts)
+      hosts.push({ file, line: host.line ?? lineOf(tree, host.node), host, islands })
     files.push({ file, tree, ...found })
   }
-  const markup = { bindings, files }
+  const markup = { bindings, hosts, mounts: { open: surface.open, calls: surface.calls }, files }
   markupCache.set(ctx.project.source, markup)
   return { ts, markup }
 }
@@ -1043,9 +1468,196 @@ export const islandBindingHostRule: CheckRule = {
   },
 }
 
+/**
+ * Whether a `nifra-expect <code>: <reason>` comment covers the finding on `line` of a file: a comment
+ * on its line or in the comment block above it. In an html template, use whole-line HTML comments
+ * in the block above the host.
+ * `no-reason` is a marker with nothing after its colon, which silences nothing.
+ */
+function expectationFor(
+  ctx: Parameters<CheckRule["scan"]>[0],
+  cache: Map<string, readonly string[]>,
+  file: string,
+  line: number,
+  code: string,
+): "silenced" | "no-reason" | undefined {
+  let lines = cache.get(file)
+  if (lines === undefined) {
+    lines = (ctx.project.source.read(file) ?? "").split("\n").map((text) => {
+      const start = text.search(/\S/)
+      if (start < 0) return text
+      const comment = htmlCommentAt(text, start)
+      if (comment === null || text.slice(start + comment[0].length).trim() !== "") return text
+      return `//${comment[1] ?? ""}`
+    })
+    cache.set(file, lines)
+  }
+  const found = commentBlockExpectation(lines, line, [code])
+  if (found === undefined) return undefined
+  return found.reason === undefined ? "no-reason" : "silenced"
+}
+
+export const islandUnmountedRule: CheckRule = {
+  code: "NF-C064",
+  title: "Island host with no enhancer",
+  async scan(ctx) {
+    const { diagnostics, markup } = await projectMarkup(
+      ctx,
+      "NF-C064",
+      "Island host with no enhancer",
+    )
+    if (diagnostics !== undefined) return diagnostics
+    // Judged only when every mount call is a literal map: a map held in a variable may name any id.
+    if (markup.mounts.open || markup.mounts.calls === 0) return []
+    const findings: Diagnostic[] = []
+    const lines = new Map<string, readonly string[]>()
+    for (const { file, line, host, islands } of markup.hosts) {
+      if (typeof host.id !== "string" || islands.has(host.id)) continue
+      const expected = expectationFor(ctx, lines, file, line, "NF-C064")
+      if (expected === "silenced") continue
+      const mounted = [...islands.keys()]
+      findings.push(
+        diagnostic({
+          code: "NF-C064",
+          severity: "warn",
+          file,
+          line,
+          message: `island "${host.id}" has no enhancer: no mountIslands call in the project names it, so the host is never enhanced${expected === undefined ? "" : `; ${MISSING_EXPECTATION_REASON}`}`,
+          evidence: [
+            `data-island="${host.id}"`,
+            mounted.length === 0 ? "mounted: none" : `mounted: ${mounted.slice(0, 8).join(", ")}`,
+          ],
+          fix: { recipe: "islands.host-enhancer", command: "nifra_docs islands" },
+          verify: "nifra check --lints-only",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
+/** The way one prop disagrees with its declaration, or `undefined` when it agrees or cannot be told. */
+function propMismatch(
+  key: string,
+  passed: PropKind | "null" | undefined,
+  declared: { readonly kind: PropKind | undefined } | undefined,
+): string | undefined {
+  if (declared === undefined)
+    return `passes "${key}", which the enhancer's props type does not declare`
+  if (passed === undefined || declared.kind === undefined || passed === declared.kind)
+    return undefined
+  return `passes "${key}" as ${passed === "null" ? "null" : `a ${passed}`}, which the enhancer declares as ${declared.kind}`
+}
+
+export const islandPropsRule: CheckRule = {
+  code: "NF-C065",
+  title: "Island props differ from the enhancer's props type",
+  async scan(ctx) {
+    const { diagnostics, markup } = await projectMarkup(
+      ctx,
+      "NF-C065",
+      "Island props differ from the enhancer's props type",
+    )
+    if (diagnostics !== undefined) return diagnostics
+    const findings: Diagnostic[] = []
+    const lines = new Map<string, readonly string[]>()
+    for (const { file, line, host, islands } of markup.hosts) {
+      if (typeof host.id !== "string" || host.props === "unknown") continue
+      const names = islands.get(host.id)
+      const shape = names === undefined || names === UNKNOWN ? undefined : names.props
+      if (shape === undefined) continue
+      const passed: PropsPassed =
+        host.props === "absent" ? { entries: new Map(), open: false } : host.props
+      const problems: string[] = []
+      for (const [key, declared] of shape)
+        if (
+          !declared.optional &&
+          (passed.entries.get(key) === OMITTED || (!passed.open && !passed.entries.has(key)))
+        )
+          problems.push(`does not pass "${key}", which the enhancer's props type requires`)
+      for (const [key, kind] of passed.entries) {
+        if (kind === OMITTED) continue
+        const problem = propMismatch(key, kind, shape.get(key))
+        if (problem !== undefined) problems.push(problem)
+      }
+      const expected =
+        problems.length === 0 ? undefined : expectationFor(ctx, lines, file, line, "NF-C065")
+      if (expected === "silenced") continue
+      for (const problem of problems)
+        findings.push(
+          diagnostic({
+            code: "NF-C065",
+            severity: "warn",
+            file,
+            line,
+            message: `island "${host.id}" ${problem}${expected === undefined ? "" : `; ${MISSING_EXPECTATION_REASON}`}`,
+            evidence: [`data-island="${host.id}"`],
+            fix: { recipe: "islands.props-contract", command: "nifra_docs islands" },
+            verify: "nifra check --lints-only",
+          }),
+        )
+    }
+    return findings
+  },
+}
+
+// The runtime refuses the same bindings (`island-bindings.ts`): `on*` and `srcdoc` attributes, and a
+// URL attribute on an element that loads code or rebases the page.
+export const REFUSED_CODE_ATTRIBUTE = /^(?:on|srcdoc$)/i
+export const REFUSED_URL_ATTRIBUTE =
+  /^(?:href|src|action|formaction|xlink:href|poster|data|background|cite|ping)$/i
+export const REFUSED_URL_TAG = new Set(["script", "iframe", "object", "embed", "link", "base"])
+export const REFUSED_SMIL_TAG = new Set(["set", "animate", "animatemotion", "animatetransform"])
+
+export const islandRefusedBindingRule: CheckRule = {
+  code: "NF-C066",
+  title: "Island attribute binding the runtime refuses",
+  async scan(ctx) {
+    const { diagnostics, markup } = await projectMarkup(
+      ctx,
+      "NF-C066",
+      "Island attribute binding the runtime refuses",
+    )
+    if (diagnostics !== undefined) return diagnostics
+    const findings: Diagnostic[] = []
+    for (const { file, line, binding } of markup.bindings) {
+      if (binding.attribute !== "data-bind-attr") continue
+      for (const { key } of binding.names) {
+        if (key === undefined) continue
+        let reason: string | undefined
+        if (REFUSED_CODE_ATTRIBUTE.test(key))
+          reason = `"${key}" is an event-handler or srcdoc attribute, which a binding never sets`
+        else if (binding.tag !== undefined) {
+          if (REFUSED_URL_ATTRIBUTE.test(key) && REFUSED_URL_TAG.has(binding.tag))
+            reason = `"${key}" is a URL attribute on <${binding.tag}>, which loads code or rebases the page`
+          else if (REFUSED_SMIL_TAG.has(binding.tag))
+            reason = `"${key}" is bound on <${binding.tag}>: an SVG animation sets another element's attributes from its own, so a bound value can animate a link's href to a script URL`
+        }
+        if (reason === undefined) continue
+        findings.push(
+          diagnostic({
+            code: "NF-C066",
+            severity: "warn",
+            file,
+            line,
+            message: `data-bind-attr never binds: ${reason}. The runtime skips it with a console warning`,
+            evidence: [`data-bind-attr -> ${key}`],
+            fix: { recipe: "islands.refused-binding", command: "nifra_docs islands" },
+            verify: "nifra check --lints-only",
+          }),
+        )
+      }
+    }
+    return findings
+  },
+}
+
 export const islandRules = Object.freeze([
   islandCleanupRule,
   islandListKeyRule,
   islandBindingNameRule,
   islandBindingHostRule,
+  islandUnmountedRule,
+  islandPropsRule,
+  islandRefusedBindingRule,
 ])

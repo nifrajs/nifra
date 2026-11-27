@@ -239,6 +239,29 @@ function snapshotItems(snapshot: PredictionStoreSnapshot<CartState>): readonly C
   return snapshot.state.items
 }
 
+async function runCartReconciliation(now: number, predictionId: string, reconcileThrows: boolean) {
+  let executed = false
+  let reconciled = false
+  const capability = labCapability({
+    execute: () => ({ cartVersion: "v2" }),
+    onExecute: () => {
+      executed = true
+    },
+    onReconcile: () => {
+      reconciled = true
+    },
+    reconcileThrows,
+  })
+  const store = createPredictionStore<CartState>(emptyCart("v1"))
+  const result = await executePredicted(
+    capability,
+    { sku: "lab-sku", quantity: 1 },
+    store,
+    deterministicExecutionOptions(predictionId, now),
+  )
+  return { executed, reconciled, result, after: store.snapshot() }
+}
+
 const LAB_CASES: readonly LabCase[] = [
   {
     id: "prediction-stale-version",
@@ -464,26 +487,11 @@ const LAB_CASES: readonly LabCase[] = [
     target: "prediction",
     mutation: "reconcile throws after a successful tool call",
     run: async ({ now, predictionId }) => {
-      let executed = false
-      let reconciled = false
-      const capability = labCapability({
-        execute: () => {
-          executed = true
-          return { cartVersion: "v2" }
-        },
-        reconcileThrows: true,
-        onReconcile: () => {
-          reconciled = true
-        },
-      })
-      const store = createPredictionStore<CartState>(emptyCart("v1"))
-      const result = await executePredicted(
-        capability,
-        { sku: "lab-sku", quantity: 1 },
-        store,
-        deterministicExecutionOptions(predictionId(0), now),
+      const { executed, reconciled, result, after } = await runCartReconciliation(
+        now,
+        predictionId(0),
+        true,
       )
-      const after = store.snapshot()
       const ok =
         executed &&
         reconciled &&
@@ -502,25 +510,11 @@ const LAB_CASES: readonly LabCase[] = [
     target: "prediction",
     mutation: "happy path - predict, execute, reconcile, commit",
     run: async ({ now, predictionId }) => {
-      let executed = false
-      let reconciled = false
-      const capability = labCapability({
-        execute: () => {
-          executed = true
-          return { cartVersion: "v2" }
-        },
-        onReconcile: () => {
-          reconciled = true
-        },
-      })
-      const store = createPredictionStore<CartState>(emptyCart("v1"))
-      const result = await executePredicted(
-        capability,
-        { sku: "lab-sku", quantity: 1 },
-        store,
-        deterministicExecutionOptions(predictionId(0), now),
+      const { executed, reconciled, result, after } = await runCartReconciliation(
+        now,
+        predictionId(0),
+        false,
       )
-      const after = store.snapshot()
       const item = snapshotItems(after)[0]
       const ok =
         executed &&

@@ -700,6 +700,20 @@ const buildJoin = <
   return { entries: rows, baked }
 }
 
+type JoinArguments<
+  Options extends readonly unknown[],
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  LeftBy extends ContentFieldKey<Left>,
+  RightBy extends ContentFieldKey<Right>,
+  On extends SharedKey<Left, Right>,
+> = [
+  left: IndexedCollection<Left, LeftBy>,
+  right: IndexedCollection<Right, RightBy>,
+  on: On,
+  ...Options,
+]
+
 /** Join two indexes on a real same-typed frontmatter key. Default cardinality is one-to-many. */
 export function joinCollections<
   Left extends Record<string, unknown>,
@@ -708,10 +722,14 @@ export function joinCollections<
   RightBy extends ContentFieldKey<Right>,
   On extends SharedKey<Left, Right>,
 >(
-  left: IndexedCollection<Left, LeftBy>,
-  right: IndexedCollection<Right, RightBy>,
-  on: On,
-  options?: { readonly cardinality?: "one-to-many" },
+  ...args: JoinArguments<
+    [options?: { readonly cardinality?: "one-to-many" }],
+    Left,
+    Right,
+    LeftBy,
+    RightBy,
+    On
+  >
 ): IndexedJoin<Left, Right, On, "one-to-many">
 export function joinCollections<
   Left extends Record<string, unknown>,
@@ -720,10 +738,14 @@ export function joinCollections<
   RightBy extends ContentFieldKey<Right>,
   On extends SharedKey<Left, Right>,
 >(
-  left: IndexedCollection<Left, LeftBy>,
-  right: IndexedCollection<Right, RightBy>,
-  on: On,
-  options: { readonly cardinality: "one-to-one" },
+  ...args: JoinArguments<
+    [options: { readonly cardinality: "one-to-one" }],
+    Left,
+    Right,
+    LeftBy,
+    RightBy,
+    On
+  >
 ): IndexedJoin<Left, Right, On, "one-to-one">
 export function joinCollections<
   Left extends Record<string, unknown>,

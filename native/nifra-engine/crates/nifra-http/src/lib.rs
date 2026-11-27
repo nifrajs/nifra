@@ -2,6 +2,7 @@
 //! guards, native fast-path routes, prepared response templates, streaming/chunked framing,
 //! and the batched shared-memory ABI layout for Nifra.
 
+pub mod compress;
 pub mod date;
 pub mod h2;
 
@@ -103,7 +104,7 @@ pub mod abi {
     /// 8 x u32 (32 bytes) per inbound request in `inMeta`.
     pub const IN_SLOT_U32S: usize = 10;
     /// 4 x u32 (16 bytes) per outbound response in `outMeta`.
-    pub const OUT_SLOT_U32S: usize = 4;
+    pub const OUT_SLOT_U32S: usize = 5;
 
     pub const METHOD_MASK: u32 = 0x0F;
     pub const FLAG_HAS_BODY: u32 = 1 << 4;
@@ -118,6 +119,8 @@ pub mod abi {
     /// The request carried a `Content-Type`; its first value is in the batch at slot words 8 and 9
     /// (offset, length), so the adapter reads it without a call into the engine.
     pub const FLAG_HAS_CT: u32 = 1 << 13;
+    /// Request body streams incrementally via `onReqBody(reqId, chunk, end)` after head dispatch.
+    pub const FLAG_STREAM_BODY: u32 = 1 << 14;
 
     /// Sentinel offset indicating the body exceeds the inline slab and must be read via `getBody(id)`.
     pub const LARGE_BODY_SENTINEL: u32 = u32::MAX;
@@ -134,6 +137,7 @@ pub enum ParseError {
     DuplicateTransferEncoding,
     PayloadTooLarge,
     HeadersTooLarge,
+    UriTooLarge,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +145,12 @@ pub struct ParseLimits {
     pub max_body_size: usize,
     pub oversize_window: usize,
     pub max_header_bytes: usize,
+    /// Maximum number of headers allowed on one request (`0` = default 64, capped conservatively).
+    pub max_headers: usize,
+    /// Maximum length in bytes of the request target (`path` + `?query`); `0` = bounded only by `max_header_bytes`.
+    pub max_uri_size: usize,
+    /// Emit `ParseStatus::StreamHead` for non-empty incomplete or oversized bodies so JS can stream uploads.
+    pub stream_request_bodies: bool,
 }
 
 impl Default for ParseLimits {
@@ -149,6 +159,9 @@ impl Default for ParseLimits {
             max_body_size: 1_048_576,
             oversize_window: 1_048_576,
             max_header_bytes: 16 * 1024,
+            max_headers: 0,
+            max_uri_size: 0,
+            stream_request_bodies: false,
         }
     }
 }
@@ -171,13 +184,33 @@ pub struct ParsedRequest<'a> {
     pub over_max_body: bool,
     pub head_len: usize,
     pub body: Cow<'a, [u8]>,
+    pub trailers: Vec<(String, String)>,
     pub total_bytes: usize,
+}
+
+#[derive(Debug)]
+pub struct ParsedStreamHead<'a> {
+    pub method_idx: u8,
+    pub method: &'a str,
+    pub path: &'a str,
+    pub query: &'a str,
+    pub host: Option<&'a str>,
+    pub host_valid: bool,
+    pub is_json_ct: bool,
+    pub content_type: Option<&'a [u8]>,
+    pub http10: bool,
+    pub is_chunked: bool,
+    pub is_ws_upgrade: bool,
+    pub keep_alive: bool,
+    pub content_length: Option<u64>,
+    pub head_len: usize,
 }
 
 #[derive(Debug)]
 pub enum ParseStatus<'a> {
     Incomplete,
     Complete(ParsedRequest<'a>),
+    StreamHead(ParsedStreamHead<'a>),
 }
 
 #[inline]
@@ -281,13 +314,55 @@ pub fn is_valid_header_value(val: &str) -> bool {
 
 enum ChunkedStatus {
     Incomplete,
-    Complete { body: Vec<u8>, consumed: usize },
+    Complete {
+        body: Vec<u8>,
+        consumed: usize,
+        trailers: Vec<(String, String)>,
+    },
 }
 
 /// Longest chunk-size line (hex size plus extensions) a request may carry.
 const MAX_CHUNK_LINE: usize = 4096;
 /// Longest trailer section a chunked request may carry.
 const MAX_CHUNK_TRAILERS: usize = 16 * 1024;
+
+fn push_trailer_line(line: &[u8], out: &mut Vec<(String, String)>) -> Result<(), ParseError> {
+    let Some(colon) = memchr::memchr(b':', line) else {
+        return Err(ParseError::Malformed);
+    };
+    let name_bytes = &line[..colon];
+    if name_bytes.is_empty()
+        || !name_bytes
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    {
+        return Err(ParseError::Malformed);
+    }
+    let val_bytes = trim_ows(&line[colon + 1..]);
+    if !val_bytes
+        .iter()
+        .all(|&b| b == b'\t' || (0x20..=0x7e).contains(&b) || b >= 0x80)
+    {
+        return Err(ParseError::Malformed);
+    }
+    let name = std::str::from_utf8(name_bytes)
+        .map_err(|_| ParseError::Malformed)?
+        .to_ascii_lowercase();
+    if matches!(
+        name.as_str(),
+        "transfer-encoding"
+            | "content-length"
+            | "host"
+            | "trailer"
+            | "te"
+            | "connection"
+            | "upgrade"
+    ) {
+        return Err(ParseError::Malformed);
+    }
+    out.push((name, latin1(val_bytes)));
+    Ok(())
+}
 
 /// Where a chunked body decode stopped, so the next read continues instead of starting over.
 ///
@@ -300,6 +375,7 @@ pub struct ChunkResume {
     /// Offset, from the end of the head, of the next chunk-size line.
     pos: usize,
     body: Vec<u8>,
+    trailers: Vec<(String, String)>,
     /// Wire bytes spent on size lines, extensions, CRLFs and trailers rather than payload.
     framing: usize,
     examined: u64,
@@ -451,6 +527,7 @@ fn scan_trailers(
             return Ok(ChunkedStatus::Complete {
                 body: std::mem::take(&mut resume.body),
                 consumed,
+                trailers: std::mem::take(&mut resume.trailers),
             });
         }
         let from = scan.searched.min(tail.len());
@@ -468,6 +545,7 @@ fn scan_trailers(
         if t_lf == 0 || tail[t_lf - 1] != b'\r' {
             return Err(ParseError::Malformed);
         }
+        push_trailer_line(&tail[..t_lf - 1], &mut resume.trailers)?;
         scan.line_start += t_lf + 1;
         scan.searched = 0;
         if scan.line_start - scan.start > MAX_CHUNK_TRAILERS {
@@ -482,7 +560,7 @@ pub fn parse_http1<'a>(buf: &'a [u8], limits: ParseLimits) -> Result<ParseStatus
 }
 
 #[inline]
-fn parse_trimmed_usize(raw: &str) -> Result<usize, ParseError> {
+fn parse_trimmed_u64(raw: &str) -> Result<u64, ParseError> {
     let mut bytes = raw.as_bytes();
     while let Some((&b, rest)) = bytes.split_first() {
         if b.is_ascii_whitespace() {
@@ -501,17 +579,32 @@ fn parse_trimmed_usize(raw: &str) -> Result<usize, ParseError> {
     if bytes.is_empty() {
         return Err(ParseError::Malformed);
     }
-    let mut acc = 0usize;
+    let mut acc = 0u64;
     for &b in bytes {
         if !b.is_ascii_digit() {
             return Err(ParseError::Malformed);
         }
         acc = acc
             .checked_mul(10)
-            .and_then(|v| v.checked_add(usize::from(b - b'0')))
+            .and_then(|v| v.checked_add(u64::from(b - b'0')))
             .ok_or(ParseError::Malformed)?;
     }
     Ok(acc)
+}
+
+#[inline]
+fn partial_request_target_len(buf: &[u8]) -> Option<usize> {
+    let first_line = match memchr::memchr(b'\n', buf) {
+        Some(pos) => &buf[..pos],
+        None => buf,
+    };
+    let line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
+    let sp1 = memchr::memchr(b' ', line)?;
+    let after_method = &line[sp1 + 1..];
+    match memchr::memchr(b' ', after_method) {
+        Some(sp2) => Some(sp2),
+        None => Some(after_method.len()),
+    }
 }
 
 /// [`parse_http1`] that continues a partly decoded chunked body from `resume` instead of restarting.
@@ -524,6 +617,11 @@ pub fn parse_http1_resume<'a>(
     resume: &mut ChunkResume,
 ) -> Result<ParseStatus<'a>, ParseError> {
     if head_surely_partial(buf) {
+        if limits.max_uri_size > 0
+            && partial_request_target_len(buf).is_some_and(|len| len > limits.max_uri_size)
+        {
+            return Err(ParseError::UriTooLarge);
+        }
         if buf.len() > limits.max_header_bytes {
             return Err(ParseError::HeadersTooLarge);
         }
@@ -534,7 +632,13 @@ pub fn parse_http1_resume<'a>(
     let (req, parsed) = parse_head(buf, &mut inline, &mut heavy);
     let head_len = match parsed {
         Ok(httparse::Status::Complete(n)) => {
-            if n > limits.max_header_bytes {
+            let target_len = req.path.map_or(0, str::len);
+            if limits.max_uri_size > 0 && target_len > limits.max_uri_size {
+                return Err(ParseError::UriTooLarge);
+            }
+            if n > limits.max_header_bytes
+                || (limits.max_headers > 0 && req.headers.len() > limits.max_headers)
+            {
                 return Err(ParseError::HeadersTooLarge);
             }
             if !lines_end_in_crlf(&buf[..n]) {
@@ -543,6 +647,11 @@ pub fn parse_http1_resume<'a>(
             n
         }
         Ok(httparse::Status::Partial) => {
+            if limits.max_uri_size > 0
+                && partial_request_target_len(buf).is_some_and(|len| len > limits.max_uri_size)
+            {
+                return Err(ParseError::UriTooLarge);
+            }
             if buf.len() > limits.max_header_bytes {
                 return Err(ParseError::HeadersTooLarge);
             }
@@ -563,7 +672,7 @@ pub fn parse_http1_resume<'a>(
     };
 
     let mut host: Option<&'a str> = None;
-    let mut content_length: Option<usize> = None;
+    let mut content_length: Option<u64> = None;
     let mut is_json_ct = None;
     let mut content_type: Option<&'a [u8]> = None;
     let mut is_chunked = false;
@@ -607,7 +716,7 @@ pub fn parse_http1_resume<'a>(
                 content_type = Some(trim_ows(h.value));
             }
             14 if name.eq_ignore_ascii_case("content-length") => {
-                let parsed = parse_trimmed_usize(strict()?)?;
+                let parsed = parse_trimmed_u64(strict()?)?;
                 if let Some(prev) = content_length {
                     if prev != parsed {
                         return Err(ParseError::ConflictingContentLength);
@@ -638,35 +747,70 @@ pub fn parse_http1_resume<'a>(
         return Err(ParseError::ContentLengthWithTransferEncoding);
     }
 
+    let keep_alive = !close_seen && (keep_alive_seen || default_keep_alive);
+    let host_valid = host.is_some_and(is_valid_host);
+
+    if limits.stream_request_bodies && !is_ws_upgrade && !resume.is_active() {
+        let should_stream = if is_chunked {
+            true
+        } else {
+            let cl = content_length.unwrap_or(0);
+            cl > limits.max_body_size as u64
+                || (cl > 0 && (buf.len() as u64) < (head_len as u64).saturating_add(cl))
+        };
+        if should_stream {
+            return Ok(ParseStatus::StreamHead(ParsedStreamHead {
+                method_idx: method_to_idx(method),
+                method,
+                path,
+                query,
+                host,
+                host_valid,
+                is_json_ct: is_json_ct.unwrap_or(false),
+                content_type,
+                http10,
+                is_chunked,
+                is_ws_upgrade,
+                keep_alive,
+                content_length,
+                head_len,
+            }));
+        }
+    }
+
     let hard_cap = limits.max_body_size.saturating_add(limits.oversize_window);
-    let (body, total_bytes) = if is_chunked {
+    let (body, trailers, total_bytes) = if is_chunked {
         resume.active = true;
         let framing_cap = limits.max_header_bytes.saturating_add(hard_cap / 8);
         match decode_chunked(&buf[head_len..], hard_cap, framing_cap, resume)? {
             ChunkedStatus::Incomplete => return Ok(ParseStatus::Incomplete),
-            ChunkedStatus::Complete { body, consumed } => {
+            ChunkedStatus::Complete {
+                body,
+                consumed,
+                trailers,
+            } => {
                 let total = head_len
                     .checked_add(consumed)
                     .ok_or(ParseError::PayloadTooLarge)?;
-                (Cow::Owned(body), total)
+                (Cow::Owned(body), trailers, total)
             }
         }
     } else {
-        let body_len = content_length.unwrap_or(0);
-        if body_len > hard_cap {
+        let body_len_u64 = content_length.unwrap_or(0);
+        if body_len_u64 > hard_cap as u64 {
             return Err(ParseError::PayloadTooLarge);
         }
+        let body_len = body_len_u64 as usize;
         let total = head_len
             .checked_add(body_len)
             .ok_or(ParseError::PayloadTooLarge)?;
         if buf.len() < total {
             return Ok(ParseStatus::Incomplete);
         }
-        (Cow::Borrowed(&buf[head_len..total]), total)
+        (Cow::Borrowed(&buf[head_len..total]), Vec::new(), total)
     };
 
     let over_max_body = body.len() > limits.max_body_size;
-    let host_valid = host.is_some_and(is_valid_host);
 
     Ok(ParseStatus::Complete(ParsedRequest {
         method_idx: method_to_idx(method),
@@ -680,12 +824,231 @@ pub fn parse_http1_resume<'a>(
         http10,
         is_chunked,
         is_ws_upgrade,
-        keep_alive: !close_seen && (keep_alive_seen || default_keep_alive),
+        keep_alive,
         over_max_body,
         head_len,
         body,
+        trailers,
         total_bytes,
     }))
+}
+
+/// Decoded step emitted by [`H1BodyDecoder::feed`].
+#[derive(Debug)]
+pub struct H1BodyStep<'a> {
+    pub consumed: usize,
+    pub chunk: &'a [u8],
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkStreamPhase {
+    SizeLine,
+    Data(u64),
+    DataCrlf,
+    Trailers(usize),
+    Done,
+}
+
+/// Incremental sans-I/O decoder for streaming HTTP/1.1 request bodies (fixed `Content-Length` up to
+/// 64-bit sizes, or `Transfer-Encoding: chunked`).
+#[derive(Debug)]
+pub struct H1BodyDecoder(H1BodyDecoderInner);
+
+#[derive(Debug)]
+enum H1BodyDecoderInner {
+    Fixed {
+        remaining: u64,
+    },
+    Chunked {
+        phase: ChunkStreamPhase,
+        trailers: Vec<(String, String)>,
+    },
+}
+
+impl H1BodyDecoder {
+    pub fn fixed(content_length: u64) -> Self {
+        Self(H1BodyDecoderInner::Fixed {
+            remaining: content_length,
+        })
+    }
+
+    pub fn chunked() -> Self {
+        Self(H1BodyDecoderInner::Chunked {
+            phase: ChunkStreamPhase::SizeLine,
+            trailers: Vec::new(),
+        })
+    }
+
+    pub fn is_done(&self) -> bool {
+        match &self.0 {
+            H1BodyDecoderInner::Fixed { remaining } => *remaining == 0,
+            H1BodyDecoderInner::Chunked { phase, .. } => *phase == ChunkStreamPhase::Done,
+        }
+    }
+
+    pub fn take_trailers(&mut self) -> Vec<(String, String)> {
+        match &mut self.0 {
+            H1BodyDecoderInner::Fixed { .. } => Vec::new(),
+            H1BodyDecoderInner::Chunked { trailers, .. } => std::mem::take(trailers),
+        }
+    }
+
+    /// Decode at most one contiguous payload slice from `buf`. Callers loop while
+    /// `step.consumed > 0 && !step.done` to drain a read buffer completely.
+    pub fn feed<'a>(&mut self, buf: &'a [u8]) -> Result<H1BodyStep<'a>, ParseError> {
+        match &mut self.0 {
+            H1BodyDecoderInner::Fixed { remaining } => {
+                if *remaining == 0 {
+                    return Ok(H1BodyStep {
+                        consumed: 0,
+                        chunk: &[],
+                        done: true,
+                    });
+                }
+                let take = (*remaining).min(buf.len() as u64) as usize;
+                *remaining -= take as u64;
+                Ok(H1BodyStep {
+                    consumed: take,
+                    chunk: &buf[..take],
+                    done: *remaining == 0,
+                })
+            }
+            H1BodyDecoderInner::Chunked { phase, trailers } => {
+                let mut pos = 0usize;
+                loop {
+                    match *phase {
+                        ChunkStreamPhase::Done => {
+                            return Ok(H1BodyStep {
+                                consumed: pos,
+                                chunk: &[],
+                                done: true,
+                            });
+                        }
+                        ChunkStreamPhase::SizeLine => {
+                            let rest = &buf[pos..];
+                            let Some(rel_lf) = memchr::memchr(b'\n', rest) else {
+                                if rest.len() > MAX_CHUNK_LINE {
+                                    return Err(ParseError::Malformed);
+                                }
+                                return Ok(H1BodyStep {
+                                    consumed: pos,
+                                    chunk: &[],
+                                    done: false,
+                                });
+                            };
+                            if rel_lf == 0 || rel_lf > MAX_CHUNK_LINE || rest[rel_lf - 1] != b'\r' {
+                                return Err(ParseError::Malformed);
+                            }
+                            let len = parse_chunk_size_u64(&rest[..rel_lf - 1])?;
+                            pos += rel_lf + 1;
+                            *phase = if len == 0 {
+                                ChunkStreamPhase::Trailers(0)
+                            } else {
+                                ChunkStreamPhase::Data(len)
+                            };
+                        }
+                        ChunkStreamPhase::Data(rem) => {
+                            if pos >= buf.len() {
+                                return Ok(H1BodyStep {
+                                    consumed: pos,
+                                    chunk: &[],
+                                    done: false,
+                                });
+                            }
+                            let take = rem.min((buf.len() - pos) as u64) as usize;
+                            let start = pos;
+                            pos += take;
+                            let left = rem - take as u64;
+                            *phase = if left == 0 {
+                                ChunkStreamPhase::DataCrlf
+                            } else {
+                                ChunkStreamPhase::Data(left)
+                            };
+                            return Ok(H1BodyStep {
+                                consumed: pos,
+                                chunk: &buf[start..pos],
+                                done: false,
+                            });
+                        }
+                        ChunkStreamPhase::DataCrlf => {
+                            let rest = &buf[pos..];
+                            if rest.len() < 2 {
+                                return Ok(H1BodyStep {
+                                    consumed: pos,
+                                    chunk: &[],
+                                    done: false,
+                                });
+                            }
+                            if &rest[..2] != b"\r\n" {
+                                return Err(ParseError::Malformed);
+                            }
+                            pos += 2;
+                            *phase = ChunkStreamPhase::SizeLine;
+                        }
+                        ChunkStreamPhase::Trailers(ref mut used) => {
+                            let rest = &buf[pos..];
+                            if rest.len() >= 2 && &rest[..2] == b"\r\n" {
+                                pos += 2;
+                                *phase = ChunkStreamPhase::Done;
+                                return Ok(H1BodyStep {
+                                    consumed: pos,
+                                    chunk: &[],
+                                    done: true,
+                                });
+                            }
+                            let Some(rel_lf) = memchr::memchr(b'\n', rest) else {
+                                if rest != b"\r"
+                                    && used.saturating_add(rest.len()) > MAX_CHUNK_TRAILERS
+                                {
+                                    return Err(ParseError::Malformed);
+                                }
+                                if rest == b"\r" && used.saturating_add(1) > MAX_CHUNK_TRAILERS + 1
+                                {
+                                    return Err(ParseError::Malformed);
+                                }
+                                return Ok(H1BodyStep {
+                                    consumed: pos,
+                                    chunk: &[],
+                                    done: false,
+                                });
+                            };
+                            if rel_lf == 0 || rest[rel_lf - 1] != b'\r' {
+                                return Err(ParseError::Malformed);
+                            }
+                            *used = used.saturating_add(rel_lf + 1);
+                            if *used > MAX_CHUNK_TRAILERS {
+                                return Err(ParseError::Malformed);
+                            }
+                            push_trailer_line(&rest[..rel_lf - 1], trailers)?;
+                            pos += rel_lf + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn parse_chunk_size_u64(line: &[u8]) -> Result<u64, ParseError> {
+    if line.iter().any(|&b| b == b'\r' || b == 0) {
+        return Err(ParseError::Malformed);
+    }
+    let size = match memchr::memchr(b';', line) {
+        Some(semi) => {
+            let mut end = semi;
+            while end > 0 && matches!(line[end - 1], b' ' | b'\t') {
+                end -= 1;
+            }
+            &line[..end]
+        }
+        None => line,
+    };
+    if size.is_empty() || size.len() > 16 || !size.iter().all(u8::is_ascii_hexdigit) {
+        return Err(ParseError::Malformed);
+    }
+    let text = std::str::from_utf8(size).map_err(|_| ParseError::Malformed)?;
+    u64::from_str_radix(text, 16).map_err(|_| ParseError::Malformed)
 }
 
 /// Lazily collect all headers from a saved raw HTTP/1.1 head as `[lowercase_name, value, ...]`.
@@ -708,6 +1071,7 @@ pub fn collect_headers_in_head(raw_head: &[u8]) -> Vec<String> {
 #[derive(Default)]
 pub struct FastRoutes {
     static_get: HashMap<String, StaticRoute>,
+    static_post: HashMap<String, StaticRoute>,
     param_get: Vec<ParamRoute>,
 }
 
@@ -715,6 +1079,46 @@ pub struct FastRoutes {
 struct StaticRoute {
     head: Vec<u8>,
     body: Vec<u8>,
+    omit_body: bool,
+    force_zero_cl: bool,
+}
+
+impl StaticRoute {
+    fn new(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Self {
+        let mut head = Vec::with_capacity(128);
+        let omit_body = status < 200 || matches!(status, 204 | 205 | 304);
+        if omit_body {
+            let filtered: Vec<(&str, &str)> = headers
+                .iter()
+                .copied()
+                .filter(|&(k, _)| !k.eq_ignore_ascii_case("content-length"))
+                .collect();
+            write_head_prefix(&mut head, status, &filtered);
+        } else {
+            write_head_prefix(&mut head, status, headers);
+        }
+        Self {
+            head,
+            body: if omit_body { Vec::new() } else { body.to_vec() },
+            omit_body,
+            force_zero_cl: status == 205,
+        }
+    }
+
+    #[inline]
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.head);
+        if self.omit_body {
+            date::append_header(out);
+            if self.force_zero_cl {
+                out.extend_from_slice(b"content-length: 0\r\n\r\n");
+            } else {
+                out.extend_from_slice(b"\r\n");
+            }
+        } else {
+            append_content_length_and_body(out, &self.body);
+        }
+    }
 }
 
 struct ParamRoute {
@@ -726,7 +1130,7 @@ struct ParamRoute {
 impl FastRoutes {
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.static_get.is_empty() && self.param_get.is_empty()
+        self.static_get.is_empty() && self.static_post.is_empty() && self.param_get.is_empty()
     }
     pub fn add_static_get(
         &mut self,
@@ -735,15 +1139,19 @@ impl FastRoutes {
         headers: &[(&str, &str)],
         body: &[u8],
     ) {
-        let mut head = Vec::with_capacity(128);
-        write_head_prefix(&mut head, status, headers);
-        self.static_get.insert(
-            path,
-            StaticRoute {
-                head,
-                body: body.to_vec(),
-            },
-        );
+        self.static_get
+            .insert(path, StaticRoute::new(status, headers, body));
+    }
+
+    pub fn add_static_post(
+        &mut self,
+        path: String,
+        status: u16,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) {
+        self.static_post
+            .insert(path, StaticRoute::new(status, headers, body));
     }
 
     pub fn add_param_get(
@@ -765,8 +1173,7 @@ impl FastRoutes {
     #[inline]
     pub fn try_match_get(&self, path: &str, out: &mut Vec<u8>) -> bool {
         if let Some(route) = self.static_get.get(path) {
-            out.extend_from_slice(&route.head);
-            append_content_length_and_body(out, &route.body);
+            route.write_to(out);
             return true;
         }
         for route in &self.param_get {
@@ -779,6 +1186,15 @@ impl FastRoutes {
                     }
                 }
             }
+        }
+        false
+    }
+
+    #[inline]
+    pub fn try_match_post(&self, path: &str, out: &mut Vec<u8>) -> bool {
+        if let Some(route) = self.static_post.get(path) {
+            route.write_to(out);
+            return true;
         }
         false
     }
@@ -918,6 +1334,23 @@ pub fn write_buffered_response(
             out.extend_from_slice(b);
         }
     }
+}
+
+/// [`write_buffered_response`] for header lines the caller already serialized and validated: each
+/// ends in CRLF and none is `date`, `content-length` or `transfer-encoding`. Not for bodyless statuses.
+pub fn write_block_response(out: &mut Vec<u8>, status: u16, block: &[u8], body: &[u8]) {
+    let mut num = itoa::Buffer::new();
+    out.extend_from_slice(b"HTTP/1.1 ");
+    out.extend_from_slice(num.format(status).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(reason_phrase(status).as_bytes());
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(block);
+    date::append_header(out);
+    out.extend_from_slice(b"content-length: ");
+    out.extend_from_slice(num.format(body.len()).as_bytes());
+    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(body);
 }
 
 /// Write the HTTP/1.1 head for a streamed response (`Transfer-Encoding: chunked` unless
@@ -1259,6 +1692,7 @@ mod tests {
             max_body_size: 4,
             oversize_window: 0,
             max_header_bytes: 64 * 1024,
+            ..ParseLimits::default()
         };
         assert_eq!(
             parse_http1(raw, tiny).unwrap_err(),
@@ -1317,6 +1751,7 @@ mod tests {
             max_body_size: 1024,
             oversize_window: 1024,
             max_header_bytes: 1024,
+            ..ParseLimits::default()
         };
         let mut fat = head.to_vec();
         for _ in 0..200 {
@@ -1353,6 +1788,7 @@ mod tests {
                     finished = Some((req.body.into_owned(), req.total_bytes));
                     break;
                 }
+                ParseStatus::StreamHead(_) => panic!("unexpected StreamHead when disabled"),
             }
         }
         let (body, total) = finished.expect("complete once every byte has arrived");
@@ -1446,6 +1882,20 @@ mod tests {
             resume.examined(),
             wire.len()
         );
+    }
+
+    #[test]
+    fn block_response_matches_the_pair_writer() {
+        let mut pairs = Vec::new();
+        write_buffered_response(
+            &mut pairs,
+            201,
+            &[("x-a", "1"), ("x-b", "a: b")],
+            Some(b"hi"),
+        );
+        let mut block = Vec::new();
+        write_block_response(&mut block, 201, b"x-a: 1\r\nx-b: a: b\r\n", b"hi");
+        assert_eq!(block, pairs);
     }
 
     #[test]
@@ -1722,5 +2172,128 @@ mod tests {
             awaits_continue(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\n"),
             Some(false)
         );
+    }
+
+    #[test]
+    fn enforces_max_uri_size_and_max_headers() {
+        let uri_limits = ParseLimits {
+            max_uri_size: 16,
+            ..ParseLimits::default()
+        };
+        assert_eq!(
+            parse_http1(
+                b"GET /0123456789abcdef HTTP/1.1\r\nHost: a\r\n\r\n",
+                uri_limits
+            )
+            .unwrap_err(),
+            ParseError::UriTooLarge
+        );
+        // Enforced early on incomplete requests too.
+        assert_eq!(
+            parse_http1(b"GET /0123456789abcdef", uri_limits).unwrap_err(),
+            ParseError::UriTooLarge
+        );
+        assert!(matches!(
+            parse_http1(b"GET /ok HTTP/1.1\r\nHost: a\r\n\r\n", uri_limits),
+            Ok(ParseStatus::Complete(_))
+        ));
+
+        let hdr_limits = ParseLimits {
+            max_headers: 3,
+            ..ParseLimits::default()
+        };
+        assert!(matches!(
+            parse_http1(
+                b"GET / HTTP/1.1\r\nHost: a\r\nX-1: 1\r\nX-2: 2\r\n\r\n",
+                hdr_limits
+            ),
+            Ok(ParseStatus::Complete(_))
+        ));
+        assert_eq!(
+            parse_http1(
+                b"GET / HTTP/1.1\r\nHost: a\r\nX-1: 1\r\nX-2: 2\r\nX-3: 3\r\n\r\n",
+                hdr_limits
+            )
+            .unwrap_err(),
+            ParseError::HeadersTooLarge
+        );
+
+        // Above default 64 stack cap still succeeds dynamically up to configured limit.
+        let high_hdr_limits = ParseLimits {
+            max_headers: 80,
+            ..ParseLimits::default()
+        };
+        let mut req_bytes = b"GET / HTTP/1.1\r\nHost: a\r\n".to_vec();
+        for i in 0..70 {
+            req_bytes.extend_from_slice(format!("X-H-{i}: v\r\n").as_bytes());
+        }
+        req_bytes.extend_from_slice(b"\r\n");
+        assert!(matches!(
+            parse_http1(&req_bytes, high_hdr_limits),
+            Ok(ParseStatus::Complete(_))
+        ));
+    }
+
+    #[test]
+    fn streaming_head_and_body_decoder_handle_fixed_chunked_and_large_lengths() {
+        let limits = ParseLimits {
+            max_body_size: 4,
+            stream_request_bodies: true,
+            ..ParseLimits::default()
+        };
+
+        // 5 GiB Content-Length parses without overflow and yields StreamHead immediately.
+        let five_gib = "POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: 5368709120\r\n\r\nabc";
+        match parse_http1(five_gib.as_bytes(), limits).unwrap() {
+            ParseStatus::StreamHead(head) => {
+                assert_eq!(head.path, "/upload");
+                assert_eq!(head.content_length, Some(5_368_709_120));
+                assert!(!head.is_chunked);
+                let mut dec = H1BodyDecoder::fixed(head.content_length.unwrap());
+                let step = dec.feed(&five_gib.as_bytes()[head.head_len..]).unwrap();
+                assert_eq!(step.chunk, b"abc");
+                assert!(!step.done);
+            }
+            other => panic!("expected StreamHead, got {other:?}"),
+        }
+
+        // Chunked request yields StreamHead and decodes incremental slices.
+        let raw_chunked =
+            b"POST /chunks HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nfoo\r\n4\r\nbar!\r\n0\r\nX-Tr: 1\r\n\r\n";
+        let head = match parse_http1(raw_chunked, limits).unwrap() {
+            ParseStatus::StreamHead(h) => h,
+            other => panic!("expected StreamHead, got {other:?}"),
+        };
+        assert!(head.is_chunked);
+        let mut dec = H1BodyDecoder::chunked();
+        let mut rest = &raw_chunked[head.head_len..];
+        let mut collected = Vec::new();
+        loop {
+            let step = dec.feed(rest).unwrap();
+            collected.extend_from_slice(step.chunk);
+            rest = &rest[step.consumed..];
+            if step.done {
+                break;
+            }
+        }
+        assert_eq!(collected, b"foobar!");
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn fast_routes_match_static_post_without_cross_matching_get() {
+        let mut routes = FastRoutes::default();
+        routes.add_static_post(
+            "/ping".into(),
+            200,
+            &[("content-type", "text/plain")],
+            b"pong",
+        );
+        let mut out = Vec::new();
+        assert!(!routes.try_match_get("/ping", &mut out));
+        assert!(routes.try_match_post("/ping", &mut out));
+        let text = std::str::from_utf8(&out).unwrap();
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(text.ends_with("pong"));
     }
 }

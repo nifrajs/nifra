@@ -14,9 +14,9 @@ const running = await serve(app, { port: 3000 })
 await running.stop()
 ```
 
-Requires Node 22 or newer and the built addon. `@nifrajs/node` is a peer dependency: this package reuses its Host policy, lifecycle and outcome runtime.
+Requires Node 22 or newer and the built addon (`win32`, `darwin`, and `linux`, with `NIFRA_ENGINE_TRANSPORT=uring|epoll|uv` on Linux; pass `fallback: true` to fall back to `@nifrajs/node` if no native binary is available). `@nifrajs/node` is a peer dependency: this package reuses its Host policy, lifecycle and outcome runtime.
 
-Build `nifra-napi` with Cargo from `native/nifra-engine`; `serve()` loads it on first use from `native/nifra-engine/target/{release,debug}`, or from the path in `NIFRA_RUST_ENGINE_PATH` when set. The loader opens the shared library in place. It is unix-only (libuv poll handles).
+Build `nifra-napi` with Cargo from `native/nifra-engine` (or stage prebuilt `.node` binaries via `bun run scripts/stage-native-addon.ts`); `serve()` loads from `NIFRA_RUST_ENGINE_PATH`, installed platform packages (`@nifrajs/node-engine-<platform>-<arch>[-gnu|-musl]`), local `packages/node-engine/prebuilds/`, or `native/nifra-engine/target/{release,debug}`. The loader opens the shared library in place.
 
 Run the integration tests from the repository root. On macOS:
 
@@ -38,28 +38,34 @@ Resolves to an `EngineServer` once the port is bound. Invalid options throw befo
 
 | Option | Meaning |
 |---|---|
-| `port` | Required. `0` picks a free port; read it from `running.port`. |
+| `port` | Required unless `path` is set. `0` picks a free port; read it from `running.port`. |
 | `hostname` | Interface to bind. Default: all. |
+| `path` | Unix domain socket path to listen on instead of TCP `hostname`/`port`. |
 | `protocol` | The scheme `Request.url` carries. `"https"` when `tls` is set, else `"http"`. |
-| `tls` | In-process TLS (rustls): inline `cert` / `key`, or `cert_file_name` / `key_file_name`, plus optional `ticketKeys` (one or more 48-byte entries, newest first). |
-| `http2` | HTTP/2 beside HTTP/1.1 on the same port. `true`, or an object of settings. See below. |
-| `maxBodySize` | Largest request body, in bytes. Default 1 MiB. See below. |
-| `oversizeWindow` | Bytes past `maxBodySize` still buffered so the app can answer with its own 413 body. Default 1 MiB; `0` turns it off. See below. |
-| `wsMaxMessageSize` | Largest WebSocket message before the engine fails the connection with 1009. Default: see below. |
+| `tls` | In-process TLS (rustls): inline `cert` / `key`, or `cert_file_name` / `key_file_name`, optional `serverNames` SNI entries, plus optional `ticketKeys`. |
+| `http2` | HTTP/2 beside HTTP/1.1 on the same port (including RFC 8441 WebSocket over HTTP/2). `true`, or an object of settings. |
+| `compression` | Native response compression (`zstd`, `br`, `gzip`, `deflate`) via `Accept-Encoding`. |
+| `fallback` | Fall back to `@nifrajs/node` (`node:http`/`node:https`) when no native addon can be loaded. |
+| `static` | Static file middleware (`serveStatic(...)`) or handler consulted before routes on GET/HEAD. |
+| `fastResponse` | Swap `globalThis.Response` for the lazy direct-write wrapper to skip stream drains. |
+| `maxBodySize` | Largest request body, in bytes (default 1 MiB) when buffering request bodies. |
+| `oversizeWindow` | Bytes past `maxBodySize` still buffered so the app can answer with its own 413 body. Default 1 MiB; `0` turns it off. |
+| `wsMaxMessageSize` | Largest WebSocket message before the engine fails the connection with 1009. |
+| `wsDeflate` | Enable RFC 7692 WebSocket `permessage-deflate` compression (`true` or options); individual routes may override via `handler.deflate`. |
 | `allowedHosts`, `canonicalHost`, `normalizeTarget` | The same Host and target policy `@nifrajs/node` applies. |
-| `validateHost` | `true` checks every request's `Host`. Off by default, as on the Bun and Deno server; setting `allowedHosts` or `canonicalHost` turns it on. See below. |
-| `engine` | Engine limits: `idleTimeoutMs` (default 30 s; also drops a peer that takes none of its response, and a quiet WebSocket is pinged first), `headersTimeoutMs` (default 60 s, request head and TLS handshake), `requestTimeoutMs` (default 300 s, from a request's first byte), `maxHeaderBytes` (default 16 KiB), `maxConnections`, `reusePort` (off; `serveCluster` sets it). |
+| `validateHost` | `true` checks every request's `Host`. Off by default; setting `allowedHosts` or `canonicalHost` turns it on. |
+| `engine` | Engine limits & streaming: `streamRequestBodies`, `wsMaxBackpressure`, `wsCloseOnBackpressureLimit`, `idleTimeoutMs`, `headersTimeoutMs`, `requestTimeoutMs`, `maxHeaderBytes`, `maxConnections`, `reusePort`. |
 | `gracefulSignals` | `true`, or stop options: SIGTERM and SIGINT call `stop()`. Off by default. |
-
-`static` and `fastResponse` are not supported and throw a `TypeError`. Serve files from a route, or put a static host in front.
 
 ### The server handle
 
 | Member | Meaning |
 |---|---|
-| `port` | The bound port. |
+| `port` | The bound port (`0` for Unix domain sockets). |
+| `path` | The bound Unix domain socket path when started with `path`. |
 | `stop({ drainMs, delayMs })` | Runs the app's `onStopping` hooks, keeps serving for `delayMs`, stops accepting, lets in-flight requests and sockets finish for up to `drainMs` (default 10 s), closes what is left, then runs `onStop`. Open WebSockets are closed with 1001 "server shutting down". |
 | `reloadTls(tls?)` | Swaps the certificate for every new handshake. See below. |
+| `addServerName(entry)` / `removeServerName(host)` | Adds/replaces or removes an SNI certificate at runtime. |
 | `[Symbol.asyncDispose]()` | `await using` support; same as `stop()`. |
 
 ## Request bodies
@@ -80,7 +86,7 @@ Off by default, as `validateHost` is on the Bun and Deno server. With it off, `H
 
 ## Fixed replies
 
-`staticResponse()` and `echoParam()` GET routes are registered with the engine, which answers them without calling into JS. They are skipped under a Host policy (every request's Host must be read) and a fixed POST stays on the router, where the cross-site form check can read `Origin` and `Sec-Fetch-Site`.
+`staticResponse()` (`GET` and `POST`) and `echoParam()` `GET` routes are registered with the engine, which answers them without calling into JS. They are skipped under a Host policy (every request's Host must be read), `GET` fast paths are skipped when `static` middleware is active, and a fixed `POST` carrying browser origin headers (`Origin` / `Sec-Fetch-Site`) stays on the router for cross-site checks.
 
 ## HTTP/2
 
@@ -88,9 +94,7 @@ Off by default, as `validateHost` is on the Bun and Deno server. With it off, `H
 await serve(app, { port: 443, tls: { cert, key }, http2: true })
 ```
 
-With `tls`, clients negotiate `h2` by ALPN. Without it, a client opening with the HTTP/2 preface is served (prior knowledge, `curl --http2-prior-knowledge`). Every other client gets HTTP/1.1 on the same port. A request on an HTTP/2 stream reaches the app exactly as an HTTP/1 request does.
-
-Not served over HTTP/2: WebSocket upgrades (RFC 8441), server push, CONNECT. A WebSocket needs an HTTP/1.1 connection.
+With `tls`, clients negotiate `h2` by ALPN. Without it, a client opening with the HTTP/2 preface is served (prior knowledge, `curl --http2-prior-knowledge`). Every other client gets HTTP/1.1 on the same port. A request on an HTTP/2 stream reaches the app identically to an HTTP/1 request, including RFC 8441 Extended CONNECT WebSocket upgrades (`:protocol: websocket`) and streaming request/response bodies. Server push is not supported.
 
 `engine.requestTimeoutMs` bounds reception of each HTTP/2 request from its initial headers.
 An upload that exceeds the deadline is cancelled while other streams keep running.
@@ -123,7 +127,12 @@ An app that exposes `resolveWebSocketUpgrade` (every nifra app does) serves its 
 - `ws.raw` is an `EngineSocket`: `id`, `headers()`, `query()` and `remoteAddress()` of the handshake. The engine keeps no socket object to hand out.
 - The engine takes one message cap per listener. Unless `wsMaxMessageSize` is set, it is the largest `wsMaxPayloadBytes` among the app and the apps mounted in it that serve sockets, else the engine's 16 MiB. A route whose app declares less is held to its own, and a message over it closes the socket with 1009.
 
-The engine reports a peer's close code but not its reason, so `close(ws, code, reason)` gets `""` when the peer closed first. A close the server sent keeps its own reason.
+- The peer's close code and close reason (`ws.close` / `handler.close`) are reported verbatim, and `ws.getBufferedAmount()` / `handler.drain` track per-socket backpressure.
+
+## Notes on buffered vs streaming request bodies
+
+- By default, request bodies are buffered up to `maxBodySize` plus `oversizeWindow`; a body past the window gets the engine's empty 413 rather than the app's own error.
+- Set `engine.streamRequestBodies: true` to stream HTTP/1.1 and HTTP/2 request bodies incrementally with socket/window backpressure.
 
 ## Certificate reload
 
@@ -180,12 +189,9 @@ On Linux, closing a worker's listening socket resets the connections that were s
 
 `port` must be fixed: workers cannot share an ephemeral one. Windows has no `SO_REUSEPORT` and is refused. The Linux kernel balances accepts across the workers; macOS and BSD accept the shared bind but send new connections to one worker, so use it there for development only.
 
-## Differences from `@nifrajs/node`
+## Feature parity
 
-- No `static` or `fastResponse` options.
-- Request bodies are buffered, up to `maxBodySize` plus `oversizeWindow`; a body past the window gets the engine's empty 413 rather than the app's own error.
-- The peer's WebSocket close reason is not reported.
-- WebSockets and HTTP/2 do not combine.
+`@nifrajs/node-engine` supports `static`, `fastResponse`, `compression`, `path` (Unix domain sockets), SNI multi-cert (`tls.serverNames` + `addServerName`/`removeServerName`), WebSocket native pub/sub + backpressure + peer close reason + RFC 8441 over HTTP/2, `> 4 GiB` response framing, and incremental streaming request bodies (`engine.streamRequestBodies`).
 
 ## Benchmark
 

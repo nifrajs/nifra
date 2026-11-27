@@ -16,6 +16,28 @@ const inlineCert = process.env.INLINE_CERT_FILE
 const inlineKey = process.env.INLINE_KEY_FILE
 const reloadCert = process.env.RELOAD_CERT_FILE
 const reloadKey = process.env.RELOAD_KEY_FILE
+const ticketKeysHex = process.env.TICKET_KEY_HEX
+const ticketKeys = ticketKeysHex === undefined ? undefined : Buffer.from(ticketKeysHex, "hex")
+
+const tls = (() => {
+  if (inlineCert !== undefined && inlineKey !== undefined) {
+    const base: { cert: string; key: string; ticketKeys?: Buffer } = {
+      cert: readFileSync(inlineCert, "utf8"),
+      key: readFileSync(inlineKey, "utf8"),
+    }
+    if (ticketKeys !== undefined) base.ticketKeys = ticketKeys
+    return base
+  }
+  if (certFile !== undefined && keyFile !== undefined) {
+    const base: { cert_file_name: string; key_file_name: string; ticketKeys?: Buffer } = {
+      cert_file_name: certFile,
+      key_file_name: keyFile,
+    }
+    if (ticketKeys !== undefined) base.ticketKeys = ticketKeys
+    return base
+  }
+  return undefined
+})()
 
 try {
   const node = await serveCluster(
@@ -34,12 +56,8 @@ try {
       hostname: "127.0.0.1",
       workers: Number(process.env.WORKERS ?? 3),
       gracefulSignals: { drainMs: 500 },
-      tls:
-        inlineCert !== undefined && inlineKey !== undefined
-          ? { cert: readFileSync(inlineCert, "utf8"), key: readFileSync(inlineKey, "utf8") }
-          : certFile === undefined || keyFile === undefined
-            ? undefined
-            : { cert_file_name: certFile, key_file_name: keyFile },
+      sharedListener: process.env.SHARED_LISTENER === "1",
+      tls,
       onWorkerEvent: (event) => say({ event: event.type, ...event }),
     },
   )
@@ -69,7 +87,7 @@ try {
       )
     })
     // Last: the tests signal as soon as they read this, and an unhandled SIGUSR2 kills the process.
-    say({ event: "ready", workers: node.workers() })
+    say({ event: "ready", port: node.port, workers: node.workers() })
   }
 } catch (error) {
   say({ event: "failed", message: error instanceof Error ? error.message : String(error) })
