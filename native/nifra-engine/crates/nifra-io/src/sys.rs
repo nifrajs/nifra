@@ -654,7 +654,12 @@ pub(crate) fn write_buf_limit(cfg: SocketConfig) -> usize {
 /// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
 /// falling back to buffering the tail only on partial writes, backpressure, or TLS.
 #[inline]
-pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAction {
+pub(crate) fn write_bytes_or_queue(
+    core: &mut ConnCore,
+    bytes: &[u8],
+    max_write: usize,
+) -> FlushAction {
+    let budget = max_write.saturating_sub(core.queued_bytes());
     if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
         match send_nonblock(core.fd, bytes) {
             SendOutcome::All => {
@@ -668,12 +673,19 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
                 return FlushAction::None;
             }
             SendOutcome::Partial(n) => {
+                let tail = &bytes[n..];
+                if tail.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
-                core.write_buf.extend_from_slice(&bytes[n..]);
+                core.write_buf.extend_from_slice(tail);
                 core.write_pos = 0;
                 return backed_up(core, true);
             }
             SendOutcome::WouldBlock => {
+                if bytes.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
                 core.write_buf.extend_from_slice(bytes);
                 core.write_pos = 0;
@@ -683,6 +695,9 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
         }
     }
 
+    if bytes.len() > budget {
+        return FlushAction::Close;
+    }
     compact_sent_prefix(core);
     if let Some(ref mut tls_conn) = core.tls {
         if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {

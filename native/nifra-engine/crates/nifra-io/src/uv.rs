@@ -509,7 +509,7 @@ impl UvPollState {
         if effective_close {
             conn.core.close_after_write = true;
         }
-        let action = write_bytes_or_queue(&mut conn.core, bytes);
+        let action = write_bytes_or_queue(&mut conn.core, bytes, max_write);
         if action == FlushAction::Close || conn.core.queued_bytes() > max_write {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
@@ -1052,7 +1052,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                 conn.core.read_buf = read_buf;
             }
             if !remove && !cleartext_write.is_empty() {
-                let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write);
+                let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write, max_write);
                 if fa == FlushAction::Close || conn.core.queued_bytes() > max_write {
                     remove = true;
                 } else if fa != FlushAction::None {
@@ -1256,11 +1256,12 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
             st.callbacks.as_deref_mut(),
         )
     };
+    let max_write = write_buf_limit(st.cfg);
     let mut close = sweep.close;
     for id in sweep.ping {
         if let Some(conn) = st.conns.get_mut(id) {
             conn.core.last_activity = now;
-            let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME);
+            let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME, max_write);
             if fa == FlushAction::Close {
                 close.push(id);
             } else {

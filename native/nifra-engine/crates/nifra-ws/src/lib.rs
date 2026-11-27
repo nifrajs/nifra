@@ -492,6 +492,11 @@ pub fn compress_deflate_payload(compress: &mut Compress, payload: &[u8], out: &m
     if written >= 4 && out[out.len() - 4..] == DEFLATE_TAIL {
         out.truncate(out.len() - 4);
     }
+    if out.len() == start_len {
+        // After a completed Sync flush under context takeover, an empty slice yields no new
+        // output bytes; emit the RFC 7692 empty stored-block header so RSV1 frames stay aligned.
+        out.push(0x00);
+    }
 }
 
 fn decompress_deflate_payload(
@@ -529,6 +534,19 @@ fn decompress_deflate_payload(
             }
             match status {
                 Status::StreamEnd => {
+                    if off < seg.len() {
+                        // RFC 7692 §7.2.2 permits another DEFLATE block after an internal BFINAL=1
+                        // block; preserve up to 32 KiB of decoded history as its raw dictionary.
+                        decompress.reset(false);
+                        if !out.is_empty() {
+                            let dict_start = out.len().saturating_sub(32 * 1024);
+                            decompress
+                                .set_dictionary(&out[dict_start..])
+                                .map_err(|_| 1002u16)?;
+                        }
+                        stream_ended = false;
+                        continue;
+                    }
                     stream_ended = true;
                     break;
                 }
@@ -627,7 +645,7 @@ impl WsConn {
         out: &mut Vec<u8>,
     ) {
         if let Some(ref mut d) = self.deflate {
-            if payload.len() >= d.threshold {
+            if !payload.is_empty() && payload.len() >= d.threshold {
                 let comp_opt = if d.shared_compressor {
                     shared_compress
                 } else {
@@ -1423,5 +1441,84 @@ mod tests {
         let mut pool = SharedCompressorPool::new(6);
         let _ = pool.get_mut(10);
         let _ = pool.get_mut(15);
+    }
+
+    #[test]
+    fn compresses_empty_message_without_desynchronizing_context_takeover() {
+        let cfg = WsDeflateConfig {
+            enabled: true,
+            server_no_context_takeover: false,
+            client_no_context_takeover: false,
+            threshold: 0,
+            shared_compressor: false,
+            ..WsDeflateConfig::default()
+        };
+        let negotiated =
+            negotiate_permessage_deflate(Some("permessage-deflate"), cfg).expect("negotiated");
+
+        // Encode Hello, "", Hello via `encode_server_message`: empty frame skips compression
+        // (`RSV1=0`) so context takeover stays valid across subsequent messages.
+        let mut server = WsConn::with_deflate(4096, Some(&negotiated));
+        let mut frame1 = Vec::new();
+        let mut frame2 = Vec::new();
+        let mut frame3 = Vec::new();
+        server.encode_server_message(OPCODE_TEXT, b"Hello", None, &mut frame1);
+        server.encode_server_message(OPCODE_TEXT, b"", None, &mut frame2);
+        server.encode_server_message(OPCODE_TEXT, b"Hello", None, &mut frame3);
+        assert_ne!(frame1[0] & 0x40, 0);
+        assert_eq!(frame2, vec![0x81, 0x00]);
+        assert_ne!(frame3[0] & 0x40, 0);
+
+        let mut client_decomp = Decompress::new_with_window_bits(false, 15);
+        assert_eq!(
+            decompress_deflate_payload(&mut client_decomp, &frame1[2..], 4096).unwrap(),
+            b"Hello"
+        );
+        assert_eq!(
+            decompress_deflate_payload(&mut client_decomp, &frame3[2..], 4096).unwrap(),
+            b"Hello"
+        );
+
+        // Calling `compress_deflate_payload` directly with `&[]` after a Sync flush emits `0x00`
+        // (empty stored block header) rather than zero bytes so repeated flushes remain decodable.
+        let mut direct_comp = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let mut direct_decomp = Decompress::new_with_window_bits(false, 15);
+        for msg in [&b"Hello"[..], &b""[..], &b"Hello"[..]] {
+            let mut wire = Vec::new();
+            compress_deflate_payload(&mut direct_comp, msg, &mut wire);
+            assert!(!wire.is_empty());
+            assert_eq!(
+                decompress_deflate_payload(&mut direct_decomp, &wire, 4096).unwrap(),
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn decompresses_internal_bfinal_blocks_and_remaining_payload() {
+        let mut decomp = Decompress::new_with_window_bits(false, 15);
+        // RFC 7692 multi-block payload with internal `BFINAL=1`: stored 'A' + non-final stored 'B'.
+        let multi = [
+            0x01, 0x01, 0x00, 0xfe, 0xff, b'A', 0x00, 0x01, 0x00, 0xfe, 0xff, b'B', 0x00,
+        ];
+        assert_eq!(
+            decompress_deflate_payload(&mut decomp, &multi, 4096).unwrap(),
+            b"AB"
+        );
+
+        // Two consecutive blocks where the first ends in `BFINAL=1` and the second compressed
+        // block uses a backward reference into the first block via the preserved dictionary tail.
+        let first_plain = b"internal-bfinal-history-prefix-0123456789-";
+        let mut comp1 = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let mut wire = Vec::with_capacity(256);
+        let _ = comp1.compress_vec(first_plain, &mut wire, FlushCompress::Finish);
+        let mut comp2 = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let _ = comp2.set_dictionary(first_plain);
+        compress_deflate_payload(&mut comp2, first_plain, &mut wire);
+
+        let mut decomp2 = Decompress::new_with_window_bits(false, 15);
+        let decoded = decompress_deflate_payload(&mut decomp2, &wire, 4096).unwrap();
+        let expected = [first_plain.as_slice(), first_plain.as_slice()].concat();
+        assert_eq!(decoded, expected);
     }
 }

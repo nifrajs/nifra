@@ -219,6 +219,8 @@ async function runWorker(
   delete process.env[TICKET_ENV]
   const autoTicketKeys =
     options.tls?.ticketKeys === undefined && hex !== undefined ? Buffer.from(hex, "hex") : undefined
+  // Keys preserved on a certificate-only reload: explicit keys first, then primary-generated keys.
+  const fallbackTicketKeys = options.tls?.ticketKeys ?? autoTicketKeys
   const reloaded = await askForTls()
   const current =
     reloaded === undefined
@@ -227,9 +229,9 @@ async function runWorker(
         ? reloaded
         : { ticketKeys: options.tls.ticketKeys, ...reloaded }
   const tls =
-    current === undefined || current.ticketKeys !== undefined || autoTicketKeys === undefined
+    current === undefined || current.ticketKeys !== undefined || fallbackTicketKeys === undefined
       ? current
-      : { ...current, ticketKeys: autoTicketKeys }
+      : { ...current, ticketKeys: fallbackTicketKeys }
   let server: EngineServer
   try {
     server = await serve(await app(), {
@@ -267,8 +269,8 @@ async function runWorker(
       const nextTls =
         message.tls === undefined
           ? undefined
-          : message.tls.ticketKeys === undefined && autoTicketKeys !== undefined
-            ? { ...message.tls, ticketKeys: autoTicketKeys }
+          : message.tls.ticketKeys === undefined && fallbackTicketKeys !== undefined
+            ? { ...message.tls, ticketKeys: fallbackTicketKeys }
             : message.tls
       server.reloadTls(nextTls)
     } catch (cause) {
@@ -499,12 +501,11 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     process.once("SIGINT", onSignal)
   }
 
-  const applyTls = async (tls?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
+  const applyTls = async (snapshot?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
     if (stopping) throw new Error("@nifrajs/node-engine: the cluster is not running")
     if (options.tls === undefined) {
       throw new Error("@nifrajs/node-engine: reloadTls requires a cluster started with `tls`")
     }
-    const snapshot = tls === undefined ? undefined : snapshotIpcTls(tls)
     // Every worker that holds a certificate, the ones still starting included.
     const targets = [...slots.values()].filter((slot) => slot.started)
     const failures: string[] = []
@@ -546,9 +547,15 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
 
   // One at a time, in call order: a worker that starts during one waits to be told its result.
   const reloadTls = (tls?: NonNullable<ServeOptions["tls"]>): Promise<void> => {
+    let snapshot: NonNullable<ServeOptions["tls"]> | undefined
+    try {
+      snapshot = tls === undefined ? undefined : snapshotIpcTls(tls)
+    } catch (error) {
+      return Promise.reject(error)
+    }
     const next = reloading.then(
-      () => applyTls(tls),
-      () => applyTls(tls),
+      () => applyTls(snapshot),
+      () => applyTls(snapshot),
     )
     reloading = next
     return next

@@ -137,6 +137,7 @@ struct TicketState {
     ticketer: Arc<dyn ProducesTickets>,
     policy_digest: [u8; 32],
     shared_keys: Option<Vec<u8>>,
+    active_input: TlsInput,
 }
 
 impl std::fmt::Debug for TicketState {
@@ -295,6 +296,7 @@ impl TlsStore {
                 ticketer,
                 policy_digest: fp,
                 shared_keys,
+                active_input: input.clone(),
             }),
         })
     }
@@ -354,6 +356,7 @@ impl TlsStore {
         guard.ticketer = next_ticketer;
         guard.policy_digest = fp;
         guard.shared_keys = next_shared;
+        guard.active_input = input.clone();
         Ok(())
     }
 
@@ -363,12 +366,11 @@ impl TlsStore {
         key_pem: &[u8],
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<(), TlsError> {
-        self.reload_input(&TlsInput {
-            cert_pem: Some(cert_pem.to_vec()),
-            key_pem: Some(key_pem.to_vec()),
-            alpn_protocols,
-            ..Default::default()
-        })
+        let next = {
+            let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
+            input_with_pem_override(&guard.active_input, cert_pem, key_pem, alpn_protocols)
+        };
+        self.reload_input(&next)
     }
 
     /// Create a sans-I/O `ServerConnection` for a newly accepted socket.
@@ -376,6 +378,21 @@ impl TlsStore {
         let cfg = self.config.load_full();
         ServerConnection::new(cfg).map_err(TlsError::Rustls)
     }
+}
+
+fn input_with_pem_override(
+    base: &TlsInput,
+    cert_pem: &[u8],
+    key_pem: &[u8],
+    alpn_protocols: Vec<Vec<u8>>,
+) -> TlsInput {
+    let mut next = base.clone();
+    next.cert_pem = Some(cert_pem.to_vec());
+    next.key_pem = Some(key_pem.to_vec());
+    next.cert_file = None;
+    next.key_file = None;
+    next.alpn_protocols = alpn_protocols;
+    next
 }
 
 fn feed_opt_bytes(ctx: &mut Context, bytes: Option<&[u8]>) {
@@ -959,5 +976,40 @@ mod tests {
             resolve_cipher_suites(Some("DEFAULT:!UNKNOWN"), None),
             Err(TlsError::InvalidCipherSuite(_))
         ));
+    }
+
+    #[test]
+    fn reload_pem_override_preserves_mtls_and_ticket_keys_policy() {
+        let base = TlsInput {
+            cert_file: Some("old-cert.pem".to_owned()),
+            key_file: Some("old-key.pem".to_owned()),
+            ca_pem: Some(b"ca-bytes".to_vec()),
+            crl_pem: Some(b"crl-bytes".to_vec()),
+            request_cert: true,
+            reject_unauthorized: true,
+            min_version: Some("TLSv1.2".to_owned()),
+            max_version: Some("TLSv1.3".to_owned()),
+            ciphers: Some("TLSv1.3:TLSv1.2".to_owned()),
+            ecdh_curve: Some("X25519:P-256".to_owned()),
+            alpn_protocols: vec![b"h2".to_vec()],
+            ticket_keys: Some(vec![0x77u8; 48]),
+            ..Default::default()
+        };
+        let next =
+            input_with_pem_override(&base, b"new-cert", b"new-key", vec![b"http/1.1".to_vec()]);
+        assert_eq!(next.cert_pem.as_deref(), Some(&b"new-cert"[..]));
+        assert_eq!(next.key_pem.as_deref(), Some(&b"new-key"[..]));
+        assert!(next.cert_file.is_none());
+        assert!(next.key_file.is_none());
+        assert_eq!(next.ca_pem, base.ca_pem);
+        assert_eq!(next.crl_pem, base.crl_pem);
+        assert!(next.request_cert);
+        assert!(next.reject_unauthorized);
+        assert_eq!(next.min_version, base.min_version);
+        assert_eq!(next.max_version, base.max_version);
+        assert_eq!(next.ciphers, base.ciphers);
+        assert_eq!(next.ecdh_curve, base.ecdh_curve);
+        assert_eq!(next.ticket_keys, base.ticket_keys);
+        assert_eq!(next.alpn_protocols, vec![b"http/1.1".to_vec()]);
     }
 }

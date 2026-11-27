@@ -19,7 +19,7 @@ import { test } from "node:test"
 import { connect as tlsConnect } from "node:tls"
 import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
-import { constants, deflateRawSync, inflateRawSync } from "node:zlib"
+import { constants, createInflateRaw, deflateRawSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { WebSocket as WsClient } from "ws"
@@ -606,6 +606,116 @@ test("TLS policy enforces minVersion, ciphers, ecdhCurve, and rotates tickets wh
 // 4. WebSocket permessage-deflate (RFC 7692) + zip-bomb defense + maxLifetime
 // ---------------------------------------------------------------------------
 
+function inflateStrictWindow(wirePlusTail: Buffer, windowBits: number): Promise<Buffer> {
+  // Stream small chunks so zlib cannot peek beyond `windowBits` inside a single output buffer.
+  return new Promise<Buffer>((resolvePromise, reject) => {
+    const inf = createInflateRaw({
+      windowBits,
+      chunkSize: 64,
+      finishFlush: constants.Z_SYNC_FLUSH,
+    })
+    const out: Buffer[] = []
+    inf.on("data", (chunk: Buffer) => out.push(chunk))
+    inf.on("error", reject)
+    inf.on("end", () => resolvePromise(Buffer.concat(out)))
+    for (let off = 0; off < wirePlusTail.length; off += 64) {
+      inf.write(wirePlusTail.subarray(off, off + 64))
+    }
+    inf.end()
+  })
+}
+
+function rawWsWireCheck<T>(
+  port: number,
+  upgradeRequest: string,
+  timeoutMs: number,
+  onChunk: (
+    chunkAcc: Buffer,
+    upgraded: boolean,
+    headText: string,
+    write: (data: Buffer) => void,
+    resolve: (value: T) => void,
+  ) => { acc: Buffer; upgraded: boolean; headText: string },
+): Promise<T> {
+  return new Promise<T>((resolvePromise, reject) => {
+    let settled = false
+    let upgraded = false
+    let headText = ""
+    let acc = Buffer.alloc(0)
+    const sock = netConnect(port, "127.0.0.1", () => {
+      sock.write(upgradeRequest)
+    })
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      sock.destroy()
+      fn()
+    }
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error(`WebSocket wire check timed out after ${timeoutMs}ms`)))
+    }, timeoutMs)
+    const write = (data: Buffer): void => {
+      sock.write(data)
+    }
+    sock.on("data", (chunk) => {
+      try {
+        acc = Buffer.concat([acc, chunk])
+        const next = onChunk(acc, upgraded, headText, write, (value) => {
+          finish(() => resolvePromise(value))
+        })
+        acc = next.acc
+        upgraded = next.upgraded
+        headText = next.headText
+      } catch (err) {
+        finish(() => reject(err))
+      }
+    })
+    sock.on("error", (err) => finish(() => reject(err)))
+    sock.on("close", () =>
+      finish(() => reject(new Error("WebSocket socket closed before expected response"))),
+    )
+  })
+}
+
+function makeMaskedWsFrame(
+  firstByte: number,
+  payload: Buffer,
+  maskBytes: readonly number[],
+): Buffer {
+  const mask = Buffer.from(maskBytes)
+  const use16 = payload.length >= 126
+  const hdr = Buffer.alloc(use16 ? 8 : 6)
+  hdr[0] = firstByte
+  hdr[1] = 0x80 | (use16 ? 126 : payload.length)
+  if (use16) {
+    hdr.writeUInt16BE(payload.length, 2)
+    mask.copy(hdr, 4)
+  } else {
+    mask.copy(hdr, 2)
+  }
+  const masked = Buffer.from(payload)
+  for (let i = 0; i < masked.length; i++) masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
+  return Buffer.concat([hdr, masked])
+}
+
+function syncDeflateTrimmed(input: Buffer): Buffer {
+  const compressed = deflateRawSync(input, { finishFlush: constants.Z_SYNC_FLUSH })
+  assert.deepEqual(compressed.subarray(-4), Buffer.from([0x00, 0x00, 0xff, 0xff]))
+  return compressed.subarray(0, compressed.length - 4)
+}
+
+function deterministicEntropyBytes(label: string, length: number): Buffer {
+  const chunks: Buffer[] = []
+  let remaining = length
+  for (let i = 0; remaining > 0; i++) {
+    const digest = createHash("sha256").update(`${label}:${i}`).digest()
+    chunks.push(digest.subarray(0, remaining))
+    remaining -= digest.length
+  }
+  return Buffer.concat(chunks)
+}
+
 test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and blocks zip bombs with 1009", async () => {
   const app = server()
     .use(websocket())
@@ -651,66 +761,115 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
     await sleep(30)
 
     // Zip bomb: valid <100 byte compressed wire frame inflating to 4096 bytes (> maxDecompressedSize 2048).
-    const compressed = deflateRawSync(Buffer.alloc(4096, 0x41)).subarray(0)
-    const trimmed = compressed.subarray(0, compressed.length - 4)
-    const bombClose = await new Promise<number>((resolvePromise, reject) => {
-      const sock = netConnect(running.port, "127.0.0.1", () => {
-        sock.write(
-          "GET /echo HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            "Sec-WebSocket-Version: 13\r\n" +
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-            "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n",
-        )
-      })
-      const failSocket = (err: unknown): void => {
-        sock.destroy()
-        reject(err)
-      }
-      let upgraded = false
-      let acc = Buffer.alloc(0)
-      sock.on("data", (chunk) => {
-        try {
-          acc = Buffer.concat([acc, chunk])
-          if (!upgraded) {
-            const end = acc.indexOf("\r\n\r\n")
-            if (end === -1) return
-            const headText = acc.subarray(0, end).toString("latin1")
-            assert.ok(headText.toLowerCase().includes("permessage-deflate"))
-            upgraded = true
-            acc = acc.subarray(end + 4)
-
-            // Send masked binary frame with RSV1=1 (0x80 | 0x40 | 0x02 = 0xC2).
-            const mask = Buffer.from([1, 2, 3, 4])
-            const hdr = Buffer.alloc(6)
-            hdr[0] = 0xc2
-            hdr[1] = 0x80 | trimmed.length
-            mask.copy(hdr, 2)
-            const masked = Buffer.from(trimmed)
-            for (let i = 0; i < masked.length; i++)
-              masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
-            sock.write(Buffer.concat([hdr, masked]))
-          }
-          if (upgraded && acc.length >= 4 && (acc[0] & 0x0f) === 0x08) {
-            const closeCode = acc.readUInt16BE(2)
-            sock.destroy()
-            resolvePromise(closeCode)
-          }
-        } catch (err) {
-          failSocket(err)
+    const trimmed = syncDeflateTrimmed(Buffer.alloc(4096, 0x41))
+    const bombClose = await rawWsWireCheck<number>(
+      running.port,
+      "GET /echo HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n",
+      5000,
+      (acc, upgraded, headText, write, resolveValue) => {
+        let nextAcc = acc
+        let isUpgraded = upgraded
+        let nextHead = headText
+        if (!isUpgraded) {
+          const end = nextAcc.indexOf("\r\n\r\n")
+          if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
+          nextHead = nextAcc.subarray(0, end).toString("latin1")
+          assert.ok(nextHead.toLowerCase().includes("permessage-deflate"))
+          isUpgraded = true
+          nextAcc = nextAcc.subarray(end + 4)
+          write(makeMaskedWsFrame(0xc2, trimmed, [1, 2, 3, 4]))
         }
-      })
-      sock.on("error", failSocket)
-    })
+        if (isUpgraded && nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
+          resolveValue(nextAcc.readUInt16BE(2))
+        }
+        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+      },
+    )
     assert.equal(bombClose, 1009)
   } finally {
     await running.stop({ drainMs: 50 })
   }
 
-  // Shared compressor honors client-lowered server_max_window_bits=10, declines 8-bit server window,
-  // and enforces wsMaxMessageSize on inflated payloads even when maxDecompressedSize is larger.
+  // Server config rejects unsupported serverMaxWindowBits=8 rather than silently clamping to 9.
+  assert.throws(() => {
+    void serve(app, { port: 0, hostname: "127.0.0.1", wsDeflate: { serverMaxWindowBits: 8 } })
+  }, /serverMaxWindowBits.*9\.\.15/)
+
+  // Shared compressor honors client-lowered server_max_window_bits=10 with payloads > 1024 B
+  // where a 15-bit encoder would emit back-references too far back for a 10-bit client inflater.
+  const window10Server = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    wsMaxMessageSize: 8192,
+    wsDeflate: {
+      sharedCompressor: true,
+    },
+  })
+  try {
+    const repeatedHead = deterministicEntropyBytes("w10-head", 512)
+    const distinctMid = deterministicEntropyBytes("w10-mid", 1024)
+    const distPayload = Buffer.concat([repeatedHead, distinctMid, repeatedHead])
+    assert.equal(distPayload.length, 2048)
+    // Verify the test fixture itself would fail under a 15-bit compressor + strict 10-bit inflater.
+    const as15 = syncDeflateTrimmed(distPayload)
+    await assert.rejects(
+      () => inflateStrictWindow(Buffer.concat([as15, Buffer.from([0x00, 0x00, 0xff, 0xff])]), 10),
+      /invalid distance too far back/,
+    )
+
+    const wire10 = await rawWsWireCheck<{ head: string; payload: Buffer }>(
+      window10Server.port,
+      "GET /echo HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=10; client_max_window_bits\r\n\r\n",
+      5000,
+      (acc, upgraded, headText, write, resolveValue) => {
+        let nextAcc = acc
+        let isUpgraded = upgraded
+        let nextHead = headText
+        if (!isUpgraded) {
+          const end = nextAcc.indexOf("\r\n\r\n")
+          if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
+          nextHead = nextAcc.subarray(0, end).toString("latin1")
+          isUpgraded = true
+          nextAcc = nextAcc.subarray(end + 4)
+          write(makeMaskedWsFrame(0x82, distPayload, [1, 2, 3, 4]))
+        }
+        if (isUpgraded && nextAcc.length >= 4) {
+          const len7 = nextAcc[1] & 0x7f
+          const hdrLen = len7 === 126 ? 4 : 2
+          const plen = len7 === 126 && nextAcc.length >= 4 ? nextAcc.readUInt16BE(2) : len7
+          if (nextAcc.length >= hdrLen + plen) {
+            assert.notEqual(nextAcc[0] & 0x40, 0, "RSV1 set for compressed frame")
+            const payload = Buffer.from(nextAcc.subarray(hdrLen, hdrLen + plen))
+            resolveValue({ head: nextHead, payload })
+          }
+        }
+        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+      },
+    )
+    assert.ok(wire10.head.toLowerCase().includes("server_max_window_bits=10"))
+    const inflated = await inflateStrictWindow(
+      Buffer.concat([wire10.payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]),
+      10,
+    )
+    assert.deepEqual(inflated, distPayload)
+  } finally {
+    await window10Server.stop({ drainMs: 50 })
+  }
+
+  // Declines 8-bit server window offers and enforces wsMaxMessageSize=512 on inflated payloads
+  // even when maxDecompressedSize=4096 is larger.
   const sharedDefaultWindow = await serve(app, {
     port: 0,
     hostname: "127.0.0.1",
@@ -721,91 +880,6 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
     },
   })
   try {
-    const ws10 = new WsClient(`ws://127.0.0.1:${sharedDefaultWindow.port}/echo`, {
-      perMessageDeflate: { serverMaxWindowBits: 10 },
-    })
-    await new Promise<void>((resolvePromise, reject) => {
-      ws10.once("open", () => resolvePromise())
-      ws10.once("error", reject)
-    })
-    assert.ok(ws10.extensions.includes("permessage-deflate"))
-    // Use a <= 512 byte repeating message containing patterns >512B apart vs <=1024B window so
-    // window=10 compression + client inflate round-trips cleanly.
-    const msg = "w10-check-".repeat(48)
-    const got = await new Promise<string>((resolvePromise, reject) => {
-      ws10.once("message", (d) => resolvePromise(d.toString("utf8")))
-      ws10.once("error", reject)
-      ws10.send(msg)
-    })
-    assert.equal(got, msg)
-    ws10.close(1000, "done")
-    await sleep(20)
-
-    // Verify wire negotiation advertises `server_max_window_bits=10` and raw frame inflates at windowBits=10.
-    const wire10 = await new Promise<string>((resolvePromise, reject) => {
-      const sock = netConnect(sharedDefaultWindow.port, "127.0.0.1", () => {
-        sock.write(
-          "GET /echo HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            "Sec-WebSocket-Version: 13\r\n" +
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-            "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=10; client_max_window_bits\r\n\r\n",
-        )
-      })
-      let upgraded = false
-      let head = ""
-      let acc = Buffer.alloc(0)
-      const failWire = (err: unknown): void => {
-        sock.destroy()
-        reject(err)
-      }
-      sock.on("data", (chunk) => {
-        try {
-          acc = Buffer.concat([acc, chunk])
-          if (!upgraded) {
-            const end = acc.indexOf("\r\n\r\n")
-            if (end === -1) return
-            head = acc.subarray(0, end).toString("latin1")
-            upgraded = true
-            acc = acc.subarray(end + 4)
-            const rawMsg = Buffer.from("shared-w10-".repeat(40))
-            const mask = Buffer.from([1, 2, 3, 4])
-            const hdr = Buffer.alloc(8)
-            hdr[0] = 0x81
-            hdr[1] = 0x80 | 126
-            hdr.writeUInt16BE(rawMsg.length, 2)
-            mask.copy(hdr, 4)
-            const masked = Buffer.from(rawMsg)
-            for (let i = 0; i < masked.length; i++)
-              masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
-            sock.write(Buffer.concat([hdr, masked]))
-          }
-          if (upgraded && acc.length >= 4) {
-            const len7 = acc[1] & 0x7f
-            const hdrLen = len7 === 126 ? 4 : 2
-            const plen = len7 === 126 && acc.length >= 4 ? acc.readUInt16BE(2) : len7
-            if (acc.length >= hdrLen + plen) {
-              assert.notEqual(acc[0] & 0x40, 0, "RSV1 set for compressed frame")
-              const payload = acc.subarray(hdrLen, hdrLen + plen)
-              const inflated = inflateRawSync(
-                Buffer.concat([payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]),
-                { windowBits: 10, finishFlush: constants.Z_SYNC_FLUSH },
-              )
-              assert.equal(inflated.toString("utf8"), "shared-w10-".repeat(40))
-              sock.destroy()
-              resolvePromise(head)
-            }
-          }
-        } catch (err) {
-          failWire(err)
-        }
-      })
-      sock.on("error", failWire)
-    })
-    assert.ok(wire10.toLowerCase().includes("server_max_window_bits=10"))
-
     // Offering only server_max_window_bits=8 must be declined rather than promising 8 and using 9.
     const rawEight = await raw(
       sharedDefaultWindow.port,
@@ -821,58 +895,38 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
     assert.ok(rawEight.includes("101 Switching Protocols"))
     assert.ok(!rawEight.toLowerCase().includes("sec-websocket-extensions"))
 
-    // Wire compressed frame <512 B inflating to 1024 B must fail with 1009 due to wsMaxMessageSize=512
-    // even though maxDecompressedSize=4096.
-    const cappedInflate = deflateRawSync(Buffer.alloc(1024, 0x43))
-    const cappedTrimmed = cappedInflate.subarray(0, cappedInflate.length - 4)
+    // Valid RFC 7692 sync-flush frame <512 B inflating to 1024 B must fail with 1009 due to
+    // wsMaxMessageSize=512 even though maxDecompressedSize=4096.
+    const cappedTrimmed = syncDeflateTrimmed(Buffer.alloc(1024, 0x43))
     assert.ok(cappedTrimmed.length < 126)
-    const wsCapClose = await new Promise<number>((resolvePromise, reject) => {
-      const sock = netConnect(sharedDefaultWindow.port, "127.0.0.1", () => {
-        sock.write(
-          "GET /echo HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            "Sec-WebSocket-Version: 13\r\n" +
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-            "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
-        )
-      })
-      const failSock = (err: unknown): void => {
-        sock.destroy()
-        reject(err)
-      }
-      let upgraded = false
-      let acc = Buffer.alloc(0)
-      sock.on("data", (chunk) => {
-        try {
-          acc = Buffer.concat([acc, chunk])
-          if (!upgraded) {
-            const end = acc.indexOf("\r\n\r\n")
-            if (end === -1) return
-            upgraded = true
-            acc = acc.subarray(end + 4)
-            const mask = Buffer.from([5, 6, 7, 8])
-            const hdr = Buffer.alloc(6)
-            hdr[0] = 0xc2
-            hdr[1] = 0x80 | cappedTrimmed.length
-            mask.copy(hdr, 2)
-            const masked = Buffer.from(cappedTrimmed)
-            for (let i = 0; i < masked.length; i++)
-              masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
-            sock.write(Buffer.concat([hdr, masked]))
-          }
-          if (upgraded && acc.length >= 4 && (acc[0] & 0x0f) === 0x08) {
-            const closeCode = acc.readUInt16BE(2)
-            sock.destroy()
-            resolvePromise(closeCode)
-          }
-        } catch (err) {
-          failSock(err)
+    const wsCapClose = await rawWsWireCheck<number>(
+      sharedDefaultWindow.port,
+      "GET /echo HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+      5000,
+      (acc, upgraded, headText, write, resolveValue) => {
+        let nextAcc = acc
+        let isUpgraded = upgraded
+        let nextHead = headText
+        if (!isUpgraded) {
+          const end = nextAcc.indexOf("\r\n\r\n")
+          if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
+          nextHead = nextAcc.subarray(0, end).toString("latin1")
+          isUpgraded = true
+          nextAcc = nextAcc.subarray(end + 4)
+          write(makeMaskedWsFrame(0xc2, cappedTrimmed, [5, 6, 7, 8]))
         }
-      })
-      sock.on("error", failSock)
-    })
+        if (isUpgraded && nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
+          resolveValue(nextAcc.readUInt16BE(2))
+        }
+        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+      },
+    )
     assert.equal(wsCapClose, 1009)
   } finally {
     await sharedDefaultWindow.stop({ drainMs: 50 })
@@ -1029,7 +1083,15 @@ test("enforces maxUriSize (414) and maxHeaders / maxHeadSize (431) in HTTP/1.1 a
     await bpSrv.stop({ drainMs: 50 })
   }
 
-  // Healthy reader receiving 128 KiB with small responseBackpressureLimit and default writeHighWaterMark.
+  // Healthy reader receiving 128 KiB with small responseBackpressureLimit and default writeHighWaterMark,
+  // plus async headerless large body outcome preserving text/plain content-type via settleOutcome fallback.
+  const asyncTextApp = {
+    fetch: () => new Response(largePayload),
+    resolveNodeSource: async () => {
+      await sleep(2)
+      return { kind: "body" as const, status: 200, body: largePayload }
+    },
+  }
   const smallBpOnly = await serve(
     server().get("/big-str", () => largePayload),
     {
@@ -1038,12 +1100,23 @@ test("enforces maxUriSize (414) and maxHeaders / maxHeadSize (431) in HTTP/1.1 a
       engine: { responseBackpressureLimit: 65_536 },
     },
   )
+  const asyncBodySrv = await serve(asyncTextApp, {
+    port: 0,
+    hostname: "127.0.0.1",
+    engine: { writeHighWaterMark: 4096, responseBackpressureLimit: 65_536 },
+  })
   try {
     const r = await fetch(`http://127.0.0.1:${smallBpOnly.port}/big-str`)
     assert.equal(r.status, 200)
     assert.equal(await r.json(), largePayload)
+
+    const ar = await fetch(`http://127.0.0.1:${asyncBodySrv.port}/async-text`)
+    assert.equal(ar.status, 200)
+    assert.equal(ar.headers.get("content-type"), "text/plain; charset=utf-8")
+    assert.equal((await ar.text()).length, largePayload.length)
   } finally {
     await smallBpOnly.stop({ drainMs: 50 })
+    await asyncBodySrv.stop({ drainMs: 50 })
   }
 })
 
@@ -1068,12 +1141,13 @@ test("idleTimeoutMs spares healthy slow drains while responseTimeoutMs closes st
   const running = await serve(app, {
     port: 0,
     hostname: "127.0.0.1",
-    engine: { idleTimeoutMs: 120, responseTimeoutMs: 250, writeHighWaterMark: 4096 },
+    engine: { idleTimeoutMs: 120, responseTimeoutMs: 500, writeHighWaterMark: 4096 },
   })
 
   try {
-    // Slow healthy reader: throttles via pause()/resume() for ~420ms (exceeding BOTH 120ms idle and
-    // 250ms total responseTimeoutMs window), proving steady socket progress keeps connection alive.
+    // Slow healthy reader: throttles via pause()/resume() past BOTH idleTimeoutMs (120ms) and
+    // responseTimeoutMs (500ms), proving steady socket progress keeps the connection alive.
+    const slowStart = Date.now()
     const slowHash = await new Promise<string>((resolvePromise, reject) => {
       const h = createHash("sha256")
       let seenBody = false
@@ -1085,7 +1159,7 @@ test("idleTimeoutMs spares healthy slow drains while responseTimeoutMs closes st
       })
       const timer = setInterval(() => {
         if (!sock.destroyed && sock.isPaused()) sock.resume()
-      }, 35)
+      }, 25)
       const fail = (err: unknown): void => {
         clearInterval(timer)
         sock.destroy()
@@ -1121,6 +1195,7 @@ test("idleTimeoutMs spares healthy slow drains while responseTimeoutMs closes st
       })
       sock.once("error", fail)
     })
+    assert.ok(Date.now() - slowStart > 500)
     assert.equal(slowHash, expectedDigest)
   } finally {
     await running.stop({ drainMs: 50 })

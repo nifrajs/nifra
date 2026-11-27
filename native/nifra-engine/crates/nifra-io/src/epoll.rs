@@ -448,7 +448,7 @@ impl EpollServer {
         if effective_close {
             conn.close_after_write = true;
         }
-        let fa = write_bytes_or_queue(conn, bytes);
+        let fa = write_bytes_or_queue(conn, bytes, max_write);
         if fa == FlushAction::Close || conn.queued_bytes() > max_write {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
@@ -959,7 +959,7 @@ unsafe fn handle_client_readable(
             conn.read_buf = read_buf;
         }
         if !remove && !cleartext_write.is_empty() {
-            let fa = write_bytes_or_queue(conn, &cleartext_write);
+            let fa = write_bytes_or_queue(conn, &cleartext_write, max_write);
             if fa == FlushAction::Close || conn.queued_bytes() > max_write {
                 remove = true;
             } else if fa != FlushAction::None {
@@ -1358,11 +1358,12 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         let now = st.clock.now();
         let sweep = collect_timeouts(st.conns.iter(), now, st.cfg, st.callbacks.as_deref_mut());
         let epfd = st.epfd;
+        let max_write = write_buf_limit(st.cfg);
         let mut close = sweep.close;
         for id in sweep.ping {
             if let Some(conn) = st.conns.get_mut(id) {
                 conn.last_activity = now;
-                let fa = write_bytes_or_queue(conn, &WS_PING_FRAME);
+                let fa = write_bytes_or_queue(conn, &WS_PING_FRAME, max_write);
                 if fa == FlushAction::Close {
                     close.push(id);
                 } else {

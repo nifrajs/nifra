@@ -341,11 +341,11 @@ function toRustWsDeflate(
     if (
       typeof opt.serverMaxWindowBits !== "number" ||
       !Number.isInteger(opt.serverMaxWindowBits) ||
-      opt.serverMaxWindowBits < 8 ||
+      opt.serverMaxWindowBits < 9 ||
       opt.serverMaxWindowBits > 15
     ) {
       throw new TypeError(
-        "@nifrajs/node-engine: `wsDeflate.serverMaxWindowBits` must be an integer 8..15",
+        "@nifrajs/node-engine: `wsDeflate.serverMaxWindowBits` must be an integer 9..15",
       )
     }
     out.serverMaxWindowBits = opt.serverMaxWindowBits
@@ -1307,6 +1307,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     return queueSync(reqId, textTemplate(outcome.status), body)
   }
 
+  const defaultOutcomeContentType = (
+    outcome: NodeServeOutcome,
+    isHead: boolean,
+  ): string | undefined =>
+    outcome.kind === "body" && outcome.headers === undefined && !isHead
+      ? "text/plain; charset=utf-8"
+      : undefined
+
   const settleOutcome = (
     source: RustBatchSource,
     outcome: NodeServeOutcome,
@@ -1317,7 +1325,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       flushSoon()
       return
     }
-    writeComplexOutcome(source, outcome, isHead)
+    writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
   }
 
   const onBatch = (count: number): void => {
@@ -1453,11 +1461,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           source.release()
         } else {
           inflight.set(reqId, source)
-          const defaultType =
-            outcome.kind === "body" && outcome.headers === undefined && !isHead
-              ? "text/plain; charset=utf-8"
-              : undefined
-          writeComplexOutcome(source, outcome, isHead, defaultType)
+          writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
         }
       } catch (err) {
         report?.(err)

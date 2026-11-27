@@ -3236,7 +3236,13 @@ pub fn create_uv_server(
                 ws_deflate_cfg.client_no_context_takeover = v;
             }
             if let Some(v) = def.server_max_window_bits {
-                ws_deflate_cfg.server_max_window_bits = (v as u8).clamp(9, 15);
+                if !(9..=15).contains(&v) {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        "wsDeflate.serverMaxWindowBits must be an integer 9..15",
+                    ));
+                }
+                ws_deflate_cfg.server_max_window_bits = v as u8;
             }
             if let Some(v) = def.client_max_window_bits {
                 ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
