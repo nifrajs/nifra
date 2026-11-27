@@ -156,6 +156,13 @@ const TYPED_ARRAY = /^(?:Big)?(?:Int|Uint|Float)(?:8|16|32|64)(?:Clamped)?Array$
 
 const sameShape = (a: Shape, b: Shape): boolean => JSON.stringify(a) === JSON.stringify(b)
 
+// Only object shapes have a fields array. Sort it at every depth for ranking, leaving the field
+// order in the generated declaration intact.
+const orderFieldsForRank = (key: string, value: unknown): unknown =>
+  key === "fields" && Array.isArray(value)
+    ? [...value].sort((a: Field, b: Field) => codeUnitOrder(a.name, b.name))
+    : value
+
 function unionOf(input: readonly Shape[]): Shape {
   const flat = input
     .flatMap((member) => (member.kind === "union" ? member.members : [member]))
@@ -174,11 +181,14 @@ function unionOf(input: readonly Shape[]): Shape {
   }
   if (members.length === 0) return { kind: "never" }
   if (members.length === 1 && members[0] !== undefined) return members[0]
-  // TypeScript versions order union members differently; a canonical order keeps the generated text,
-  // and the hash in its marker, the same under each. `null` reads best last.
-  const rank = (shape: Shape): string =>
-    `${shape.kind === "null" || shape.kind === "undefined" ? 1 : 0}${JSON.stringify(shape)}`
-  return { kind: "union", members: members.sort((a, b) => codeUnitOrder(rank(a), rank(b))) }
+  // Checker enumeration order must not decide which matching union branch decodes a value.
+  // Keep null and undefined last as before.
+  const ranked = members.map((member) => ({
+    member,
+    key: `${member.kind === "null" || member.kind === "undefined" ? 1 : 0}${JSON.stringify(member, orderFieldsForRank)}`,
+  }))
+  ranked.sort((a, b) => codeUnitOrder(a.key, b.key))
+  return { kind: "union", members: ranked.map(({ member }) => member) }
 }
 
 function withoutUndefined(shape: Shape): Shape {
@@ -444,19 +454,32 @@ const hashOf = (body: string): string => createHash("sha256").update(body).diges
 /**
  * A schema expression as a formatter cannot change it: comments, whitespace, a comma before a closing
  * bracket and a trailing semicolon dropped, every string written with double quotes, and a quoted key
- * that needs no quotes written bare. Two texts
- * that read the same here are the same schema; an edit to what it declares is not.
+ * that needs no quotes written bare. The order-insensitive comparison also keeps the generator's
+ * notes about fields it omitted or types it could not describe.
  */
-function schemaTokens(text: string): string {
+function schemaTokens(text: string, keepDraftNotes = false): string {
   let out = ""
   let i = 0
   while (i < text.length) {
     const c = text.charAt(i)
     if (c === "/" && text[i + 1] === "/") {
       const end = text.indexOf("\n", i)
+      const comment = text.slice(i + 2, end === -1 ? text.length : end).trim()
+      if (keepDraftNotes && comment.startsWith("left out: ")) {
+        // Treat an omitted field as an object member so its note follows that field when sorted.
+        if (!out.endsWith("{") && !out.endsWith(",")) out += ","
+        out += `#${JSON.stringify(comment)},`
+      }
       i = end === -1 ? text.length : end
     } else if (c === "/" && text[i + 1] === "*") {
       const end = text.indexOf("*/", i + 2)
+      const comment = text.slice(i + 2, end === -1 ? text.length : end).trim()
+      if (
+        keepDraftNotes &&
+        out.endsWith("t.json()") &&
+        (comment.endsWith(" in the source type") || comment.endsWith(", which is not JSON"))
+      )
+        out += `#${JSON.stringify(comment)}`
       i = end === -1 ? text.length : end + 2
     } else if (c === '"' || c === "'" || c === "`") {
       let value = ""
@@ -478,11 +501,53 @@ function schemaTokens(text: string): string {
       out +=
         text[after] === ":" && IDENTIFIER.test(value) ? value : `"${value.replaceAll('"', '\\"')}"`
     } else {
+      if ((c === "}" || c === "]" || c === ")") && out.endsWith(",")) out = out.slice(0, -1)
       if (!/\s/.test(c)) out += c
       i++
     }
   }
-  return out.replace(/,(?=[}\])])/g, "").replace(/(?<!;);+$/, "")
+  return out.replace(/(?<!;);+$/, "")
+}
+
+/**
+ * Sort object fields after normalizing their contents. Older drafts can also differ in union order
+ * because the generator ranked members using checker property order. A union containing a date
+ * keeps its order because the first matching branch decides whether a string becomes a Date.
+ */
+function schemaIgnoringOrder(text: string, sortUnions: boolean): string {
+  const tokens = schemaTokens(text, true)
+  let at = 0
+  let lastDate = -1
+  const follows = (prefix: string): boolean => tokens.startsWith(prefix, at - prefix.length)
+  const group = (close: string): string[] => {
+    const parts: string[] = []
+    let part = ""
+    while (at < tokens.length) {
+      const c = tokens.charAt(at++)
+      if (c === close) break
+      if (c === ",") {
+        parts.push(part)
+        part = ""
+      } else if (c === "{") part += `{${group("}").sort(codeUnitOrder).join(",")}}`
+      else if (c === "[") {
+        const sort = sortUnions && follows("t.union([")
+        const start = at
+        const members = group("]")
+        if (sort && lastDate < start) members.sort(codeUnitOrder)
+        part += `[${members.join(",")}]`
+      } else if (c === "(") {
+        if (follows("t.date(")) lastDate = at
+        part += `(${group(")").join(",")})`
+      } else if (c === '"') {
+        const start = at - 1
+        while (at < tokens.length && tokens[at] !== '"') at += tokens[at] === "\\" ? 2 : 1
+        part += tokens.slice(start, ++at)
+      } else part += c
+    }
+    parts.push(part)
+    return parts
+  }
+  return group("").join(",")
 }
 
 function declarationText(schema: OutputExport, fn: RouteFn, body: string): string {
@@ -1120,15 +1185,18 @@ export async function planOutputSchemas(
         const written = declarationText(target.schema, target.fn, body)
         const text = target.insertAt === content.length ? `\n${written}\n` : `${written}\n\n`
         replacements.push({ start: target.insertAt, end: target.insertAt, text, entry: at })
-      } else if (
-        declaration.hash === hashOf(body) &&
-        schemaTokens(declaration.value) === schemaTokens(body)
-      ) {
-        entry("current", [], undefined, false, [], open)
       } else {
-        // The marker still matches what would be written, so the text under it was edited.
-        const edited = declaration.hash === hashOf(body)
-        const at = entry("stale", dropped, undefined, edited, omitted, open)
+        // A matching marker makes a union reorder an edit to the declaration.
+        const markerMatches = declaration.hash === hashOf(body)
+        const current =
+          (markerMatches && schemaTokens(declaration.value) === schemaTokens(body)) ||
+          schemaIgnoringOrder(declaration.value, !markerMatches) ===
+            schemaIgnoringOrder(body, !markerMatches)
+        if (current) {
+          entry("current", [], undefined, false, [], open)
+          continue
+        }
+        const at = entry("stale", dropped, undefined, markerMatches, omitted, open)
         const text = declarationText(target.schema, target.fn, body)
         replacements.push({ start: declaration.start, end: declaration.end, text, entry: at })
       }

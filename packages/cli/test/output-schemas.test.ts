@@ -192,6 +192,35 @@ describe("generating a missing schema", () => {
     ])
   }, 60_000)
 
+  test("a schema whose fields are only in another order is current, a changed type is not", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]:
+        'export const loader = () => ({ user: { id: 1, name: "Ada", total: 1n }, tag: "a,}" as const })\n',
+    })
+    await outputSchemas(root, { write: true })
+    const written = read(root, file)
+    const reordered = written.replace(/^( +id: .*\n)( +name: .*\n)/m, "$2$1")
+    expect(reordered).not.toBe(written)
+    writeFileSync(join(root, file), reordered)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
+
+    const retyped = reordered.replace("id: t.number()", "id: t.string()")
+    expect(retyped).not.toBe(reordered)
+    writeFileSync(join(root, file), retyped)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+
+    const changedLiteral = reordered.replace('t.literal("a,}")', 't.literal("a}")')
+    expect(changedLiteral).not.toBe(reordered)
+    writeFileSync(join(root, file), changedLiteral)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+
+    const aligned = reordered.replace('id: 1, name: "Ada"', 'name: "Ada", id: 1')
+    expect(aligned).not.toBe(reordered)
+    writeFileSync(join(root, file), aligned)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
+  }, 60_000)
+
   for (const typescript of ["typescript5", "typescript7"]) {
     test(`${typescript} reads the same shape`, async () => {
       const root = project({ "routes/feed.backend.ts": FEED }, typescript)
@@ -305,6 +334,133 @@ describe("a generated schema over time", () => {
     expect(read(root, "routes/me.backend.ts").match(/nifra:generated/g)).toHaveLength(1)
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
   }, 90_000)
+
+  test("reordering fields keeps a union current and hand-editing union order is stale", async () => {
+    const file = "routes/pick.backend.ts"
+    const root = project({
+      [file]: [
+        "type A = { z: string; a: number }",
+        "type B = { m: boolean; n: number }",
+        "export function loader({ request }: { request: Request }): A | B {",
+        '  return request.url.endsWith("/a") ? { z: "x", a: 1 } : { m: true, n: 2 }',
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const branchB = "t.object({\n  m: t.boolean(),\n  n: t.number(),\n})"
+    const branchA = "t.object({\n  z: t.string(),\n  a: t.number(),\n})"
+    const reorderedSchema = generated.replace(
+      `t.union([${branchA}, ${branchB}])`,
+      `t.union([${branchB}, ${branchA}])`,
+    )
+    expect(reorderedSchema).not.toBe(generated)
+    writeFileSync(join(root, file), reorderedSchema)
+    expect((await outputSchemas(root)).entries).toEqual([
+      expect.objectContaining({ status: "stale", edited: true }),
+    ])
+
+    const reordered = generated.replace("z: string; a: number", "a: number; z: string")
+    expect(reordered).not.toBe(generated)
+    writeFileSync(join(root, file), reordered)
+
+    expect(
+      (await outputSchemas(root, { check: true })).entries.map((entry) => entry.status),
+    ).toEqual(["current"])
+  }, 60_000)
+
+  test("reordering fields still reports newly omitted output in nifra check", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]: 'export const loader = () => ({ id: 1, name: "Ada" })\n',
+      "routes/me.tsx": "export default () => null\n",
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const changed = generated.replace('id: 1, name: "Ada"', 'name: "Ada", id: 1, total: 1n')
+    expect(changed).not.toBe(generated)
+    writeFileSync(join(root, file), changed)
+
+    const dry = await outputSchemas(root)
+    expect(dry.entries).toEqual([
+      expect.objectContaining({ status: "stale", dropped: ["total"], omitted: ["total"] }),
+    ])
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const finding = check.diagnostics.find((diagnostic) => diagnostic.code === "NF-C033")
+    expect(finding?.severity).toBe("error")
+    expect(finding?.message).toContain("it now returns total, which the schema drops")
+
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    expect(read(root, file)).toContain("// left out: total - a bigint, which is not JSON")
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("reordering only the omitted fields keeps a generated schema current", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]: "export const loader = () => ({ id: 1, total: 1n, revision: 2n })\n",
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const reordered = generated.replace("total: 1n, revision: 2n", "revision: 2n, total: 1n")
+    expect(reordered).not.toBe(generated)
+    writeFileSync(join(root, file), reordered)
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("a union that can decode a date keeps its branch order significant", async () => {
+    const file = "routes/pick.backend.ts"
+    const root = project({
+      [file]: [
+        "type A = { z?: number; at: Date }",
+        "type B = { at: string }",
+        "export function loader({ request }: { request: Request }): A | B {",
+        '  return request.url.endsWith("/a") ? { at: new Date(0) } : { at: "2026-01-01T00:00:00Z" }',
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const stringBranch = "t.object({\n  at: t.string(),\n})"
+    const dateBranch = "t.object({\n  z: t.optional(t.number()),\n  at: t.date(),\n})"
+    const original = `t.union([${dateBranch}, ${stringBranch}])`
+    expect(generated).toContain(original)
+    writeFileSync(
+      join(root, file),
+      generated.replace(original, `t.union([${stringBranch}, ${dateBranch}])`),
+    )
+    expect((await outputSchemas(root)).entries).toEqual([
+      expect.objectContaining({ status: "stale", edited: true }),
+    ])
+
+    writeFileSync(
+      join(root, file),
+      generated.replace("z?: number; at: Date", "at: Date; z?: number"),
+    )
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("TypeScript 5, 6 and 7 agree on the order of branches that can decode dates", async () => {
+    const file = "routes/pick.backend.ts"
+    const source = [
+      'type A = Pick<{ z?: number; at: Date }, "at" | "z">',
+      "type B = { at: string }",
+      "export function loader(): A | B { return { at: new Date(0) } }",
+      "",
+    ].join("\n")
+    const legacy = project({ [file]: source }, "typescript5")
+    expect((await outputSchemas(legacy, { write: true })).written).toEqual([file])
+    const generated = read(legacy, file)
+
+    for (const typescript of ["typescript", "typescript7"]) {
+      const root = project({ [file]: generated }, typescript)
+      expect(
+        (await outputSchemas(root, { check: true })).entries.map((entry) => entry.status),
+      ).toEqual(["current"])
+    }
+  }, 60_000)
 
   test("formatting the generated schema by hand keeps it current; deleting the marker hands it over", async () => {
     const root = project({ "routes/me.backend.ts": initial })
