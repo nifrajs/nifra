@@ -13,7 +13,7 @@ Tiny, framework-neutral island trigger scheduler for nifra.
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
 - **TriggerOptions** _(interface)_ - `interface TriggerOptions`
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string }`
+- **IslandStrategy** _(type)_ - `type IslandStrategy = | "load" | "idle" | "visible" | "interaction" | { readonly media: string }`
 
 ## Footguns
 

@@ -135,5 +135,76 @@ describe("scheduleTrigger", () => {
   })
 })
 
+describe("interaction", () => {
+  const fakeTarget = () => {
+    const listeners = new Map<string, Array<() => void>>()
+    const captures: boolean[] = []
+    return {
+      listeners,
+      captures,
+      addEventListener(type: string, listener: () => void, capture: boolean) {
+        captures.push(capture)
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+      },
+      removeEventListener(type: string, listener: () => void, capture: boolean) {
+        // A listener added for the capture phase is removed only by a capture-phase removal.
+        if (!capture) return
+        listeners.set(
+          type,
+          (listeners.get(type) ?? []).filter((l) => l !== listener),
+        )
+      },
+      emit(type: string) {
+        for (const listener of [...(listeners.get(type) ?? [])]) listener()
+      },
+      count: () => [...listeners.values()].reduce((n, l) => n + l.length, 0),
+    }
+  }
+
+  test("waits for hover, press, focus or click, then runs once and removes every listener", () => {
+    for (const type of ["pointerover", "pointerdown", "focusin", "click"]) {
+      const target = fakeTarget()
+      let runs = 0
+      scheduleTrigger("interaction", () => runs++, { target })
+      expect(runs).toBe(0)
+      expect(target.count()).toBe(4)
+      expect(target.captures.every(Boolean)).toBe(true)
+      target.emit(type)
+      target.emit("pointerdown")
+      target.emit(type)
+      expect(runs).toBe(1)
+      expect(target.count()).toBe(0)
+    }
+  })
+
+  test("ignores events that signal no intent", () => {
+    const target = fakeTarget()
+    let runs = 0
+    scheduleTrigger("interaction", () => runs++, { target })
+    target.emit("pointerout")
+    target.emit("pointerleave")
+    target.emit("keydown")
+    expect(runs).toBe(0)
+  })
+
+  test("the disposer cancels it before it fires", () => {
+    const target = fakeTarget()
+    let runs = 0
+    const dispose = scheduleTrigger("interaction", () => runs++, { target })
+    dispose()
+    dispose()
+    target.emit("pointerdown")
+    expect(runs).toBe(0)
+    expect(target.count()).toBe(0)
+  })
+
+  test("runs at once without a target, or with one that cannot take listeners", () => {
+    let runs = 0
+    scheduleTrigger("interaction", () => runs++)
+    scheduleTrigger("interaction", () => runs++, { target: {} })
+    expect(runs).toBe(2)
+  })
+})
+
 const _typeCheck: IslandStrategy = { media: "(prefers-reduced-motion: reduce)" }
 void _typeCheck

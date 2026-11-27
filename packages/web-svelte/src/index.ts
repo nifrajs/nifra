@@ -237,20 +237,22 @@ export const svelteAdapter: RenderAdapter = {
   // A partially prerendered hole's HTML, from a `ui(Component, props)` value. Svelte puts its own `-`
   // before the id counter and refuses a prefix with `--`, so the seam's trailing `-` is dropped. The
   // client reads each id back from its comment marker, so the hole's root needs no prefix of its own.
-  async renderFragment(produce, options) {
+  renderFragment(produce, options) {
     const ui = produce()
     if (!isSvelteUI(ui)) {
       throw new TypeError(
         "[nifra/web-svelte] a hole's render and fallback must return ui(Component, props)",
       )
     }
-    // `render` is the dev server's copy once Chain comes from there; see loadChain.
-    await loadChain()
     const idPrefix = options.idPrefix?.replace(/-$/, "")
-    return render(
-      ui.component,
-      idPrefix === undefined ? { props: ui.props } : { props: ui.props, idPrefix },
-    ).body
+    const renderHole = () =>
+      render(
+        ui.component,
+        idPrefix === undefined ? { props: ui.props } : { props: ui.props, idPrefix },
+      ).body
+    // `render` is the dev server's copy once Chain comes from there; see loadChain.
+    const loaded = loadChain()
+    return loaded instanceof Promise ? loaded.then(renderHole) : renderHole()
   },
   // Svelte's client `hydrate` reconciles against the existing DOM; no per-document bootstrap script is
   // needed (contrast Solid's generateHydrationScript) - the seam allows the empty string.

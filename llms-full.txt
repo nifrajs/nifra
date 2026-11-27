@@ -3242,7 +3242,24 @@ nearest island, and nothing inside a `data-island-ignore` element binds or mount
 - render user HTML there. Because both sides are literal, `nifra check` matches
 them: `NF-C047` warns when a name has no `state("...")` key
 or returned handler, and `NF-C048` when a binding sits where no
-`bindIsland` host will ever walk it.
+`bindIsland` host will ever walk it. `NF-C066` warns when a
+`data-bind-attr` names an attribute the runtime refuses.
+
+The same check reads the host. `NF-C064` warns when a `data-island`
+id appears in no `mountIslands` map (it stays quiet once a map is held in a
+variable, spread or aliased, since the ids are then unknowable). `NF-C065`
+compares the props a host passes with the enhancer's type: a missing required prop, an
+undeclared one, or a literal of another primitive type. It reads a type literal on
+`defineIsland<{ ... }>` or `bindIsland` (or an
+annotated second parameter) and an object literal in `islandProps({...})`,
+`JSON.stringify({...})` or JSX `props`; the props are still
+JSON in an attribute at runtime, so nothing is validated in the browser.
+
+In development a `data-bind-text` whose server-rendered text, or a
+`data-bind-show` whose hidden state, differs from the signal's first value
+logs one console warning: the page would change on mount. An empty text slot is not a
+mismatch. The check sits behind `process.env.NODE_ENV`, so a production build
+that defines it carries none of that code; one that does not define it keeps the warning.
 
 ### Signals
 
@@ -3472,12 +3489,18 @@ a binding inside a slot that belongs to an island outside it.
 ### Load strategies
 
 A host's `data-island-strategy` defers its enhancer: `load`
-(default), `idle`, `visible` (mount when it scrolls into view), or
-`media` with the query in `data-island-media`. A host with no matching
+(default), `idle`, `visible` (mount when it scrolls into view),
+`interaction` (mount on the first hover, press, focus or click on the host), or
+`media` with the query in
+`data-island-media`. A host with no matching
 enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
 never a runtime error. The scheduling itself is `@nifrajs/island-trigger`'s
 `scheduleTrigger`, which has no DOM or framework dependency, for a runtime of
 your own.
+
+An interaction click mounts during capture on the host. Listeners attached during mount can
+receive that click at a descendant target or in the host's non-capture phase. Capture
+listeners added to the host during mount start with the next click.
 
 ## Nifra - Streaming
 
@@ -20963,9 +20986,13 @@ const dispose = scheduleTrigger({ media: "(min-width: 768px)" }, () => {
 dispose() // cancel before the trigger fires
 ```
 
-`load`, `idle`, `visible`, and media-query triggers are one-shot. Idle and visibility strategies
-fall back safely when the browser capability is unavailable; malformed or oversized media queries
-remain inert. The package only schedules the callback - each island runtime owns its own markers,
+`load`, `idle`, `visible`, `interaction`, and media-query triggers are one-shot. Idle and visibility
+strategies fall back safely when the browser capability is unavailable; malformed or oversized media
+queries remain inert. `interaction` waits for the first `pointerover`, `pointerdown`, `focusin` or
+`click` on the `target`. A click mounts during capture on the host. Listeners attached during mount
+can receive it at a descendant target or in the host's non-capture phase. Capture listeners added to
+the host during mount start with the next click. The callback runs at once when the target cannot take
+listeners. Each island runtime owns its own markers,
 registry, signals, and framework integration.
 
 For AI agents, see [`LLM.md`](./LLM.md). The wider reference is in

@@ -21,14 +21,11 @@ const app = createWebApp({
   title: "nifra",
 })
 
-await serve(
-  {
-    fetch(req) {
-      return machineSurfaceFor(req) ?? app.fetch(req)
-    },
+const assets = serveStatic({ dir: new URL("./assets/", import.meta.url) })
+
+await serve(app, {
+  port: Number(process.env.PORT ?? 3000),
+  static(req) {
+    return machineSurfaceFor(req) ?? assets(req)
   },
-  {
-    port: Number(process.env.PORT ?? 3000),
-    static: serveStatic({ dir: new URL("./assets/", import.meta.url) }),
-  },
-)
+})

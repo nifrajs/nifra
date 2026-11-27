@@ -57,6 +57,7 @@
     "@nifrajs/core": "workspace:^"
   },
   "devDependencies": {
+    "@nifrajs/test-utils": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/schema": "workspace:*"
   },

@@ -163,7 +163,8 @@ describe("NF-C047 island binding names", () => {
     }
     const markup =
       '<div data-island="d"><b data-bind-text="zz" data-bind-on="click:yy"></b></div><div data-island="e"><b data-bind-text="zz"></b></div><div data-island="f"><b data-bind-text="zz"></b></div><div data-island="${id}"><b data-bind-text="zz"></b></div><div data-island="cart"><b data-bind-text="${name}"></b></div><div data-island="nowhere"><b data-bind-text="zz"></b></div>'
-    expect(codes(await scan(CLIENT, dynamic, page(markup)))).toEqual([])
+    // Only "nowhere" is reported, and by NF-C064: a host nothing mounts has no names to judge.
+    expect(codes(await scan(CLIENT, dynamic, page(markup)))).toEqual(["NF-C064"])
   })
 
   test("an id mounted twice with different enhancers is not judged", async () => {

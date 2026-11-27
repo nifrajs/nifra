@@ -20,7 +20,7 @@ export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanil
 /** A scaffold flavour on top of the framework. `default` is the plain page stub; `stateful` only
  * applies to vanilla and emits a reactive island (`bindIsland` state + `data-bind-*` markup + keyed
  * `bindList`) instead of the static island stub - the small-app lane whose binding names, binding
- * hosts and list keys NF-C047/C048/C022 check statically. */
+ * hosts and list keys NF-C047/C048/C022/C064/C065/C066 check statically. */
 export type ScaffoldVariant = "default" | "stateful"
 
 const EXT: Record<Framework, string> = {
@@ -274,7 +274,7 @@ export default function Page({ data }: Route.ComponentProps) {
 //   mountIslands({ todos })
 //
 // Cross-island coordination: one createIslandBus() closed over in each enhancer. nifra_docs("islands")
-// has the full cookbook; \`nifra check\` runs NF-C047/C048/C022 over the page and client you write.
+// has the full cookbook; \`nifra check\` runs NF-C047/C048/C022/C064/C065/C066 over the page and client you write.
 `
 }
 
@@ -315,7 +315,7 @@ export function scaffoldRoute(
       file,
       content: statefulStub(file),
       backend,
-      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route with a reactive island. ${ROUTE_CONTRACT}\nThe stub embeds the island client (bindIsland state + data-bind-* markup + keyed bindList); write it as the companion .client.ts. \`nifra check\` runs NF-C047/C048/C022 over the page and client; nifra_docs("islands") is the full cookbook.`,
+      note: `Create ${file} and ${backend.file} as a zero-runtime @nifrajs/web-vanilla route with a reactive island. ${ROUTE_CONTRACT}\nThe stub embeds the island client (bindIsland state + data-bind-* markup + keyed bindList); write it as the companion .client.ts. \`nifra check\` runs NF-C047/C048/C022/C064/C065/C066 over the page and client; nifra_docs("islands") is the full cookbook.`,
     }
   }
   if (framework === "react" || framework === "preact" || framework === "solid") {
