@@ -463,6 +463,21 @@ pub(crate) unsafe fn set_tcp_nodelay(sock: RawSock) -> bool {
 }
 
 #[cfg(unix)]
+pub(crate) fn is_sock_nonblocking(sock: RawSock) -> io::Result<bool> {
+    let flags = unsafe { libc::fcntl(sock, libc::F_GETFL, 0) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((flags & libc::O_NONBLOCK) != 0)
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn is_sock_nonblocking(_sock: RawSock) -> io::Result<bool> {
+    Ok(true)
+}
+
+#[cfg(unix)]
 pub fn dup_listener_sock(raw_fd: i32) -> io::Result<OwnedSock> {
     use std::os::fd::FromRawFd;
     if raw_fd < 0 {
@@ -1040,20 +1055,33 @@ pub(crate) fn write_bytes_or_queue(
     bytes: &[u8],
     max_write: usize,
 ) -> FlushAction {
-    let budget = max_write.saturating_sub(core.queued_bytes());
+    let mut budget = max_write.saturating_sub(core.queued_bytes());
+    let mut prior_action = FlushAction::None;
     if core.cork_depth > 0 {
-        if bytes.len() > budget {
-            return FlushAction::Close;
-        }
-        compact_sent_prefix(core);
-        if let Some(ref mut tls_conn) = core.tls {
-            if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
+        if bytes.len() > budget && core.queued_bytes() > 0 {
+            let fa = flush_write_buf_core(core);
+            if fa == FlushAction::Close {
                 return FlushAction::Close;
             }
-        } else {
-            core.write_buf.extend_from_slice(bytes);
+            prior_action = fa;
+            budget = max_write.saturating_sub(core.queued_bytes());
         }
-        return FlushAction::None;
+        if bytes.len() <= budget {
+            compact_sent_prefix(core);
+            if let Some(ref mut tls_conn) = core.tls {
+                if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
+                    return FlushAction::Close;
+                }
+            } else {
+                core.write_buf.extend_from_slice(bytes);
+            }
+            return prior_action;
+        }
+        // Queue was flushed and is empty, or remaining queue still can't fit `bytes`:
+        // for plaintext empty queues try an immediate direct write (same limit as uncorked).
+        if core.tls.is_some() || core.queued_bytes() > 0 {
+            return FlushAction::Close;
+        }
     }
     if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
         match send_nonblock(core.fd, bytes) {

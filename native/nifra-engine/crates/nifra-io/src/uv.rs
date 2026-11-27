@@ -84,6 +84,9 @@ pub trait UvCallbacks {
     fn is_websocket(&self, _conn_id: u32) -> bool {
         false
     }
+    /// Deliver request-abort notifications queued during `expire_requests` after releasing the
+    /// transport `RefCell` borrow.
+    fn flush_aborted(&mut self) {}
     fn on_writable(&mut self, conn_id: u32);
     fn on_disconnect(&mut self, conn_id: u32);
 }
@@ -173,6 +176,12 @@ impl UvServer {
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
         let sock = crate::sys::dup_listener_sock(raw_fd)?;
+        if !crate::sys::is_sock_nonblocking(as_raw_sock(&sock))? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "listenerFd must refer to a non-blocking socket",
+            ));
+        }
         Self::start_sock_with_tls(uv_loop, sock, true, None, cfg, tls, callbacks)
     }
 
@@ -1555,7 +1564,15 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
             close_client_handle(uv, conn.poll_handle);
         }
     }
+    let cb = st.callbacks.take();
     drop(st);
+    if let Some(mut handler) = cb {
+        handler.flush_aborted();
+        let mut st = state_rc.borrow_mut();
+        if !st.closed {
+            st.callbacks = Some(handler);
+        }
+    }
     for (id, reply) in sweep.replies {
         UvPollState::write_to_conn(&state_rc, id, &reply, false, false);
     }

@@ -1042,12 +1042,16 @@ class RustBatchSource {
   get trailers(): Record<string, string> {
     if (this.trailersValue === undefined) {
       const pairs = this.id < 0 ? [] : this.server.getTrailers(this.id)
-      const out: Record<string, string> = {}
+      const out: Record<string, string> = Object.create(null)
       for (let i = 0; i < pairs.length; i += 2) {
         const name = pairs[i] ?? ""
         const val = pairs[i + 1] ?? ""
-        if (name.length > 0) out[name] = name in out ? `${out[name]}, ${val}` : val
+        if (name.length > 0) {
+          out[name] = Object.hasOwn(out, name) ? `${out[name]}, ${val}` : val
+        }
       }
+      const streamingPending = (this.flags & FLAG_STREAM_BODY) !== 0 && !this.streamState?.ended
+      if (streamingPending) return out
       this.trailersValue = out
     }
     return this.trailersValue
@@ -1291,6 +1295,21 @@ async function serveWithNodeFallback(
   if (options.path !== undefined) {
     throw new TypeError(
       "@nifrajs/node-engine: Unix domain socket `path` is not supported by `@nifrajs/node` fallback",
+    )
+  }
+  if (options.engine?.listenerFd !== undefined) {
+    throw new TypeError(
+      "@nifrajs/node-engine: `engine.listenerFd` is not supported by `@nifrajs/node` fallback",
+    )
+  }
+  if (options.maxBodySize !== undefined) {
+    throw new TypeError(
+      "@nifrajs/node-engine: `maxBodySize` is not supported by `@nifrajs/node` fallback",
+    )
+  }
+  if (options.oversizeWindow !== undefined) {
+    throw new TypeError(
+      "@nifrajs/node-engine: `oversizeWindow` is not supported by `@nifrajs/node` fallback",
     )
   }
   const tlsOpt = options.tls

@@ -89,9 +89,9 @@ impl Default for SocketConfig {
     }
 }
 
-/// The transport the engine will actually run: `io_uring` when requested via
-/// `NIFRA_ENGINE_TRANSPORT=uring` and supported by the kernel, `epoll` on Linux unless
-/// `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere.
+/// Predicted transport the engine selects for a new server start (`io_uring` when requested via
+/// `NIFRA_ENGINE_TRANSPORT=uring` and ring+eventfd initialization succeeds, `epoll` on Linux
+/// unless `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere).
 pub fn detect_transport() -> TransportKind {
     #[cfg(target_os = "linux")]
     {

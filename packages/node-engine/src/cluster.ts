@@ -16,7 +16,7 @@
 import cluster, { type Worker } from "node:cluster"
 import { randomBytes } from "node:crypto"
 import { closeSync } from "node:fs"
-import { createServer, type Server as NetServer, Socket } from "node:net"
+import { Socket } from "node:net"
 import { availableParallelism } from "node:os"
 import type { EngineServer, FetchHandler, NodeStopOptions, ServeOptions } from "./options.ts"
 import { bindSharedListenerSocket, dupSharedListenerFd, serve } from "./serve.ts"
@@ -397,48 +397,34 @@ interface Slot {
 }
 
 interface SharedListenerHandle {
-  readonly sendHandle: NetServer | Socket
+  readonly sendHandle: Socket
   readonly port: number
   readonly close: () => Promise<void>
 }
 
-async function bindSharedListener(
+function bindSharedListener(
   port: number,
   host: string | undefined,
   backlog: number | undefined,
 ): Promise<SharedListenerHandle> {
   const native = bindSharedListenerSocket(port, host ?? "0.0.0.0", backlog)
-  if (native !== undefined) {
-    const sock = new Socket({ fd: native.fd, readable: false, writable: false })
-    sock.on("error", () => {})
-    return {
-      sendHandle: sock,
-      port: native.port,
-      close: () => {
-        sock.destroy()
-        return Promise.resolve()
-      },
-    }
+  if (native === undefined) {
+    return Promise.reject(
+      new Error(
+        "@nifrajs/node-engine: `sharedListener` requires the native addon and is not supported in fallback mode",
+      ),
+    )
   }
-  const server = createServer({ pauseOnConnect: true })
-  await new Promise<void>((resolve, reject) => {
-    const onErr = (err: Error): void => reject(err)
-    server.once("error", onErr)
-    server.listen({ port, host, backlog }, () => {
-      server.removeListener("error", onErr)
-      resolve()
-    })
+  const sock = new Socket({ fd: native.fd, readable: false, writable: false })
+  sock.on("error", () => {})
+  return Promise.resolve({
+    sendHandle: sock,
+    port: native.port,
+    close: () => {
+      sock.destroy()
+      return Promise.resolve()
+    },
   })
-  const addr = server.address()
-  const boundPort = typeof addr === "object" && addr !== null ? addr.port : port
-  return {
-    sendHandle: server,
-    port: boundPort,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve())
-      }),
-  }
 }
 
 async function runPrimary(options: ClusterOptions, count: number): Promise<ClusterPrimary> {

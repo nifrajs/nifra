@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -28,6 +28,7 @@ use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
 
 const LISTENER_EVENT_ID: u64 = 0;
+const CANCEL_EVENT_ID: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UringConfig {
@@ -40,7 +41,7 @@ impl Default for UringConfig {
     fn default() -> Self {
         Self {
             ring_entries: 4096,
-            defer_taskrun: true,
+            defer_taskrun: false,
             single_issuer: true,
         }
     }
@@ -61,18 +62,14 @@ fn build_ring(cfg: UringConfig, probe_only: bool) -> io::Result<IoUring> {
     }
     match builder.build(entries) {
         Ok(ring) => Ok(ring),
-        Err(_) if !probe_only => IoUring::new(entries.min(2048)),
-        Err(err) => Err(err),
+        Err(_) => IoUring::new(entries.min(2048)),
     }
 }
 
-/// Probe whether the running Linux kernel supports `io_uring` with `SINGLE_ISSUER` / `DEFER_TASKRUN`.
+/// Probe whether the running Linux kernel supports `io_uring` + `eventfd` registration with the
+/// same setup fallback policy used at server startup.
 pub fn probe_uring_support(cfg: UringConfig) -> io::Result<bool> {
-    match build_ring(cfg, true) {
-        Ok(_) => Ok(true),
-        // The requested setup flags are unsupported: caller falls back to epoll/libuv.
-        Err(_) => Ok(false),
-    }
+    Ok(init_uring_with_config(cfg).is_ok())
 }
 
 #[inline]
@@ -93,23 +90,46 @@ fn desired_poll_mask(core: &ConnCore) -> u32 {
 }
 
 #[inline]
-fn push_sqe(ring: &mut IoUring, entry: squeue::Entry) {
+fn push_sqe(ring: &mut IoUring, entry: squeue::Entry) -> io::Result<()> {
     // SAFETY: PollAdd/PollRemove hold no user pointers that outlive CQ completion.
     if unsafe { ring.submission().push(&entry) }.is_err() {
-        let _ = ring.submit();
-        let _ = unsafe { ring.submission().push(&entry) };
+        ring.submit()?;
+        if unsafe { ring.submission().push(&entry) }.is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "io_uring submission queue full",
+            ));
+        }
     }
+    Ok(())
 }
 
 #[inline]
-fn sync_conn_poll(ring: &mut IoUring, conn: &mut UringConn, conn_id: u32, force_rearm: bool) {
+fn sync_conn_poll(
+    ring: Option<&mut IoUring>,
+    conn: &mut UringConn,
+    conn_id: u32,
+    force_rearm: bool,
+) -> bool {
+    let Some(ring) = ring else {
+        return false;
+    };
     let desired = desired_poll_mask(&conn.core);
     if !force_rearm && conn.armed_mask == desired {
-        return;
+        return true;
     }
     if conn.armed_mask != 0 {
         let old_ud = poll_user_data(conn_id, conn.poll_seq);
-        push_sqe(ring, opcode::PollRemove::new(old_ud).build());
+        if push_sqe(
+            ring,
+            opcode::PollRemove::new(old_ud)
+                .build()
+                .user_data(CANCEL_EVENT_ID),
+        )
+        .is_err()
+        {
+            return false;
+        }
         conn.armed_mask = 0;
     }
     conn.poll_seq = conn.poll_seq.wrapping_add(1).max(1);
@@ -118,9 +138,12 @@ fn sync_conn_poll(ring: &mut IoUring, conn: &mut UringConn, conn_id: u32, force_
         let entry = opcode::PollAdd::new(types::Fd(conn.core.fd), desired)
             .build()
             .user_data(new_ud);
-        push_sqe(ring, entry);
+        if push_sqe(ring, entry).is_err() {
+            return false;
+        }
         conn.armed_mask = desired;
     }
+    true
 }
 
 struct UringConn {
@@ -149,7 +172,7 @@ struct UringState {
     cfg: SocketConfig,
     tls: Option<Arc<TlsStore>>,
     clock: LoopClock,
-    ring: IoUring,
+    ring: Option<IoUring>,
     evfd: RawFd,
     listener_fd: RawSock,
     listener_armed: bool,
@@ -186,14 +209,25 @@ impl UringState {
     }
 
     #[inline]
-    fn arm_listener(&mut self) {
+    fn submit_ring(&mut self) {
+        if let Some(ref mut ring) = self.ring {
+            let _ = ring.submit();
+        }
+    }
+
+    #[inline]
+    fn arm_listener(&mut self) -> io::Result<()> {
         if is_valid_sock(self.listener_fd) && !self.listener_armed {
+            let Some(ref mut ring) = self.ring else {
+                return Err(io::Error::other("io_uring ring has already closed"));
+            };
             let entry = opcode::PollAdd::new(types::Fd(self.listener_fd), libc::POLLIN as u32)
                 .build()
                 .user_data(LISTENER_EVENT_ID);
-            push_sqe(&mut self.ring, entry);
+            push_sqe(ring, entry)?;
             self.listener_armed = true;
         }
+        Ok(())
     }
 
     fn remove_and_close_conn(&mut self, conn_id: u32) -> bool {
@@ -201,11 +235,15 @@ impl UringState {
             return false;
         };
         if conn.armed_mask != 0 {
-            push_sqe(
-                &mut self.ring,
-                opcode::PollRemove::new(poll_user_data(conn_id, conn.poll_seq)).build(),
-            );
-            let _ = self.ring.submit();
+            if let Some(ref mut ring) = self.ring {
+                let _ = push_sqe(
+                    ring,
+                    opcode::PollRemove::new(poll_user_data(conn_id, conn.poll_seq))
+                        .build()
+                        .user_data(CANCEL_EVENT_ID),
+                );
+                let _ = ring.submit();
+            }
         }
         unsafe { close_sock(conn.core.fd) };
         self.pending_disconnects.push(conn_id);
@@ -221,18 +259,22 @@ pub struct UringServer {
     state: Rc<RefCell<UringState>>,
 }
 
-/// Initialize the `IoUring` and registered `eventfd` before consuming the listener/callbacks so callers can cleanly fall back to `epoll`.
-pub(crate) fn init_uring_ring() -> io::Result<(IoUring, RawFd)> {
-    let ring = build_ring(UringConfig::default(), false)?;
-    let evfd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
-    if evfd < 0 {
+fn init_uring_with_config(cfg: UringConfig) -> io::Result<(IoUring, OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let ring = build_ring(cfg, false)?;
+    let raw_evfd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    if raw_evfd < 0 {
         return Err(io::Error::last_os_error());
     }
-    if let Err(err) = ring.submitter().register_eventfd(evfd) {
-        unsafe { libc::close(evfd) };
-        return Err(err);
-    }
+    // SAFETY: `eventfd` returned a fresh owned file descriptor.
+    let evfd = unsafe { OwnedFd::from_raw_fd(raw_evfd) };
+    ring.submitter().register_eventfd(evfd.as_raw_fd())?;
     Ok((ring, evfd))
+}
+
+/// Initialize the `IoUring` and registered `eventfd` before consuming the listener/callbacks so callers can cleanly fall back to `epoll`.
+pub(crate) fn init_uring_ring() -> io::Result<(IoUring, OwnedFd)> {
+    init_uring_with_config(UringConfig::default())
 }
 
 impl UringServer {
@@ -247,28 +289,25 @@ impl UringServer {
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
-        ring_and_evfd: Option<(IoUring, RawFd)>,
+        ring_and_evfd: Option<(IoUring, OwnedFd)>,
     ) -> io::Result<Self> {
         if uv_loop.is_null() {
-            if let Some((_, evfd)) = ring_and_evfd {
-                libc::close(evfd);
-            }
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "null uv_loop_t pointer",
             ));
         }
         let uv = uv_api()?;
-        let (ring, evfd) = match ring_and_evfd {
+        let (ring, evfd_owned) = match ring_and_evfd {
             Some(pair) => pair,
             None => init_uring_ring()?,
         };
+        let evfd_raw = evfd_owned.as_raw_fd();
 
         let uring_handle = alloc_handle(uv.poll_size);
-        let rc = (uv.poll_init_socket)(uv_loop, uring_handle, evfd);
+        let rc = (uv.poll_init_socket)(uv_loop, uring_handle, evfd_raw);
         if rc != 0 {
             free_handle(uring_handle, uv.poll_size);
-            libc::close(evfd);
             return Err(io::Error::other(format!(
                 "uv_poll_init_socket(eventfd) failed: {rc}"
             )));
@@ -278,7 +317,9 @@ impl UringServer {
         let rc = (uv.check_init)(uv_loop, check_handle);
         if rc != 0 {
             free_handle(check_handle, uv.check_size);
-            (uv.close)(uring_handle, on_raw_poll_close);
+            let ctx = Box::into_raw(Box::new(evfd_owned));
+            (uv.handle_set_data)(uring_handle, ctx.cast());
+            (uv.close)(uring_handle, on_owned_fd_poll_close);
             return Err(io::Error::other(format!("uv_check_init failed: {rc}")));
         }
 
@@ -296,8 +337,8 @@ impl UringServer {
             cfg,
             tls,
             clock: LoopClock::new(initial_uv_ms),
-            ring,
-            evfd,
+            ring: Some(ring),
+            evfd: evfd_raw,
             listener_fd: owned_listener,
             listener_armed: false,
             unix_guard,
@@ -323,10 +364,37 @@ impl UringServer {
             callbacks: Some(callbacks),
         }));
 
+        let u_ctx = Box::into_raw(Box::new(UringCtx {
+            state: Rc::clone(&state),
+            evfd: evfd_owned.into_raw_fd(),
+        }));
+        (uv.handle_set_data)(uring_handle, u_ctx.cast());
+
+        let c_ctx = Box::into_raw(Box::new(CheckCtx {
+            state: Rc::clone(&state),
+        }));
+        (uv.handle_set_data)(check_handle, c_ctx.cast());
+
         {
             let mut st = state.borrow_mut();
-            st.arm_listener();
-            let _ = st.ring.submit();
+            if let Err(err) = st.arm_listener() {
+                drop(st);
+                Self {
+                    state: Rc::clone(&state),
+                }
+                .close_all();
+                return Err(err);
+            }
+            if let Some(ref mut r) = st.ring {
+                if let Err(err) = r.submit() {
+                    drop(st);
+                    Self {
+                        state: Rc::clone(&state),
+                    }
+                    .close_all();
+                    return Err(err);
+                }
+            }
         }
 
         let th = alloc_handle(uv.timer_size);
@@ -348,17 +416,6 @@ impl UringServer {
             std::ptr::null_mut()
         };
         state.borrow_mut().timer_handle = timer_handle;
-
-        let u_ctx = Box::into_raw(Box::new(UringCtx {
-            state: Rc::clone(&state),
-            evfd,
-        }));
-        (uv.handle_set_data)(uring_handle, u_ctx.cast());
-
-        let c_ctx = Box::into_raw(Box::new(CheckCtx {
-            state: Rc::clone(&state),
-        }));
-        (uv.handle_set_data)(check_handle, c_ctx.cast());
 
         let rc = (uv.poll_start)(uring_handle, UV_READABLE, on_uring_event);
         if rc != 0 {
@@ -461,7 +518,7 @@ impl UringServer {
                 let next_len = st.deferred.len().saturating_add(bytes.len());
                 if next_len > max_write.max(MAX_WRITE_BUF_BYTES) {
                     st.remove_and_close_conn(conn_id);
-                    let _ = st.ring.submit();
+                    st.submit_ring();
                     return WriteResult::Closed;
                 }
                 st.deferred.extend_from_slice(bytes);
@@ -483,7 +540,7 @@ impl UringServer {
             close_after || (close_if_read_ended && read_ended && !conn.core.dispatching);
         if conn.core.queued_bytes() >= max_write {
             st_ref.remove_and_close_conn(conn_id);
-            let _ = st_ref.ring.submit();
+            st_ref.submit_ring();
             return WriteResult::Closed;
         }
         if effective_close {
@@ -492,13 +549,17 @@ impl UringServer {
         let fa = write_bytes_or_queue(&mut conn.core, bytes, max_write);
         if fa == FlushAction::Close || conn.core.queued_bytes() > max_write {
             st_ref.remove_and_close_conn(conn_id);
-            let _ = st_ref.ring.submit();
+            st_ref.submit_ring();
             return WriteResult::Closed;
         }
         let armed = conn.core.writable_armed;
         if fa != FlushAction::None {
-            sync_conn_poll(&mut st_ref.ring, conn, conn_id, false);
-            let _ = st_ref.ring.submit();
+            if !sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, false) {
+                st_ref.remove_and_close_conn(conn_id);
+                st_ref.submit_ring();
+                return WriteResult::Closed;
+            }
+            st_ref.submit_ring();
         }
         if fa == FlushAction::DisarmWritable {
             st_ref.pending_writable.push(conn_id);
@@ -523,7 +584,7 @@ impl UringServer {
         let mut st = self.state.borrow_mut();
         let closed = st.remove_and_close_conn(conn_id);
         if closed {
-            let _ = st.ring.submit();
+            st.submit_ring();
         }
         closed
     }
@@ -561,13 +622,17 @@ impl UringServer {
         let fa = flush_write_buf_core(&mut conn.core);
         if fa == FlushAction::Close {
             st_ref.remove_and_close_conn(conn_id);
-            let _ = st_ref.ring.submit();
+            st_ref.submit_ring();
             return WriteResult::Closed;
         }
         let armed = conn.core.writable_armed;
         if fa != FlushAction::None {
-            sync_conn_poll(&mut st_ref.ring, conn, conn_id, false);
-            let _ = st_ref.ring.submit();
+            if !sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, false) {
+                st_ref.remove_and_close_conn(conn_id);
+                st_ref.submit_ring();
+                return WriteResult::Closed;
+            }
+            st_ref.submit_ring();
         }
         if fa == FlushAction::DisarmWritable {
             st_ref.pending_writable.push(conn_id);
@@ -615,8 +680,12 @@ impl UringServer {
             return true;
         }
         conn.core.app_read_paused = paused;
-        sync_conn_poll(&mut st_ref.ring, conn, conn_id, false);
-        let _ = st_ref.ring.submit();
+        if !sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, false) {
+            st_ref.remove_and_close_conn(conn_id);
+            st_ref.submit_ring();
+            return false;
+        }
+        st_ref.submit_ring();
         true
     }
 
@@ -624,11 +693,15 @@ impl UringServer {
         let mut st = self.state.borrow_mut();
         if is_valid_sock(st.listener_fd) {
             if st.listener_armed {
-                push_sqe(
-                    &mut st.ring,
-                    opcode::PollRemove::new(LISTENER_EVENT_ID).build(),
-                );
-                let _ = st.ring.submit();
+                if let Some(ref mut ring) = st.ring {
+                    let _ = push_sqe(
+                        ring,
+                        opcode::PollRemove::new(LISTENER_EVENT_ID)
+                            .build()
+                            .user_data(CANCEL_EVENT_ID),
+                    );
+                    let _ = ring.submit();
+                }
                 st.listener_armed = false;
             }
             unsafe { close_sock(st.listener_fd) };
@@ -648,11 +721,26 @@ impl UringServer {
         st.closed = true;
         st.clock.release_date_lease();
         let uv = st.uv;
+        let mut ring = st.ring.take();
+        if let Some(ref mut r) = ring {
+            for (conn_id, conn) in st.conns.iter() {
+                if conn.armed_mask != 0 {
+                    let _ = push_sqe(
+                        r,
+                        opcode::PollRemove::new(poll_user_data(conn_id, conn.poll_seq))
+                            .build()
+                            .user_data(CANCEL_EVENT_ID),
+                    );
+                }
+            }
+            let _ = r.submit();
+        }
         let drained = st.conns.drain();
         st.read_ended.clear();
         for conn in drained {
             unsafe { close_sock(conn.core.fd) };
         }
+        drop(ring);
         if !st.uring_handle.is_null() {
             let h = st.uring_handle;
             st.uring_handle = std::ptr::null_mut();
@@ -740,11 +828,15 @@ unsafe fn accept_ready_uring(state_rc: &Rc<RefCell<UringState>>, now: std::time:
             continue;
         };
         let st_ref = &mut *st;
-        if let Some(conn) = st_ref.conns.get_mut(conn_id) {
-            sync_conn_poll(&mut st_ref.ring, conn, conn_id, true);
+        let armed = st_ref
+            .conns
+            .get_mut(conn_id)
+            .is_some_and(|conn| sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, true));
+        if !armed {
+            st_ref.remove_and_close_conn(conn_id);
         }
     }
-    st.arm_listener();
+    let _ = st.arm_listener();
 }
 
 unsafe fn drive_uring_conn(
@@ -1065,8 +1157,8 @@ unsafe fn drive_uring_conn(
             if !remove && deferred_bp && !conn.core.writable_armed {
                 fire_writable = true;
             }
-            if !remove {
-                sync_conn_poll(&mut st_ref.ring, conn, conn_id, true);
+            if !remove && !sync_conn_poll(st_ref.ring.as_mut(), conn, conn_id, true) {
+                remove = true;
             }
         }
         cleartext_write.clear();
@@ -1121,11 +1213,11 @@ unsafe extern "C" fn on_uring_event(handle: *mut c_void, status: c_int, _events:
         st.in_poll_loop = true;
         let uv_ms = (uv.now)(st.uv_loop);
         let now = st.clock.tick(uv_ms);
-        let _ = st.ring.submit();
         let mut cqe_scratch = std::mem::take(&mut st.cqe_scratch);
         cqe_scratch.clear();
-        {
-            let cq = st.ring.completion();
+        if let Some(ref mut ring) = st.ring {
+            let _ = ring.submit();
+            let cq = ring.completion();
             for entry in cq {
                 cqe_scratch.push((entry.user_data(), entry.result()));
             }
@@ -1137,12 +1229,16 @@ unsafe extern "C" fn on_uring_event(handle: *mut c_void, status: c_int, _events:
     let count = state_rc.borrow().cqe_scratch.len();
     for idx in 0..count {
         let (ud, res) = state_rc.borrow().cqe_scratch[idx];
+        if ud == CANCEL_EVENT_ID {
+            continue;
+        }
         if ud == LISTENER_EVENT_ID {
             if res >= 0 {
                 accept_ready_uring(&state_rc, now);
             } else {
-                state_rc.borrow_mut().listener_armed = false;
-                state_rc.borrow_mut().arm_listener();
+                let mut st = state_rc.borrow_mut();
+                st.listener_armed = false;
+                let _ = st.arm_listener();
             }
             continue;
         }
@@ -1174,7 +1270,7 @@ unsafe extern "C" fn on_uring_event(handle: *mut c_void, status: c_int, _events:
     let mut st = state_rc.borrow_mut();
     st.in_poll_loop = false;
     if !st.closed {
-        let _ = st.ring.submit();
+        st.submit_ring();
     }
 }
 
@@ -1222,16 +1318,21 @@ fn flush_turn_end(state_rc: &Rc<RefCell<UringState>>) {
                     let fa = flush_write_buf_core(&mut conn.core);
                     if fa == FlushAction::Close {
                         st_ref.remove_and_close_conn(id);
-                    } else if fa != FlushAction::None {
-                        sync_conn_poll(&mut st_ref.ring, conn, id, false);
+                    } else if fa != FlushAction::None
+                        && !sync_conn_poll(st_ref.ring.as_mut(), conn, id, false)
+                    {
+                        st_ref.remove_and_close_conn(id);
                     }
                 }
             } else {
                 i += 1;
             }
         }
+        if !st.pending_disconnects.is_empty() {
+            st.arm_check();
+        }
         st.callbacks = Some(handler);
-        let _ = st.ring.submit();
+        st.submit_ring();
     }
 }
 
@@ -1262,7 +1363,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     let ctx = &*(data as *const TimerCtx);
     let state_rc = Rc::clone(&ctx.state);
 
-    let (close, replies) = {
+    let (close, replies, cb) = {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
@@ -1290,18 +1391,27 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
                 let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME, max_write);
                 if fa == FlushAction::Close {
                     close.push(id);
-                } else if fa != FlushAction::None {
-                    sync_conn_poll(&mut st_ref.ring, conn, id, false);
+                } else if fa != FlushAction::None
+                    && !sync_conn_poll(st_ref.ring.as_mut(), conn, id, false)
+                {
+                    close.push(id);
                 }
             }
         }
         for &id in &close {
             st.remove_and_close_conn(id);
         }
-        let _ = st.ring.submit();
-        (close, sweep.replies)
+        st.submit_ring();
+        (close, sweep.replies, st.callbacks.take())
     };
     let _ = close;
+    if let Some(mut handler) = cb {
+        handler.flush_aborted();
+        let mut st = state_rc.borrow_mut();
+        if !st.closed {
+            st.callbacks = Some(handler);
+        }
+    }
     let srv = UringServer {
         state: Rc::clone(&state_rc),
     };
@@ -1311,8 +1421,12 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     flush_turn_end(&state_rc);
 }
 
-unsafe extern "C" fn on_raw_poll_close(handle: *mut c_void) {
+unsafe extern "C" fn on_owned_fd_poll_close(handle: *mut c_void) {
     if let Ok(uv) = uv_api() {
+        let data = (uv.handle_get_data)(handle);
+        if !data.is_null() {
+            drop(Box::from_raw(data as *mut OwnedFd));
+        }
         free_handle(handle, uv.poll_size);
     }
 }

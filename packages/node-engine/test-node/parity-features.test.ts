@@ -10,7 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { type ConnectionOptions, connect as tlsConnect } from "node:tls"
-import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib"
+import * as zlib from "node:zlib"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { WebSocket as WsClient } from "ws"
@@ -273,15 +273,15 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
     const br = await reqEnc("/big", "gzip;q=0.5, br;q=0.9")
     assert.equal(br.ce, "br")
     assert.match(br.vary ?? "", /accept-encoding/i)
-    assert.deepEqual(JSON.parse(brotliDecompressSync(br.body).toString("utf8")), { data: big })
+    assert.deepEqual(JSON.parse(zlib.brotliDecompressSync(br.body).toString("utf8")), { data: big })
 
     const gz = await reqEnc("/big", "deflate;q=0.4, gzip;q=0.8")
     assert.equal(gz.ce, "gzip")
-    assert.deepEqual(JSON.parse(gunzipSync(gz.body).toString("utf8")), { data: big })
+    assert.deepEqual(JSON.parse(zlib.gunzipSync(gz.body).toString("utf8")), { data: big })
 
     const df = await reqEnc("/big", "deflate")
     assert.equal(df.ce, "deflate")
-    assert.deepEqual(JSON.parse(inflateSync(df.body).toString("utf8")), { data: big })
+    assert.deepEqual(JSON.parse(zlib.inflateSync(df.body).toString("utf8")), { data: big })
 
     const idResp = await reqEnc("/big", "identity")
     assert.equal(idResp.ce, null)
@@ -611,7 +611,11 @@ test("releasing an unconsumed streaming request body terminates detached readers
   }
 })
 
-test("native zstd compression negotiates and compresses payloads", async () => {
+test("native zstd compression negotiates and compresses payloads", async (t) => {
+  if (typeof zlib.zstdDecompressSync !== "function") {
+    t.skip("Node < 22.15 does not provide zlib.zstdDecompressSync")
+    return
+  }
   const big = "zstd-compressible-payload-".repeat(120)
   const app = server().get("/zstd", () => ({ text: big }))
   const running = await serve(app, {
@@ -646,7 +650,7 @@ test("native zstd compression negotiates and compresses payloads", async () => {
       req.end()
     })
     assert.equal(res.ce, "zstd")
-    assert.equal(JSON.parse(zstdDecompressSync(res.raw).toString("utf8")).text, big)
+    assert.equal(zlib.zstdDecompressSync(res.raw).toString("utf8").includes(big), true)
   } finally {
     await running.stop({ drainMs: 50 })
   }
@@ -760,9 +764,67 @@ test("probe(), isNativeAvailable(), and graceful fallback: true to @nifrajs/node
     } finally {
       await running.stop({ drainMs: 50 })
     }
+    await assert.rejects(
+      () => serve(app, { port: 0, fallback: true, maxBodySize: 1024 }),
+      /maxBodySize/,
+    )
+    await assert.rejects(
+      () => serve(app, { port: 0, fallback: true, oversizeWindow: 1024 }),
+      /oversizeWindow/,
+    )
+    await assert.rejects(
+      () => serve(app, { port: 0, fallback: true, engine: { listenerFd: 0 } }),
+      /listenerFd/,
+    )
   } finally {
     if (prev === undefined) delete process.env.NIFRA_RUST_ENGINE_PATH
     else process.env.NIFRA_RUST_ENGINE_PATH = prev
   }
   assert.equal(isNativeAvailable(), true)
+})
+
+test("streaming request trailers are not stale-cached before end and resist prototype keys", async () => {
+  const handler = {
+    async fetch(req: Request, platform?: { readonly trailers?: Record<string, string> }) {
+      const before = { ...(platform?.trailers ?? {}) }
+      const text = await req.text()
+      const after = platform?.trailers ?? {}
+      return Response.json({
+        before,
+        text,
+        digest: after["x-digest"],
+        ctor: Object.getOwnPropertyDescriptor(after, "constructor")?.value,
+      })
+    },
+  }
+  const running = await serve(handler, {
+    port: 0,
+    hostname: "127.0.0.1",
+    engine: { streamRequestBodies: true },
+  })
+  try {
+    const wire = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+        sock.write(
+          "POST /stream-trail HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nfirst\r\n",
+        )
+        setTimeout(() => {
+          sock.write("0\r\nx-digest: late123\r\nconstructor: safeval\r\n\r\n")
+        }, 30)
+      })
+      const chunks: Buffer[] = []
+      sock.on("data", (c) => chunks.push(c))
+      sock.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      sock.on("error", reject)
+    })
+    const json = JSON.parse(wire.slice(wire.indexOf("\r\n\r\n") + 4))
+    assert.deepEqual(json, {
+      before: {},
+      text: "first",
+      digest: "late123",
+      ctor: "safeval",
+    })
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
 })

@@ -1364,6 +1364,8 @@ struct UvHttpShared {
     ws_shared_pool: Option<SharedCompressorPool>,
     ws_topics: HashMap<String, Vec<u32>>,
     h2_ws_map: HashMap<u32, (u32, u32)>,
+    h2_cork_conns: HashMap<u32, (u32, u32)>,
+    pending_aborted: Vec<u32>,
     h2_ws_seq: u32,
     compression: CompressionCfg,
     http2_enabled: bool,
@@ -2541,27 +2543,29 @@ impl UvCallbacks for HttpUvCallbacks {
             h2.drain_expired_streams(now, out)
         };
         if !expired_streams.is_empty() {
-            let aborted = {
-                let mut st = self.shared.borrow_mut();
-                let mut ids = Vec::new();
-                for stream_id in expired_streams {
-                    let matching: Vec<u32> = st
-                        .pending
-                        .iter_connection(st.conn_meta.pending_head(conn_id))
-                        .filter(|(_, p)| p.h2_stream_id() == Some(stream_id))
-                        .map(|(id, _)| id)
-                        .collect();
-                    for id in matching {
-                        if st.remove_pending(id).is_some() {
-                            ids.push(id);
-                        }
+            let mut st = self.shared.borrow_mut();
+            for stream_id in expired_streams {
+                let matching: Vec<u32> = st
+                    .pending
+                    .iter_connection(st.conn_meta.pending_head(conn_id))
+                    .filter(|(_, p)| p.h2_stream_id() == Some(stream_id))
+                    .map(|(id, _)| id)
+                    .collect();
+                for id in matching {
+                    if st.remove_pending(id).is_some() {
+                        st.pending_aborted.push(id);
                     }
                 }
-                ids
-            };
-            notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+            }
         }
         close_conn
+    }
+
+    fn flush_aborted(&mut self) {
+        let aborted = std::mem::take(&mut self.shared.borrow_mut().pending_aborted);
+        if !aborted.is_empty() {
+            notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+        }
     }
 
     fn oldest_incomplete_head(&self, conn_id: u32) -> Option<std::time::Instant> {
@@ -2699,6 +2703,7 @@ impl UvCallbacks for HttpUvCallbacks {
                     closes.push((socket_id, 1006u16, String::new()));
                 }
             }
+            st.h2_cork_conns.retain(|_, (cid, _)| *cid != conn_id);
             (ids, closes)
         };
         notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
@@ -4474,17 +4479,46 @@ impl UvHttpServer {
     /// Defer outbound TCP/TLS socket flushes on `socket_id`'s connection until `ws_cork_end`.
     #[napi]
     pub fn ws_cork_begin(&self, socket_id: u32) -> bool {
-        let Some(conn_id) = ws_conn_id_for_socket(&self.shared.borrow(), socket_id) else {
+        let mut st = self.shared.borrow_mut();
+        let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
             return false;
         };
-        self.server.cork_begin(conn_id)
+        if !self.server.cork_begin(conn_id) {
+            return false;
+        }
+        if socket_id >= H2_WS_ID_BIT {
+            let entry = st.h2_cork_conns.entry(socket_id).or_insert((conn_id, 0));
+            entry.0 = conn_id;
+            entry.1 = entry.1.saturating_add(1);
+        }
+        true
     }
 
     /// Flush deferred outbound writes when the outermost cork scope completes.
     #[napi]
     pub fn ws_cork_end(&self, socket_id: u32) -> bool {
-        let Some(conn_id) = ws_conn_id_for_socket(&self.shared.borrow(), socket_id) else {
-            return false;
+        let conn_id = {
+            let mut st = self.shared.borrow_mut();
+            if socket_id >= H2_WS_ID_BIT {
+                if let Some((cid, depth)) = st.h2_cork_conns.get_mut(&socket_id) {
+                    let out_cid = *cid;
+                    *depth = depth.saturating_sub(1);
+                    if *depth == 0 {
+                        st.h2_cork_conns.remove(&socket_id);
+                    }
+                    out_cid
+                } else {
+                    match ws_conn_id_for_socket(&st, socket_id) {
+                        Some(cid) => cid,
+                        None => return false,
+                    }
+                }
+            } else {
+                match ws_conn_id_for_socket(&st, socket_id) {
+                    Some(cid) => cid,
+                    None => return false,
+                }
+            }
         };
         self.server.cork_end(conn_id) != WriteResult::Closed
     }
@@ -5383,6 +5417,8 @@ pub fn create_uv_server(
         ws_shared_pool,
         ws_topics: HashMap::new(),
         h2_ws_map: HashMap::new(),
+        h2_cork_conns: HashMap::new(),
+        pending_aborted: Vec::new(),
         h2_ws_seq: 0,
         compression,
         http2_enabled,

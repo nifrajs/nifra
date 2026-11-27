@@ -1499,7 +1499,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
     let ctx = &*(data as *const TimerCtx);
     let state_rc = Rc::clone(&ctx.state);
 
-    let replies = {
+    let (replies, cb) = {
         let mut st = state_rc.borrow_mut();
         if st.closed {
             return;
@@ -1528,9 +1528,16 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
         for id in close {
             st.remove_and_close_conn(id);
         }
-        sweep.replies
+        (sweep.replies, st.callbacks.take())
     };
 
+    if let Some(mut handler) = cb {
+        handler.flush_aborted();
+        let mut st = state_rc.borrow_mut();
+        if !st.closed {
+            st.callbacks = Some(handler);
+        }
+    }
     let server = EpollServer {
         state: Rc::clone(&state_rc),
     };
