@@ -529,6 +529,53 @@ function fixedHeaders(headers: readonly (readonly [string, string])[]): string[]
   return flat
 }
 
+const checkedNames = new Set<string>()
+
+/**
+ * The header lines of a batched response, under the rules of `validateAndBuildFlatHeaders`.
+ * `undefined` when one cannot be written: the unbatched writer then refuses it and answers.
+ */
+function headerBlock(
+  headers: HeaderRecord | undefined,
+  cookies: readonly string[] | undefined,
+  defaultType: string | undefined,
+): string | undefined {
+  let block = ""
+  let typed = false
+  if (headers !== undefined) {
+    for (const name in headers) {
+      if (!Object.hasOwn(headers, name)) continue
+      if (!checkedNames.has(name)) {
+        if (!TOKEN.test(name)) return undefined
+        if (checkedNames.size >= 512) checkedNames.clear()
+        checkedNames.add(name)
+      }
+      const value = headers[name]
+      const skip = ownedHeader(name)
+      if (!skip && !typed && name.length === 12 && name.toLowerCase() === "content-type") {
+        typed = true
+      }
+      if (typeof value === "string") {
+        if (BAD_VALUE.test(value)) return undefined
+        if (!skip) block += `${name}: ${value}\r\n`
+      } else if (value !== undefined) {
+        for (const each of value) {
+          if (BAD_VALUE.test(each)) return undefined
+          if (!skip) block += `${name}: ${each}\r\n`
+        }
+      }
+    }
+  }
+  if (!typed && defaultType !== undefined) block += `content-type: ${defaultType}\r\n`
+  if (cookies !== undefined) {
+    for (const cookie of cookies) {
+      if (BAD_VALUE.test(cookie)) return undefined
+      block += `set-cookie: ${cookie}\r\n`
+    }
+  }
+  return block
+}
+
 const NO_BODY_BYTES = new Uint8Array(0)
 
 function declaredContentLength(headers: HeaderRecord | undefined): number | undefined {
@@ -1273,7 +1320,36 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     outMeta[ob + 1] = templateId
     outMeta[ob + 2] = outOff
     outMeta[ob + 3] = len
+    outMeta[ob + 4] = 0
     outOff += len
+    outCount += 1
+    return true
+  }
+
+  /** `queueSync` for a response with its own header lines; `block` is never empty. */
+  const queueBlock = (
+    reqId: number,
+    status: number,
+    block: string,
+    body: string | Uint8Array,
+  ): boolean => {
+    const bodyUnits = typeof body === "string" ? body.length * 3 : body.byteLength
+    const bound = block.length * 3 + bodyUnits
+    if ((outCount + 1) * outSlotU32s > outMeta.length || bound > maxOutBytes - outOff) {
+      flush()
+      if (bound > maxOutBytes) return false
+    }
+    const blockLen = outData.write(block, outOff, "utf8")
+    const bodyAt = outOff + blockLen
+    const len = typeof body === "string" ? outData.write(body, bodyAt, "utf8") : body.byteLength
+    if (typeof body !== "string") outData.set(body, bodyAt)
+    const ob = outCount * outSlotU32s
+    outMeta[ob] = reqId
+    outMeta[ob + 1] = status
+    outMeta[ob + 2] = outOff
+    outMeta[ob + 3] = len
+    outMeta[ob + 4] = blockLen
+    outOff = bodyAt + len
     outCount += 1
     return true
   }
@@ -1298,13 +1374,20 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   /** Queues a plain json or text outcome into the out slab; `false` when it needs the full writer. */
   const queueOutcome = (reqId: number, outcome: NodeServeOutcome, isHead: boolean): boolean => {
     if (isHead || outcome.kind === "response") return false
-    if (outcome.headers !== undefined || isBodyless(outcome.status)) return false
+    const { status, headers } = outcome
+    if (isBodyless(status)) return false
+    const cookies = outcome.kind === "json" ? outcome.cookies : undefined
     const body = outcome.body ?? ""
     if (outcomeBodyBytes(body) > bufferedResponseLimit) return false
-    if (outcome.kind === "json") {
-      return outcome.cookies === undefined && queueSync(reqId, jsonTemplate(outcome.status), body)
+    if (headers === undefined && cookies === undefined) {
+      const template = outcome.kind === "json" ? jsonTemplate(status) : textTemplate(status)
+      return queueSync(reqId, template, body)
     }
-    return queueSync(reqId, textTemplate(outcome.status), body)
+    if (!Number.isInteger(status) || status < 100 || status > 999) return false
+    const type = outcome.kind === "json" ? JSON_CONTENT_TYPE : undefined
+    const block = headerBlock(headers, cookies, type)
+    // An empty block would read as a templated slot.
+    return block !== undefined && block !== "" && queueBlock(reqId, status, block, body)
   }
 
   const defaultOutcomeContentType = (
@@ -1742,6 +1825,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   outMeta = bufs.outMeta
   outData = bufs.outData
   outSlotU32s = bufs.outSlotU32s
+  // A header slot needs the fifth field: an older addon would read its status as a template id.
+  if (outSlotU32s < 5) {
+    uvServer.close()
+    throw new TypeError(
+      "@nifrajs/node-engine: the native addon is older than this package, rebuild it",
+    )
+  }
   maxOutBytes = outData.byteLength
   tpl400 = textTemplate(400)
   tpl413 = jsonTemplate(413)

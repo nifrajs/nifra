@@ -103,7 +103,7 @@ pub mod abi {
     /// 8 x u32 (32 bytes) per inbound request in `inMeta`.
     pub const IN_SLOT_U32S: usize = 10;
     /// 4 x u32 (16 bytes) per outbound response in `outMeta`.
-    pub const OUT_SLOT_U32S: usize = 4;
+    pub const OUT_SLOT_U32S: usize = 5;
 
     pub const METHOD_MASK: u32 = 0x0F;
     pub const FLAG_HAS_BODY: u32 = 1 << 4;
@@ -958,6 +958,23 @@ pub fn write_buffered_response(
     }
 }
 
+/// [`write_buffered_response`] for header lines the caller already serialized and validated: each
+/// ends in CRLF and none is `date`, `content-length` or `transfer-encoding`. Not for bodyless statuses.
+pub fn write_block_response(out: &mut Vec<u8>, status: u16, block: &[u8], body: &[u8]) {
+    let mut num = itoa::Buffer::new();
+    out.extend_from_slice(b"HTTP/1.1 ");
+    out.extend_from_slice(num.format(status).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(reason_phrase(status).as_bytes());
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(block);
+    date::append_header(out);
+    out.extend_from_slice(b"content-length: ");
+    out.extend_from_slice(num.format(body.len()).as_bytes());
+    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(body);
+}
+
 /// Write the HTTP/1.1 head for a streamed response (`Transfer-Encoding: chunked` unless
 /// `content_length` is declared).
 pub fn write_stream_head(
@@ -1486,6 +1503,20 @@ mod tests {
             resume.examined(),
             wire.len()
         );
+    }
+
+    #[test]
+    fn block_response_matches_the_pair_writer() {
+        let mut pairs = Vec::new();
+        write_buffered_response(
+            &mut pairs,
+            201,
+            &[("x-a", "1"), ("x-b", "a: b")],
+            Some(b"hi"),
+        );
+        let mut block = Vec::new();
+        write_block_response(&mut block, 201, b"x-a: 1\r\nx-b: a: b\r\n", b"hi");
+        assert_eq!(block, pairs);
     }
 
     #[test]

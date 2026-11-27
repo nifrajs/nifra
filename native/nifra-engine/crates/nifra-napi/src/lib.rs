@@ -19,9 +19,9 @@ use nifra_http::h2::{
 };
 use nifra_http::{
     awaits_continue, collect_headers_in_head, parse_http1, parse_http1_resume,
-    write_buffered_response, write_chunk, write_chunk_terminator, write_close_delimited_head,
-    write_stream_head, BatchPacker, ChunkResume, FastRoutes, ParseLimits, ParseStatus,
-    PreparedTemplates,
+    write_block_response, write_buffered_response, write_chunk, write_chunk_terminator,
+    write_close_delimited_head, write_stream_head, BatchPacker, ChunkResume, FastRoutes,
+    ParseLimits, ParseStatus, PreparedTemplates,
 };
 #[cfg(unix)]
 use nifra_io::conn_slot;
@@ -2418,14 +2418,51 @@ impl UvHttpServer {
             let template_id = meta[base + 1];
             let body_off = meta[base + 2] as usize;
             let body_len = meta[base + 3] as usize;
+            // Non-zero: that many bytes of header lines precede the body, and the template field
+            // carries the status instead.
+            let block_len = meta[base + 4] as usize;
             let Some(pending) = st.remove_pending(req_id) else {
                 continue;
             };
-            if body_off + body_len > data.len() {
+            let split = body_off + block_len;
+            if split + body_len > data.len() {
                 continue;
             }
-            let body_slice = &data[body_off..body_off + body_len];
+            let body_slice = &data[split..split + body_len];
             frame.clear();
+            if block_len != 0 {
+                let block = &data[body_off..split];
+                let status = template_id as u16;
+                if let Some(stream_id) = pending.h2_stream_id() {
+                    let Some(h2) = st
+                        .conn_meta
+                        .get_mut(pending.conn_id)
+                        .and_then(|s| s.h2.as_deref_mut())
+                    else {
+                        continue;
+                    };
+                    // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
+                    let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
+                        .unwrap_or("")
+                        .split_terminator("\r\n")
+                        .filter_map(|line| line.split_once(": "))
+                        .collect();
+                    h2.write_response(stream_id, status, &pairs, Some(body_slice), &mut frame);
+                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
+                } else {
+                    write_block_response(&mut frame, status, block, body_slice);
+                    let _ = h1_send(
+                        &self.server,
+                        &mut st,
+                        pending.conn_id,
+                        req_id,
+                        &frame,
+                        true,
+                        pending.keep_alive(),
+                    );
+                }
+                continue;
+            }
             if let Some(stream_id) = pending.h2_stream_id() {
                 let UvHttpShared {
                     ref template_meta,
