@@ -1295,7 +1295,7 @@ Island host with no enhancer
 
 **Why:** A data-island host names an id that no mountIslands or enableSwap call in the project lists, so no enhancer ever runs on it. The server-rendered markup stays as it is and nothing warns at runtime.
 
-**Fix:** Add the id to the mountIslands map, or fix the id in the markup (the check lists the ids the project mounts). A host mounted from outside the project takes `// nifra-expect NF-C064: <reason>` above it (`<!-- nifra-expect NF-C064: <reason> -->` inside an html template).
+**Fix:** Add the id to the mountIslands map, or fix the id in the markup (the check lists the ids the project mounts). For a host mounted from outside the project, put `// nifra-expect NF-C064: <reason>` above it. In an html template, put `<!-- nifra-expect NF-C064: <reason> -->` on its own line directly above the host.
 
 Docs: https://nifra.dev/docs/islands
 
@@ -1305,7 +1305,7 @@ Island props differ from the enhancer's props type
 
 **Why:** The props a host passes in data-island-props do not match the props type the enhancer declares: a required prop is missing, a prop is not declared, or a literal has another primitive type. The props travel as JSON in an attribute, so TypeScript never compares the two.
 
-**Fix:** Pass what the enhancer's props type declares, or change the type. Both sides are read only from a type literal on `defineIsland<{...}>` or `bindIsland<{...}>` and an object literal in `islandProps({...})`. A difference kept on purpose takes `// nifra-expect NF-C065: <reason>` above the host.
+**Fix:** Pass what the enhancer's props type declares, or change the type. The check reads plain type literals from enhancer type arguments and inline props parameter annotations. It reads literal JSON, JSX object props, and object literals passed to `islandProps` or `JSON.stringify`. It checks only types and values it can establish from these forms. To keep an intentional difference, put `// nifra-expect NF-C065: <reason>` above the host. In an html template, put `<!-- nifra-expect NF-C065: <reason> -->` on its own line directly above the host.
 
 Docs: https://nifra.dev/docs/islands
 

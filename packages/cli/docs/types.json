@@ -8266,14 +8266,14 @@
     "kind": "type",
     "package": "@nifrajs/island-trigger",
     "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | \"interaction\" | {\n    readonly media: string;\n};",
-    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element: the first three come before the click they lead to, and a click mounts\n * the island before it reaches its target, so the enhancer is in place for each. An object strategy\n * is intentionally limited to media queries.\n */"
+    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element. A click mounts during capture on the host. Listeners attached during\n * mount can receive the click at a descendant target or in the host's non-capture phase. An object\n * strategy is limited to media queries.\n */"
   },
   {
     "name": "IslandStrategy",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | \"interaction\" | {\n    readonly media: string;\n};",
-    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element: the first three come before the click they lead to, and a click mounts\n * the island before it reaches its target, so the enhancer is in place for each. An object strategy\n * is intentionally limited to media queries.\n */"
+    "doc": "/**\n * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on\n * the island's own element. A click mounts during capture on the host. Listeners attached during\n * mount can receive the click at a descendant target or in the host's non-capture phase. An object\n * strategy is limited to media queries.\n */"
   },
   {
     "name": "IsolatedExtensionSnapshot",

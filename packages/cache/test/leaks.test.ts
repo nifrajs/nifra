@@ -3,6 +3,9 @@ import { heapGrowth, isReleased } from "@nifrajs/test-utils/leak"
 import { createCache } from "../src/cache.ts"
 import { MemoryCache } from "../src/memory-cache.ts"
 
+type Cache = ReturnType<typeof createCache>
+type DropEntry = (cache: Cache, key: string) => Promise<void>
+
 /** A value big enough that a retained one is unmistakable, and weakly observable. */
 function payload(): {
   readonly value: { readonly bytes: Uint8Array }
@@ -14,49 +17,53 @@ function payload(): {
 
 /** Store a payload, run `drop`, and return a ref to the stored value with no local left holding it. */
 async function storedThenDropped(
-  cache: ReturnType<typeof createCache>,
-  drop: (cache: ReturnType<typeof createCache>) => Promise<void>,
+  cache: Cache,
+  key: string,
+  drop: DropEntry,
   tags: readonly string[] = [],
 ): Promise<WeakRef<object>> {
   const { value, ref } = payload()
-  await cache.set("k", value, { tags })
-  await drop(cache)
+  await cache.set(key, value, { tags })
+  await drop(cache, key)
   return ref
 }
 
 describe("cache entries are released", () => {
-  const drops: ReadonlyArray<
-    readonly [string, (c: ReturnType<typeof createCache>) => Promise<void>]
-  > = [
-    ["delete", (c) => c.delete("k")],
+  const drops: ReadonlyArray<readonly [string, DropEntry]> = [
+    ["delete", (c, key) => c.delete(key)],
     ["invalidateTag", (c) => c.invalidateTag("t")],
     ["clear", (c) => c.clear()],
-    ["overwrite", (c) => c.set("k", "replacement")],
+    ["overwrite", (c, key) => c.set(key, "replacement")],
   ]
   for (const [name, drop] of drops) {
     test(`after ${name}`, async () => {
       const cache = createCache({ store: new MemoryCache() })
-      expect(await isReleased(() => storedThenDropped(cache, drop, ["t"]))).toBe(true)
+      let sample = 0
+      const make = () => storedThenDropped(cache, `sample-${sample++}`, drop, ["t"])
+      expect(await isReleased(make)).toBe(true)
     })
   }
 
   test("after TTL expiry on read", async () => {
     let now = 1_000
     const cache = createCache({ now: () => now, store: new MemoryCache({ now: () => now }) })
+    let sample = 0
     const make = () =>
-      storedThenDropped(cache, async () => {
+      storedThenDropped(cache, `sample-${sample++}`, async (c, key) => {
         now += 120_000
-        expect(await cache.get("k")).toBeUndefined()
+        expect(await c.get(key)).toBeUndefined()
       })
     expect(await isReleased(make)).toBe(true)
   })
 
   test("after LRU eviction", async () => {
     const cache = createCache({ store: new MemoryCache({ maxEntries: 2 }) })
+    let sample = 0
     const make = () =>
-      storedThenDropped(cache, async (c) => {
-        await c.set("a", 1)
-        await c.set("b", 2)
+      storedThenDropped(cache, `sample-${sample++}`, async (c, key) => {
+        await c.set(`${key}:a`, 1)
+        await c.set(`${key}:b`, 2)
+        expect(await c.get(key)).toBeUndefined()
       })
     expect(await isReleased(make)).toBe(true)
   })

@@ -38,11 +38,14 @@ describe("MemoryCacheStore retention", () => {
 
   test("a page is released after its tag is invalidated", async () => {
     const store = new MemoryCacheStore()
+    let sample = 0
     const make = async () => {
-      const entry = page("x".repeat(4096), ["products"])
-      await store.set("/p", entry)
+      const key = `/p${sample++}`
+      await store.set(key, page("x".repeat(4096), ["products"]))
+      const stored = await store.get(key)
+      if (stored === undefined) throw new Error("expected a stored page before tag invalidation")
       await store.invalidateTag("products")
-      return new WeakRef(entry)
+      return new WeakRef(stored)
     }
     expect(await isReleased(make)).toBe(true)
   })

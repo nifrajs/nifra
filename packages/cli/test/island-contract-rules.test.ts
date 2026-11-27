@@ -115,6 +115,31 @@ describe("NF-C064 island host with no enhancer", () => {
       ].join("\n"),
     }
     expect(codes(await scan(swap, page('<div data-island="cart"></div>')))).toEqual([])
+    expect(codes(await scan(swap, page('<div data-island="ghost"></div>')))).toEqual(["NF-C064"])
+  })
+
+  test("scans real hosts past HTML comments and text elements", async () => {
+    const markup = page(
+      [
+        '<!-- Example > <i data-island="comment"></i> --!>',
+        '<textarea><i data-island="text"></i></TEXTAREA>',
+        '<script type="text/plain"><i data-island="script"></i></script>',
+        '<div data-island="real"></div>',
+      ].join("\n"),
+    )
+    const findings = await scan(mounted, markup)
+    expect(codes(findings)).toEqual(["NF-C064"])
+    expect(findings[0]?.message).toContain('island "real"')
+  })
+
+  test.each([
+    ["div", "data-island"],
+    ["Island", "id"],
+  ])("uses JSX spread order for the host ID on %s", async (tag, id) => {
+    const markup = jsx(`<><${tag} ${id}="old" {...attrs} /><${tag} {...attrs} ${id}="new" /></>`)
+    const findings = await scan(mounted, markup)
+    expect(codes(findings)).toEqual(["NF-C064"])
+    expect(findings[0]?.message).toContain('island "new"')
   })
 })
 
@@ -196,6 +221,18 @@ describe("island rules: escape hatch and component identity", () => {
     const nifra = jsx('<Island id="cart" /><Island id="ghost" />')
     expect(codes(await scan(typed, nifra))).toEqual(["NF-C064", "NF-C065"])
   })
+
+  test("uses id and props on an aliased Nifra Island import", async () => {
+    const markup = {
+      file: "routes/app.tsx",
+      content: [
+        'import { Island as Host } from "@nifrajs/web-react/island"',
+        'import { Island } from "./components/island"',
+        'export default () => <><Host id="cart" /><Host id="ghost" /><Island id="other" /></>',
+      ].join("\n"),
+    }
+    expect(codes(await scan(typed, markup))).toEqual(["NF-C064", "NF-C065"])
+  })
 })
 
 describe("NF-C065 island props contract", () => {
@@ -254,6 +291,18 @@ describe("NF-C065 island props contract", () => {
     const findings = await scan(typed, counter("{ ...overrides, start: '0' }"))
     expect(findings.map((f) => f.code)).toEqual(["NF-C065"])
     expect(findings[0]?.message).toContain('passes "start" as a string')
+  })
+
+  test("checks known JSON omissions while allowing values the checker cannot read", async () => {
+    const markup = jsx(`<div data-island="counter" data-island-props={JSON.stringify({
+      ...base, start: undefined, tone: void 0, on: dynamicValue,
+    })} />`)
+    expect((await scan(typed, markup)).map((f) => f.message)).toEqual([
+      'island "counter" does not pass "start", which the enhancer\'s props type requires',
+      'island "counter" does not pass "tone", which the enhancer\'s props type requires',
+    ])
+    expect(codes(await scan(typed, counter("{ start: undefined, ...base }")))).toEqual([])
+    expect(codes(await scan(typed, counter("{ start: 1, tone: 'a', on: true }")))).toEqual([])
   })
 
   test("stays silent when a local enhancer has a shadowed name", async () => {
@@ -421,6 +470,13 @@ describe("NF-C066 island attribute binding the runtime refuses", () => {
         ),
       ),
     ).toEqual([])
+  })
+
+  test("only applies tag-specific refusals to known JSX DOM elements", async () => {
+    const markup = jsx(
+      '<div data-island="cart"><Script data-bind-attr="src:u" /><script data-bind-attr="src:u" /></div>',
+    )
+    expect(codes(await scan(mount, markup))).toEqual(["NF-C066"])
   })
 })
 

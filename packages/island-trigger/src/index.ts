@@ -6,9 +6,9 @@
 
 /**
  * When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on
- * the island's own element: the first three come before the click they lead to, and a click mounts
- * the island before it reaches its target, so the enhancer is in place for each. An object strategy
- * is intentionally limited to media queries.
+ * the island's own element. A click mounts during capture on the host. Listeners attached during
+ * mount can receive the click at a descendant target or in the host's non-capture phase. An object
+ * strategy is limited to media queries.
  */
 export type IslandStrategy =
   | "load"
@@ -19,8 +19,8 @@ export type IslandStrategy =
 
 // The earliest signals of intent: a pointer arriving, a press (touch included), keyboard focus. A
 // click covers assistive technology that activates a control with no pointer or focus event first.
-// Each is listened for in the capture phase: a click mounts the island before the event reaches the
-// element it was aimed at, so a handler the enhancer adds there still receives that same click.
+// A click mounts during capture on the host, so capture listeners added there during mount start
+// with the next click.
 const INTERACTION_EVENTS = ["pointerover", "pointerdown", "focusin", "click"] as const
 
 /** The maximum media-query length accepted from an HTML data attribute. */

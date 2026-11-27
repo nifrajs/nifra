@@ -4104,7 +4104,7 @@ _No named exports (side-effect entrypoint)._
 ## @nifrajs/island-trigger
 
 - **IslandStrategy** _(type)_ - `type IslandStrategy = | "load" | "idle" | "visible" | "interaction" | { readonly media: string }`
-  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element: the first three come before the click they lead to, and a click mounts the island before it reaches its target, so the enhancer is in place for each. An object strategy is int…
+  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element. A click mounts during capture on the host. Listeners attached during mount can receive the click at a descendant target or in the host's non-capture phase. An object strategy …
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
 - **TriggerOptions** _(interface)_ - `interface TriggerOptions`
@@ -6633,7 +6633,7 @@ _No named exports (side-effect entrypoint)._
 - **IslandEnhancer** _(type)_ - `type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void`
   Enhances one island element with its (typed) props. Return a cleanup function to tear down on `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing. The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
 - **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | "interaction" | { readonly media: string; }`
-  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element: the first three come before the click they lead to, and a click mounts the island before it reaches its target, so the enhancer is in place for each. An object strategy is int…
+  When an island's enhancer runs. `interaction` waits for the first hover, press, focus or click on the island's own element. A click mounts during capture on the host. Listeners attached during mount can receive the click at a descendant target or in the host's non-capture phase. An object strategy …
 - **ListContainer** _(interface)_ - `interface ListContainer<E extends ListNode>`
   The container surface `bindList` uses; an `Element` has it.
 - **ListNode** _(interface)_ - `interface ListNode`

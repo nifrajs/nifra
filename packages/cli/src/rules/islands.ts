@@ -303,6 +303,8 @@ type IslandNames =
 
 /** The primitive a prop's type or literal value is, when it is one and only one. */
 type PropKind = "string" | "number" | "boolean"
+const OMITTED = Symbol("omitted from JSON")
+type PropValue = PropKind | "null" | typeof OMITTED | undefined
 
 /** The props an enhancer's type literal declares: `undefined` where the type is not a plain literal. */
 type PropsShape = ReadonlyMap<
@@ -310,10 +312,9 @@ type PropsShape = ReadonlyMap<
   { readonly optional: boolean; readonly kind: PropKind | undefined }
 >
 
-/** The props a host passes: each key with its literal's kind (`null` for a null literal, `undefined`
- * when the value is not a literal), and whether a spread may add more. */
+/** Explicit prop keys, their known serialized values, and whether a spread may add more. */
 interface PropsPassed {
-  readonly entries: ReadonlyMap<string, PropKind | "null" | undefined>
+  readonly entries: ReadonlyMap<string, PropValue>
   readonly open: boolean
 }
 
@@ -370,10 +371,12 @@ function propsShape(ts: typeof TSApi, type: TSApi.TypeNode | undefined): PropsSh
   return shape
 }
 
-/** The kind a literal expression has, `null` for a null literal, `undefined` when it is not one. */
-function literalKind(ts: typeof TSApi, node: TSApi.Expression): PropKind | "null" | undefined {
+/** What JSON writes for this value, leaving expressions it cannot settle unknown. */
+function literalKind(ts: typeof TSApi, node: TSApi.Expression): PropValue {
   let inner = node
   while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner)) inner = inner.expression
+  if (ts.isVoidExpression(inner) || (ts.isIdentifier(inner) && inner.text === "undefined"))
+    return OMITTED
   if (ts.isStringLiteralLike(inner) || ts.isTemplateExpression(inner)) return "string"
   if (ts.isNumericLiteral(inner)) return "number"
   if (
@@ -393,7 +396,7 @@ function passedFromObject(
   ts: typeof TSApi,
   object: TSApi.ObjectLiteralExpression,
 ): PropsPassed | undefined {
-  const entries = new Map<string, PropKind | "null" | undefined>()
+  const entries = new Map<string, PropValue>()
   const lastSpread = object.properties.findLastIndex(ts.isSpreadAssignment)
   for (const [index, prop] of object.properties.entries()) {
     if (ts.isSpreadAssignment(prop)) continue
@@ -616,8 +619,7 @@ function mountReference(ts: typeof TSApi, expr: TSApi.Expression | undefined): b
     (ts.isParenthesizedExpression(target) ||
       ts.isAsExpression(target) ||
       ts.isNonNullExpression(target) ||
-      ts.isSatisfiesExpression(target) ||
-      ts.isTypeAssertionExpression(target))
+      ts.isSatisfiesExpression(target))
   )
     target = target.expression
   if (target === undefined) return false
@@ -724,7 +726,7 @@ interface MarkupBinding {
     readonly key: string | undefined
   }>
   /** The element's tag, lowercased; a JSX component keeps its own name. */
-  readonly tag: string
+  readonly tag: string | undefined
   /** The nearest enclosing host's id: `null` when there is none, UNKNOWN when it is not literal. */
   readonly island: string | null | typeof UNKNOWN
   /** A `data-swap-slot` between the binding and its host, whose swap replaces the bound element. */
@@ -812,6 +814,31 @@ const VOID_ELEMENTS = new Set([
   "track",
   "wbr",
 ])
+
+const TEXT_ELEMENTS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+])
+
+function htmlCommentAt(text: string, offset: number): RegExpExecArray | null {
+  const pattern = /<!--(?:-?>|(.*?)--!?>)/sy
+  pattern.lastIndex = offset
+  return pattern.exec(text)
+}
+
+function textElementClose(text: string, tag: string, start: number): number {
+  const closer = /<\/([a-z][\w-]*)(?=[\t\n\f\r />])/gi
+  closer.lastIndex = start
+  for (let match = closer.exec(text); match !== null; match = closer.exec(text))
+    if (match[1]?.toLowerCase() === tag) return match.index
+  return -1
+}
 
 /** The attributes of one tag's inside (`name a="1" b`), in order, each with where its value starts
  * in `inside` (-1 when it has none). */
@@ -935,6 +962,12 @@ function templateMarkup(
   let hasHost = false
   let at = text.indexOf("<")
   while (at >= 0) {
+    if (text.startsWith("<!--", at)) {
+      const comment = htmlCommentAt(text, at)
+      if (comment === null) break
+      at = text.indexOf("<", at + comment[0].length)
+      continue
+    }
     let end = at + 1
     let quote = ""
     while (end < text.length) {
@@ -952,7 +985,8 @@ function templateMarkup(
     const tagAt = at
     at = text.indexOf("<", end + 1)
     if (inside.startsWith("/")) {
-      const tag = inside.slice(1).trim().toLowerCase()
+      const tag = /^\/([a-z][\w-]*)/i.exec(inside)?.[1]?.toLowerCase()
+      if (tag === undefined) continue
       const open = stack.map((entry) => entry.tag).lastIndexOf(tag)
       if (open >= 0) close(open, tagAt)
       continue
@@ -995,8 +1029,10 @@ function templateMarkup(
         ? undefined
         : { kind: "slot", tag, value: literal(slotName), url: undefined, jsx: false, node, line }
     if (slot !== undefined) swaps.push(slot)
-    if (!VOID_ELEMENTS.has(tag) && !inside.trimEnd().endsWith("/"))
+    const textElement = TEXT_ELEMENTS.has(tag)
+    if (!VOID_ELEMENTS.has(tag) && (textElement || !inside.trimEnd().endsWith("/")))
       stack.push({ tag, island, slot, ignored, start: end + 1 })
+    if (textElement) at = textElementClose(text, tag, end + 1)
   }
   return { hasHost, hosts, bindings, swaps }
 }
@@ -1038,27 +1074,41 @@ function templateText(ts: typeof TSApi, template: TSApi.TemplateLiteral): string
   return text
 }
 
-/** The literal string value of a JSX attribute, `undefined` when absent, UNKNOWN when not literal. */
+/** The last explicit attribute, unless a later spread can replace it. */
+function jsxAttributeNode(
+  ts: typeof TSApi,
+  element: TSApi.JsxOpeningLikeElement,
+  name: string,
+): TSApi.JsxAttribute | undefined | typeof UNKNOWN {
+  let spread = false
+  const { properties } = element.attributes
+  for (let index = properties.length - 1; index >= 0; index--) {
+    const attr = properties[index]
+    if (attr === undefined) continue
+    if (ts.isJsxSpreadAttribute(attr)) spread = true
+    else if (attr.name.getText() === name) return spread ? UNKNOWN : attr
+  }
+  return undefined
+}
+
+/** The literal string value of a JSX attribute, `undefined` when absent, UNKNOWN when uncertain. */
 function jsxAttribute(
   ts: typeof TSApi,
   element: TSApi.JsxOpeningLikeElement,
   name: string,
 ): string | undefined | typeof UNKNOWN {
-  for (const attr of element.attributes.properties) {
-    if (ts.isJsxSpreadAttribute(attr)) continue
-    if (attr.name.getText() !== name) continue
-    const init = attr.initializer
-    if (init === undefined) return ""
-    if (ts.isStringLiteral(init)) return init.text
-    if (
-      ts.isJsxExpression(init) &&
-      init.expression !== undefined &&
-      ts.isStringLiteralLike(init.expression)
-    )
-      return init.expression.text
-    return UNKNOWN
-  }
-  return undefined
+  const attr = jsxAttributeNode(ts, element, name)
+  if (attr === undefined || attr === UNKNOWN) return attr
+  const init = attr.initializer
+  if (init === undefined) return ""
+  if (ts.isStringLiteral(init)) return init.text
+  if (
+    ts.isJsxExpression(init) &&
+    init.expression !== undefined &&
+    ts.isStringLiteralLike(init.expression)
+  )
+    return init.expression.text
+  return UNKNOWN
 }
 
 /** What a JSX host passes in its `props` (an `<Island>`) or `data-island-props` attribute. */
@@ -1067,19 +1117,17 @@ function jsxHostProps(
   element: TSApi.JsxOpeningLikeElement,
   name: string,
 ): PropsPassed | "absent" | "unknown" {
-  // A spread may carry the props, or the attribute itself.
-  if (element.attributes.properties.some((attr) => ts.isJsxSpreadAttribute(attr))) return "unknown"
-  for (const attr of element.attributes.properties) {
-    if (ts.isJsxSpreadAttribute(attr) || attr.name.getText() !== name) continue
-    const init = attr.initializer
-    if (init === undefined) return "unknown"
-    if (ts.isStringLiteral(init)) return passedFromJson(init.text) ?? "unknown"
-    if (!ts.isJsxExpression(init) || init.expression === undefined) return "unknown"
-    const expression = init.expression
-    if (ts.isStringLiteralLike(expression)) return passedFromJson(expression.text) ?? "unknown"
-    return passedFromExpression(ts, expression) ?? "unknown"
-  }
-  return "absent"
+  const attr = jsxAttributeNode(ts, element, name)
+  if (attr === UNKNOWN) return "unknown"
+  if (attr === undefined)
+    return element.attributes.properties.some(ts.isJsxSpreadAttribute) ? "unknown" : "absent"
+  const init = attr.initializer
+  if (init === undefined) return "unknown"
+  if (ts.isStringLiteral(init)) return passedFromJson(init.text) ?? "unknown"
+  if (!ts.isJsxExpression(init) || init.expression === undefined) return "unknown"
+  const expression = init.expression
+  if (ts.isStringLiteralLike(expression)) return passedFromJson(expression.text) ?? "unknown"
+  return passedFromExpression(ts, expression) ?? "unknown"
 }
 
 /** The bindings, swap links, forms and slots of one outermost JSX tree, and whether it holds an
@@ -1087,7 +1135,7 @@ function jsxHostProps(
 function jsxMarkup(
   ts: typeof TSApi,
   root: TSApi.JsxElement | TSApi.JsxSelfClosingElement | TSApi.JsxFragment,
-  nifraIsland: boolean,
+  islandNames: ReadonlySet<string>,
 ): MarkupFacts {
   const bindings: MarkupBinding[] = []
   const swaps: SwapMarkup[] = []
@@ -1107,9 +1155,10 @@ function jsxMarkup(
     let inner = owner
     if (opening !== undefined) {
       const tag = opening.tagName.getText()
+      const nifraIsland = islandNames.has(tag)
       const host = ignored
         ? undefined
-        : jsxAttribute(ts, opening, tag === "Island" ? "id" : "data-island")
+        : jsxAttribute(ts, opening, nifraIsland || tag === "Island" ? "id" : "data-island")
       if (host !== undefined) {
         hasHost = true
         inner = { island: host, slot: null }
@@ -1117,11 +1166,13 @@ function jsxMarkup(
         if (tag !== "Island" || nifraIsland)
           hosts.push({
             id: host,
-            props: jsxHostProps(ts, opening, tag === "Island" ? "props" : "data-island-props"),
+            props: jsxHostProps(ts, opening, nifraIsland ? "props" : "data-island-props"),
             node: opening,
           })
       }
       if (!ignored) {
+        const domTag =
+          ts.isIdentifier(opening.tagName) && /^[a-z]/.test(tag) ? tag.toLowerCase() : undefined
         for (const attr of opening.attributes.properties) {
           if (ts.isJsxSpreadAttribute(attr)) continue
           const name = attr.name.getText()
@@ -1130,7 +1181,7 @@ function jsxMarkup(
           if (value === UNKNOWN || value === undefined) continue
           const names = bindingNames(name, value)
           if (names !== undefined)
-            bindings.push({ attribute: name, names, tag: tag.toLowerCase(), ...owner, node: attr })
+            bindings.push({ attribute: name, names, tag: domTag, ...owner, node: attr })
         }
       }
       const swap = jsxAttribute(ts, opening, "data-swap")
@@ -1173,8 +1224,9 @@ function slotImports(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string> {
   return names
 }
 
-/** Whether a file imports `Island` from a `@nifrajs/` package (`@nifrajs/web-react/island`). */
-function importsNifraIsland(ts: typeof TSApi, tree: TSApi.SourceFile): boolean {
+/** Local names for `Island` from Nifra packages such as `@nifrajs/web-react/island`. */
+function islandImports(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string> {
+  const names = new Set<string>()
   for (const statement of tree.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
@@ -1183,10 +1235,13 @@ function importsNifraIsland(ts: typeof TSApi, tree: TSApi.SourceFile): boolean {
     )
       continue
     const bound = statement.importClause?.namedBindings
-    if (bound !== undefined && ts.isNamedImports(bound))
-      for (const element of bound.elements) if (element.name.text === "Island") return true
+    if (statement.importClause?.isTypeOnly || bound === undefined || !ts.isNamedImports(bound))
+      continue
+    for (const element of bound.elements)
+      if (!element.isTypeOnly && (element.propertyName ?? element.name).text === "Island")
+        names.add(element.name.text)
   }
-  return false
+  return names
 }
 
 /** One `slot(name, content)` call of `@nifrajs/web-vanilla`. */
@@ -1212,7 +1267,7 @@ function fileMarkup(
   const slotCalls: SlotCall[] = []
   const placement = new Map<TSApi.Node, HolePlacement>()
   const slotNames = slotImports(ts, tree)
-  const nifraIsland = importsNifraIsland(ts, tree)
+  const islandNames = islandImports(ts, tree)
   const take = (found: MarkupFacts): void => {
     // A fragment with no host of its own may render inside one elsewhere, so it is not judged.
     if (found.hasHost) bindings.push(...found.bindings)
@@ -1235,7 +1290,7 @@ function fileMarkup(
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxFragment(node)
     ) {
-      take(jsxMarkup(ts, node, nifraIsland))
+      take(jsxMarkup(ts, node, islandNames))
       return
     } else if (
       ts.isCallExpression(node) &&
@@ -1415,7 +1470,8 @@ export const islandBindingHostRule: CheckRule = {
 
 /**
  * Whether a `nifra-expect <code>: <reason>` comment covers the finding on `line` of a file: a comment
- * on its line or in the comment block above it, written as `<!-- -->` inside an html template.
+ * on its line or in the comment block above it. In an html template, use whole-line HTML comments
+ * in the block above the host.
  * `no-reason` is a marker with nothing after its colon, which silences nothing.
  */
 function expectationFor(
@@ -1428,8 +1484,10 @@ function expectationFor(
   let lines = cache.get(file)
   if (lines === undefined) {
     lines = (ctx.project.source.read(file) ?? "").split("\n").map((text) => {
-      const comment = /^\s*<!--(?:-?>|(.*?)--!?>)/s.exec(text)
-      if (comment === null || text.slice(comment[0].length).trim() !== "") return text
+      const start = text.search(/\S/)
+      if (start < 0) return text
+      const comment = htmlCommentAt(text, start)
+      if (comment === null || text.slice(start + comment[0].length).trim() !== "") return text
       return `//${comment[1] ?? ""}`
     })
     cache.set(file, lines)
@@ -1512,9 +1570,13 @@ export const islandPropsRule: CheckRule = {
         host.props === "absent" ? { entries: new Map(), open: false } : host.props
       const problems: string[] = []
       for (const [key, declared] of shape)
-        if (!declared.optional && !passed.open && !passed.entries.has(key))
+        if (
+          !declared.optional &&
+          (passed.entries.get(key) === OMITTED || (!passed.open && !passed.entries.has(key)))
+        )
           problems.push(`does not pass "${key}", which the enhancer's props type requires`)
       for (const [key, kind] of passed.entries) {
+        if (kind === OMITTED) continue
         const problem = propMismatch(key, kind, shape.get(key))
         if (problem !== undefined) problems.push(problem)
       }
@@ -1565,10 +1627,12 @@ export const islandRefusedBindingRule: CheckRule = {
         let reason: string | undefined
         if (REFUSED_CODE_ATTRIBUTE.test(key))
           reason = `"${key}" is an event-handler or srcdoc attribute, which a binding never sets`
-        else if (REFUSED_URL_ATTRIBUTE.test(key) && REFUSED_URL_TAG.has(binding.tag))
-          reason = `"${key}" is a URL attribute on <${binding.tag}>, which loads code or rebases the page`
-        else if (REFUSED_SMIL_TAG.has(binding.tag))
-          reason = `"${key}" is bound on <${binding.tag}>: an SVG animation sets another element's attributes from its own, so a bound value can animate a link's href to a script URL`
+        else if (binding.tag !== undefined) {
+          if (REFUSED_URL_ATTRIBUTE.test(key) && REFUSED_URL_TAG.has(binding.tag))
+            reason = `"${key}" is a URL attribute on <${binding.tag}>, which loads code or rebases the page`
+          else if (REFUSED_SMIL_TAG.has(binding.tag))
+            reason = `"${key}" is bound on <${binding.tag}>: an SVG animation sets another element's attributes from its own, so a bound value can animate a link's href to a script URL`
+        }
         if (reason === undefined) continue
         findings.push(
           diagnostic({

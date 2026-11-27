@@ -438,15 +438,18 @@ export default function Islands() {
       <p>
         A host&apos;s <code>data-island-strategy</code> defers its enhancer: <code>load</code>{" "}
         (default), <code>idle</code>, <code>visible</code> (mount when it scrolls into view),{" "}
-        <code>interaction</code> (mount on the first hover, press, focus or click on the host: the
-        first three come before the click they lead to, and a click mounts the island before it
-        reaches its target, so the enhancer receives that same click), or <code>media</code> with
-        the query in{" "}
+        <code>interaction</code> (mount on the first hover, press, focus or click on the host), or{" "}
+        <code>media</code> with the query in{" "}
         <code>data-island-media</code>. A host with no matching
         enhancer, or an invalid strategy, stays inert server-rendered HTML - forward-compatible,
         never a runtime error. The scheduling itself is <code>@nifrajs/island-trigger</code>'s{" "}
         <code>scheduleTrigger</code>, which has no DOM or framework dependency, for a runtime of
         your own.
+      </p>
+      <p>
+        An interaction click mounts during capture on the host. Listeners attached during mount can
+        receive that click at a descendant target or in the host&apos;s non-capture phase. Capture
+        listeners added to the host during mount start with the next click.
       </p>
     </div>
   )
