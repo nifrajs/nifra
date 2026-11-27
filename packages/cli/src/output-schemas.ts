@@ -444,19 +444,32 @@ const hashOf = (body: string): string => createHash("sha256").update(body).diges
 /**
  * A schema expression as a formatter cannot change it: comments, whitespace, a comma before a closing
  * bracket and a trailing semicolon dropped, every string written with double quotes, and a quoted key
- * that needs no quotes written bare. Two texts
- * that read the same here are the same schema; an edit to what it declares is not.
+ * that needs no quotes written bare. The order-insensitive comparison also keeps the generator's
+ * notes about fields it omitted or types it could not describe.
  */
-function schemaTokens(text: string): string {
+function schemaTokens(text: string, keepDraftNotes = false): string {
   let out = ""
   let i = 0
   while (i < text.length) {
     const c = text.charAt(i)
     if (c === "/" && text[i + 1] === "/") {
       const end = text.indexOf("\n", i)
+      const comment = text.slice(i + 2, end === -1 ? text.length : end).trim()
+      if (keepDraftNotes && comment.startsWith("left out: ")) {
+        // Treat an omitted field as an object member so its note follows that field when sorted.
+        if (!out.endsWith("{") && !out.endsWith(",")) out += ","
+        out += `#${JSON.stringify(comment)},`
+      }
       i = end === -1 ? text.length : end
     } else if (c === "/" && text[i + 1] === "*") {
       const end = text.indexOf("*/", i + 2)
+      const comment = text.slice(i + 2, end === -1 ? text.length : end).trim()
+      if (
+        keepDraftNotes &&
+        out.endsWith("t.json()") &&
+        (comment.endsWith(" in the source type") || comment.endsWith(", which is not JSON"))
+      )
+        out += `#${JSON.stringify(comment)}`
       i = end === -1 ? text.length : end + 2
     } else if (c === '"' || c === "'" || c === "`") {
       let value = ""
@@ -478,19 +491,21 @@ function schemaTokens(text: string): string {
       out +=
         text[after] === ":" && IDENTIFIER.test(value) ? value : `"${value.replaceAll('"', '\\"')}"`
     } else {
+      if ((c === "}" || c === "]" || c === ")") && out.endsWith(",")) out = out.slice(0, -1)
       if (!/\s/.test(c)) out += c
       i++
     }
   }
-  return out.replace(/,(?=[}\])])/g, "").replace(/(?<!;);+$/, "")
+  return out.replace(/(?<!;);+$/, "")
 }
 
 /**
- * {@link schemaTokens} with every object's fields sorted. TypeScript 5/6 and 7 list the properties of
- * a merged type in different orders, which changes the generated text but not what it declares.
+ * Sort object fields and union members after normalizing their contents. Compiler property order
+ * can also change union order because the generator ranks members by their full shapes.
  */
-function fieldOrderFree(text: string): string {
-  const tokens = schemaTokens(text)
+function schemaIgnoringOrder(text: string): string {
+  const tokens = schemaTokens(text, true)
+  const unionStart = "t.union(["
   let at = 0
   const group = (close: string): string[] => {
     const parts: string[] = []
@@ -502,8 +517,12 @@ function fieldOrderFree(text: string): string {
         parts.push(part)
         part = ""
       } else if (c === "{") part += `{${group("}").sort(codeUnitOrder).join(",")}}`
-      else if (c === "[") part += `[${group("]").join(",")}]`
-      else if (c === "(") part += `(${group(")").join(",")})`
+      else if (c === "[") {
+        const isUnion = tokens.startsWith(unionStart, at - unionStart.length)
+        const members = group("]")
+        if (isUnion) members.sort(codeUnitOrder)
+        part += `[${members.join(",")}]`
+      } else if (c === "(") part += `(${group(")").join(",")})`
       else if (c === '"') {
         const start = at - 1
         while (at < tokens.length && tokens[at] !== '"') at += tokens[at] === "\\" ? 2 : 1
@@ -1154,7 +1173,7 @@ export async function planOutputSchemas(
       } else if (
         schemaTokens(declaration.value) === schemaTokens(body)
           ? declaration.hash === hashOf(body)
-          : fieldOrderFree(declaration.value) === fieldOrderFree(body)
+          : schemaIgnoringOrder(declaration.value) === schemaIgnoringOrder(body)
       ) {
         entry("current", [], undefined, false, [], open)
       } else {

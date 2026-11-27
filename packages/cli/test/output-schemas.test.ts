@@ -196,7 +196,7 @@ describe("generating a missing schema", () => {
     const file = "routes/me.backend.ts"
     const root = project({
       [file]:
-        'export const loader = () => ({ user: { id: 1, name: "Ada", tags: ["a,{b}"] }, ok: true })\n',
+        'export const loader = () => ({ user: { id: 1, name: "Ada", total: 1n }, tag: "a,}" as const })\n',
     })
     await outputSchemas(root, { write: true })
     const written = read(root, file)
@@ -208,6 +208,11 @@ describe("generating a missing schema", () => {
     const retyped = reordered.replace("id: t.number()", "id: t.string()")
     expect(retyped).not.toBe(reordered)
     writeFileSync(join(root, file), retyped)
+    expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
+
+    const changedLiteral = reordered.replace('t.literal("a,}")', 't.literal("a}")')
+    expect(changedLiteral).not.toBe(reordered)
+    writeFileSync(join(root, file), changedLiteral)
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["stale"])
   }, 60_000)
 
@@ -324,6 +329,55 @@ describe("a generated schema over time", () => {
     expect(read(root, "routes/me.backend.ts").match(/nifra:generated/g)).toHaveLength(1)
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
   }, 90_000)
+
+  test("reordering fields stays current when it also reorders union members", async () => {
+    const file = "routes/pick.backend.ts"
+    const root = project({
+      [file]: [
+        "type A = { z: string; a: number }",
+        "type B = { m: boolean; n: number }",
+        "export function loader({ request }: { request: Request }): A | B {",
+        '  return request.url.endsWith("/a") ? { z: "x", a: 1 } : { m: true, n: 2 }',
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const reordered = generated.replace("z: string; a: number", "a: number; z: string")
+    expect(reordered).not.toBe(generated)
+    writeFileSync(join(root, file), reordered)
+
+    expect(
+      (await outputSchemas(root, { check: true })).entries.map((entry) => entry.status),
+    ).toEqual(["current"])
+  }, 60_000)
+
+  test("reordering fields still reports newly omitted output in nifra check", async () => {
+    const file = "routes/me.backend.ts"
+    const root = project({
+      [file]: 'export const loader = () => ({ id: 1, name: "Ada" })\n',
+      "routes/me.tsx": "export default () => null\n",
+    })
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    const generated = read(root, file)
+    const changed = generated.replace('id: 1, name: "Ada"', 'name: "Ada", id: 1, total: 1n')
+    expect(changed).not.toBe(generated)
+    writeFileSync(join(root, file), changed)
+
+    const dry = await outputSchemas(root)
+    expect(dry.entries).toEqual([
+      expect.objectContaining({ status: "stale", dropped: ["total"], omitted: ["total"] }),
+    ])
+    const check = await collectCheckResult(root, { lintsOnly: true })
+    const finding = check.diagnostics.find((diagnostic) => diagnostic.code === "NF-C033")
+    expect(finding?.severity).toBe("error")
+    expect(finding?.message).toContain("it now returns total, which the schema drops")
+
+    expect((await outputSchemas(root, { write: true })).written).toEqual([file])
+    expect(read(root, file)).toContain("// left out: total - a bigint, which is not JSON")
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
 
   test("formatting the generated schema by hand keeps it current; deleting the marker hands it over", async () => {
     const root = project({ "routes/me.backend.ts": initial })
