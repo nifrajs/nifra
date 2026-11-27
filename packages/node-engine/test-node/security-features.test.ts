@@ -774,21 +774,19 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
       5000,
       (acc, upgraded, headText, write, resolveValue) => {
         let nextAcc = acc
-        let isUpgraded = upgraded
         let nextHead = headText
-        if (!isUpgraded) {
+        if (!upgraded) {
           const end = nextAcc.indexOf("\r\n\r\n")
           if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
           nextHead = nextAcc.subarray(0, end).toString("latin1")
           assert.ok(nextHead.toLowerCase().includes("permessage-deflate"))
-          isUpgraded = true
           nextAcc = nextAcc.subarray(end + 4)
           write(makeMaskedWsFrame(0xc2, trimmed, [1, 2, 3, 4]))
         }
-        if (isUpgraded && nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
+        if (nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
           resolveValue(nextAcc.readUInt16BE(2))
         }
-        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+        return { acc: nextAcc, upgraded: true, headText: nextHead }
       },
     )
     assert.equal(bombClose, 1009)
@@ -835,17 +833,15 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
       5000,
       (acc, upgraded, headText, write, resolveValue) => {
         let nextAcc = acc
-        let isUpgraded = upgraded
         let nextHead = headText
-        if (!isUpgraded) {
+        if (!upgraded) {
           const end = nextAcc.indexOf("\r\n\r\n")
           if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
           nextHead = nextAcc.subarray(0, end).toString("latin1")
-          isUpgraded = true
           nextAcc = nextAcc.subarray(end + 4)
           write(makeMaskedWsFrame(0x82, distPayload, [1, 2, 3, 4]))
         }
-        if (isUpgraded && nextAcc.length >= 4) {
+        if (nextAcc.length >= 4) {
           const len7 = nextAcc[1] & 0x7f
           const hdrLen = len7 === 126 ? 4 : 2
           const plen = len7 === 126 && nextAcc.length >= 4 ? nextAcc.readUInt16BE(2) : len7
@@ -855,7 +851,7 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
             resolveValue({ head: nextHead, payload })
           }
         }
-        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+        return { acc: nextAcc, upgraded: true, headText: nextHead }
       },
     )
     assert.ok(wire10.head.toLowerCase().includes("server_max_window_bits=10"))
@@ -911,20 +907,18 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
       5000,
       (acc, upgraded, headText, write, resolveValue) => {
         let nextAcc = acc
-        let isUpgraded = upgraded
         let nextHead = headText
-        if (!isUpgraded) {
+        if (!upgraded) {
           const end = nextAcc.indexOf("\r\n\r\n")
           if (end === -1) return { acc: nextAcc, upgraded: false, headText: nextHead }
           nextHead = nextAcc.subarray(0, end).toString("latin1")
-          isUpgraded = true
           nextAcc = nextAcc.subarray(end + 4)
           write(makeMaskedWsFrame(0xc2, cappedTrimmed, [5, 6, 7, 8]))
         }
-        if (isUpgraded && nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
+        if (nextAcc.length >= 4 && (nextAcc[0] & 0x0f) === 0x08) {
           resolveValue(nextAcc.readUInt16BE(2))
         }
-        return { acc: nextAcc, upgraded: isUpgraded, headText: nextHead }
+        return { acc: nextAcc, upgraded: true, headText: nextHead }
       },
     )
     assert.equal(wsCapClose, 1009)

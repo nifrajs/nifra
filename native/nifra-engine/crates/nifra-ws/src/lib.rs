@@ -499,6 +499,11 @@ pub fn compress_deflate_payload(compress: &mut Compress, payload: &[u8], out: &m
     }
 }
 
+/// Charged per mid-message `BFINAL=1` restart on top of the history it copies back, so restarts
+/// that add no output are bounded too.
+const DEFLATE_RESTART_COST: usize = 1024;
+const DEFLATE_MIN_RESTART_BUDGET: usize = 1024 * 1024;
+
 fn decompress_deflate_payload(
     decompress: &mut Decompress,
     payload: &[u8],
@@ -507,6 +512,8 @@ fn decompress_deflate_payload(
     let mut out = Vec::with_capacity(payload.len().saturating_mul(2).min(max_out).min(64 * 1024));
     let mut tmp = [0u8; 8192];
     let mut stream_ended = false;
+    // Without a budget a few wire bytes per block buy a 32 KiB history copy on the event loop.
+    let mut restart_budget = max_out.max(DEFLATE_MIN_RESTART_BUDGET);
 
     for &(seg, flush) in &[
         (payload, FlushDecompress::None),
@@ -537,9 +544,12 @@ fn decompress_deflate_payload(
                     if off < seg.len() {
                         // RFC 7692 §7.2.2 permits another DEFLATE block after an internal BFINAL=1
                         // block; preserve up to 32 KiB of decoded history as its raw dictionary.
+                        let dict_start = out.len().saturating_sub(32 * 1024);
+                        restart_budget = restart_budget
+                            .checked_sub(out.len() - dict_start + DEFLATE_RESTART_COST)
+                            .ok_or(1009u16)?;
                         decompress.reset(false);
                         if !out.is_empty() {
-                            let dict_start = out.len().saturating_sub(32 * 1024);
                             decompress
                                 .set_dictionary(&out[dict_start..])
                                 .map_err(|_| 1002u16)?;
@@ -1520,5 +1530,28 @@ mod tests {
         let decoded = decompress_deflate_payload(&mut decomp2, &wire, 4096).unwrap();
         let expected = [first_plain.as_slice(), first_plain.as_slice()].concat();
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn bounds_the_work_of_mid_message_bfinal_restarts() {
+        // An empty final fixed-Huffman block: two wire bytes, one restart, no output.
+        const EMPTY_FINAL: [u8; 2] = [0x03, 0x00];
+        let inflate = |history: usize, restarts: usize| {
+            // A non-final stored block of `history` bytes, then the restarts.
+            let len = u16::try_from(history).unwrap();
+            let mut wire = vec![0x00];
+            wire.extend_from_slice(&len.to_le_bytes());
+            wire.extend_from_slice(&(!len).to_le_bytes());
+            wire.extend(std::iter::repeat_n(b'a', history));
+            for _ in 0..restarts {
+                wire.extend_from_slice(&EMPTY_FINAL);
+            }
+            let mut decomp = Decompress::new_with_window_bits(false, 15);
+            decompress_deflate_payload(&mut decomp, &wire, 64 * 1024).map(|out| out.len())
+        };
+        assert_eq!(inflate(32 * 1024, 16), Ok(32 * 1024));
+        assert_eq!(inflate(32 * 1024, 64), Err(1009));
+        assert_eq!(inflate(0, 512), Ok(0));
+        assert_eq!(inflate(0, 2048), Err(1009));
     }
 }
