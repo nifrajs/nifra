@@ -13,3 +13,4 @@ flate2.workspace = true
 httparse.workspace = true
 itoa.workspace = true
 memchr.workspace = true
+zstd = "0.13"

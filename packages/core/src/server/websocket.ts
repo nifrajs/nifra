@@ -47,6 +47,8 @@ export interface NifraWebSocket<Data = unknown> {
   unsubscribe(topic: string): void
   /** Current queued outbound bytes on the underlying socket, when the transport reports backpressure. */
   getBufferedAmount?(): number
+  /** Batch multiple outbound operations (e.g. `send`) inside `callback` into a single flush. */
+  cork?(callback: () => void): void
   /** Per-connection state - seeded by `upgrade()`, mutable for the connection's lifetime. */
   data: Data
   /** Escape hatch to the runtime's native socket (Bun `ServerWebSocket`, Web `WebSocket`, `ws`). */

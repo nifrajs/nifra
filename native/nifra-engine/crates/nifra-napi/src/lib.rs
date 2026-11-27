@@ -13,7 +13,6 @@ use napi::{sys, NapiRaw, TypedArrayType};
 use napi_derive::napi;
 
 use nifra_http::abi::{IN_SLOT_U32S, OUT_SLOT_U32S};
-#[cfg(unix)]
 use nifra_http::h2::{
     H2Config, H2Conn, H2Event, H2Request, CLIENT_PREFACE, ERR_INTERNAL_ERROR, ERR_NO_ERROR,
 };
@@ -23,17 +22,13 @@ use nifra_http::{
     write_close_delimited_head, write_stream_head, BatchPacker, ChunkResume, FastRoutes,
     H1BodyDecoder, ParseLimits, ParseStatus, ParsedStreamHead, PreparedTemplates,
 };
-#[cfg(unix)]
 use nifra_io::conn_slot;
 use nifra_io::{bind_tcp_listener, detect_transport, run_mio_loop, ConnAction, SocketConfig};
 #[cfg(unix)]
 use nifra_io::{bind_unix_listener, BoundUnixSocket};
 
-#[cfg(unix)]
 use nifra_io::uv::{UvCallbacks, UvServer, WriteResult};
-#[cfg(unix)]
 use nifra_tls::{SniCertInput, TlsInput, TlsStore};
-#[cfg(unix)]
 use nifra_ws::{
     compute_accept_key, negotiate_permessage_deflate, validate_upgrade_headers, write_close_frame,
     write_server_frame, write_upgrade_response_with_extensions, SharedCompressorPool, WsConfig,
@@ -168,7 +163,6 @@ fn external_u32_array(env: &Env, slab: &Arc<SharedSlab>) -> Result<sys::napi_val
     Ok(ta)
 }
 
-#[cfg(unix)]
 unsafe fn call_js(
     env: sys::napi_env,
     _receiver: sys::napi_value,
@@ -201,7 +195,6 @@ unsafe fn call_js(
     }
 }
 
-#[cfg(unix)]
 unsafe fn call_js_u32(raw_env: sys::napi_env, cb_ref: sys::napi_ref, value: u32) {
     if cb_ref.is_null() {
         return;
@@ -220,7 +213,6 @@ unsafe fn call_js_u32(raw_env: sys::napi_env, cb_ref: sys::napi_ref, value: u32)
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
 
-#[cfg(unix)]
 unsafe fn call_js_ws_message(
     raw_env: sys::napi_env,
     cb_ref: sys::napi_ref,
@@ -269,7 +261,6 @@ unsafe fn call_js_ws_message(
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
 
-#[cfg(unix)]
 unsafe fn call_js_ws_close(
     raw_env: sys::napi_env,
     cb_ref: sys::napi_ref,
@@ -302,7 +293,6 @@ unsafe fn call_js_ws_close(
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
 
-#[cfg(unix)]
 unsafe fn call_js_req_body(
     raw_env: sys::napi_env,
     cb_ref: sys::napi_ref,
@@ -396,29 +386,95 @@ pub fn probe() -> ProbeResult {
         arch: std::env::consts::ARCH.to_owned(),
         transport: detect_transport().as_str().to_owned(),
         capabilities: EngineCapabilities {
-            http2: cfg!(unix),
+            http2: true,
             tls_reload: true,
             tls_sni: true,
-            websocket: cfg!(unix),
-            ws_pubsub: cfg!(unix),
-            ws_backpressure: cfg!(unix),
-            ws_over_http2: cfg!(unix),
+            websocket: true,
+            ws_pubsub: true,
+            ws_backpressure: true,
+            ws_over_http2: true,
             static_routes: true,
             param_routes: true,
             batched_ring: true,
-            zero_hop_libuv: cfg!(unix),
+            zero_hop_libuv: true,
             tls: true,
             tls_crl: true,
             tls_policy: true,
             mtls: true,
-            ws_per_message_deflate: cfg!(unix),
-            streaming_request_bodies: cfg!(unix),
+            ws_per_message_deflate: true,
+            streaming_request_bodies: true,
             response_compression: true,
             unix_socket: cfg!(unix),
             response_limits: true,
-            idle_spares_draining_response: cfg!(unix),
-            env_cleanup_hook: cfg!(unix),
+            idle_spares_draining_response: true,
+            env_cleanup_hook: true,
         },
+    }
+}
+
+#[napi(object)]
+pub struct BoundSharedListener {
+    pub fd: i32,
+    pub port: u32,
+}
+
+/// Bind a non-blocking TCP listener socket without registering an accept loop on `uv_loop`,
+/// for passing a primary-owned listener across cluster workers over IPC.
+#[napi]
+pub fn bind_shared_listener(
+    host: Option<String>,
+    port: u32,
+    backlog: Option<u32>,
+) -> Result<BoundSharedListener> {
+    if port > u16::MAX as u32 {
+        return Err(napi::Error::new(
+            Status::InvalidArg,
+            format!("invalid listener port {port}"),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::IntoRawFd;
+        let mut cfg = SocketConfig::default();
+        if let Some(backlog) = backlog {
+            cfg.backlog = backlog.clamp(1, i32::MAX as u32) as i32;
+        }
+        let host = host.as_deref().unwrap_or("127.0.0.1");
+        let (listener, addr) = bind_tcp_listener(host, port as u16, cfg)
+            .map_err(|err| napi::Error::new(Status::GenericFailure, err.to_string()))?;
+        let fd = listener.into_raw_fd();
+        Ok(BoundSharedListener {
+            fd,
+            port: u32::from(addr.port()),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (host, backlog);
+        Err(napi::Error::new(
+            Status::GenericFailure,
+            "shared listener descriptor binding is unsupported on this platform",
+        ))
+    }
+}
+
+/// Duplicate a listener descriptor (`F_DUPFD_CLOEXEC`) so IPC wrappers can be closed immediately.
+#[napi]
+pub fn dup_listener_fd(fd: i32) -> Result<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::IntoRawFd;
+        let duped = nifra_io::sys::dup_listener_sock(fd)
+            .map_err(|err| napi::Error::new(Status::GenericFailure, err.to_string()))?;
+        Ok(duped.into_raw_fd())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = fd;
+        Err(napi::Error::new(
+            Status::GenericFailure,
+            "shared listener descriptor duplication is unsupported on this platform",
+        ))
     }
 }
 
@@ -452,7 +508,6 @@ pub struct TlsOptions {
     pub ticket_keys: Option<Buffer>,
 }
 
-#[cfg(unix)]
 fn to_sni_input(entry: &TlsSniEntry) -> SniCertInput {
     SniCertInput {
         server_name: entry.server_name.clone(),
@@ -463,7 +518,6 @@ fn to_sni_input(entry: &TlsSniEntry) -> SniCertInput {
     }
 }
 
-#[cfg(unix)]
 fn to_tls_input(opts: &TlsOptions, http2_enabled: bool) -> TlsInput {
     let alpn_protocols = if http2_enabled {
         vec![b"h2".to_vec(), b"http/1.1".to_vec()]
@@ -513,6 +567,7 @@ pub struct WsDeflateOptions {
 #[napi(object)]
 pub struct CompressionOptions {
     pub enabled: Option<bool>,
+    pub zstd: Option<bool>,
     pub brotli: Option<bool>,
     pub gzip: Option<bool>,
     pub deflate: Option<bool>,
@@ -544,11 +599,11 @@ pub struct UvServerOptions {
     pub stream_request_bodies: Option<bool>,
     pub compression: Option<CompressionOptions>,
     pub unix_path: Option<String>,
+    pub listener_fd: Option<i32>,
     pub reuse_port: Option<bool>,
     pub tls: Option<TlsOptions>,
 }
 
-#[cfg(unix)]
 enum HeadStorage {
     Empty,
     /// Zero-alloc slice into `UvHttpShared::batch_heads` for the duration of the current batch.
@@ -560,7 +615,6 @@ enum HeadStorage {
     Owned(Box<[u8]>),
 }
 
-#[cfg(unix)]
 impl HeadStorage {
     #[inline]
     fn as_bytes<'a>(&'a self, arena: &'a [u8]) -> &'a [u8] {
@@ -588,30 +642,24 @@ impl HeadStorage {
     }
 }
 
-#[cfg(unix)]
 const PENDING_KEEP_ALIVE: u8 = 1 << 0;
-#[cfg(unix)]
 const PENDING_STREAMING: u8 = 1 << 1;
-#[cfg(unix)]
 const PENDING_CHUNKED: u8 = 1 << 2;
-#[cfg(unix)]
 const PENDING_H2: u8 = 1 << 3;
 /// The request was HTTP/1.0, which has no chunked framing to answer with.
-#[cfg(unix)]
 const PENDING_HTTP10: u8 = 1 << 4;
 
-#[cfg(unix)]
 #[derive(Default)]
 struct PendingCold {
     parsed_head: OnceCell<Vec<String>>,
     custom_method: Option<Box<str>>,
     h2_stream_id: Option<u32>,
     h2_headers: Option<Vec<(String, String)>>,
+    trailers: Option<Vec<(String, String)>>,
     query: Option<Box<str>>,
     body: Option<Vec<u8>>,
 }
 
-#[cfg(unix)]
 struct PendingReq {
     conn_id: u32,
     prev_on_conn: u32,
@@ -622,7 +670,6 @@ struct PendingReq {
     cold: Option<Box<PendingCold>>,
 }
 
-#[cfg(unix)]
 impl PendingReq {
     #[inline]
     fn new(
@@ -720,7 +767,6 @@ fn field_separator(name: &str) -> &'static str {
     }
 }
 
-#[cfg(unix)]
 fn header_from_head(fields: &[String], name: &str) -> Option<String> {
     let mut values = fields
         .chunks_exact(2)
@@ -737,7 +783,6 @@ fn header_from_head(fields: &[String], name: &str) -> Option<String> {
 }
 
 /// One response that is waiting its turn behind an earlier request on the same connection.
-#[cfg(unix)]
 #[derive(Default)]
 struct Held {
     bytes: Vec<u8>,
@@ -749,7 +794,6 @@ struct Held {
 ///
 /// A handler can finish out of order (async, or a native route next to a JS one), but a client matches
 /// responses to requests by position, so an answer that finishes early waits in `held`.
-#[cfg(unix)]
 #[derive(Default)]
 struct H1Order {
     queue: VecDeque<u32>,
@@ -759,14 +803,12 @@ struct H1Order {
 
 /// O(1) direct-indexed per-connection metadata indexed by `nifra_io::conn_slot(conn_id)`.
 /// Keeps non-pipelined HTTP/1.1 keep-alive requests completely free of heap allocations and hashing.
-#[cfg(unix)]
 struct H1StreamBody {
     req_id: u32,
     token: u64,
     decoder: H1BodyDecoder,
 }
 
-#[cfg(unix)]
 #[derive(Default)]
 struct ConnMetaSlot {
     gen_id: u32,
@@ -784,7 +826,6 @@ struct ConnMetaSlot {
     continue_checked: bool,
 }
 
-#[cfg(unix)]
 impl ConnMetaSlot {
     #[inline]
     fn clear_for(&mut self, new_gen_id: u32) {
@@ -842,7 +883,6 @@ impl ConnMetaSlot {
     }
 }
 
-#[cfg(unix)]
 #[derive(Default)]
 struct ConnMetaTable {
     slots: Vec<ConnMetaSlot>,
@@ -850,7 +890,6 @@ struct ConnMetaTable {
     retired_pending: HashMap<u32, u32>,
 }
 
-#[cfg(unix)]
 impl ConnMetaTable {
     fn with_capacity(cap: usize) -> Self {
         Self {
@@ -932,19 +971,15 @@ impl ConnMetaTable {
 }
 
 /// Most bytes one connection may park behind an unanswered earlier request before it is closed.
-#[cfg(unix)]
 const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
 /// How long a server-initiated WebSocket close waits for the peer's Close before the socket is cut.
-#[cfg(unix)]
 const WS_CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Most unanswered pipelined requests one HTTP/1.1 connection may have in flight.
-#[cfg(unix)]
 const MAX_PIPELINED: usize = 1024;
 
 /// Write to an HTTP/1.1 connection. While the connection is inside `on_data`, `write_to_conn` parks
 /// the bytes and appends them after what the handler already queued.
-#[cfg(unix)]
 #[inline]
 fn h1_write(
     server: &UvServer,
@@ -958,7 +993,6 @@ fn h1_write(
 
 /// Send `bytes` of request `req_id`'s HTTP/1.1 response in request order. `finish` marks the response
 /// complete; `keep_alive` is the request's own keep-alive. Returns `Closed` once the socket is gone.
-#[cfg(unix)]
 fn h1_send(
     server: &UvServer,
     st: &mut UvHttpShared,
@@ -1056,11 +1090,9 @@ fn h1_send(
 }
 
 /// Set on every queued-answer id: slab ids count the requests in flight and never reach it.
-#[cfg(unix)]
 const PLACEHOLDER_BIT: u32 = 1 << 31;
 
 /// An id for a queued answer that no request owns.
-#[cfg(unix)]
 fn next_placeholder(st: &mut UvHttpShared) -> u32 {
     st.placeholder_seq = st.placeholder_seq.wrapping_add(1);
     PLACEHOLDER_BIT | st.placeholder_seq
@@ -1068,7 +1100,6 @@ fn next_placeholder(st: &mut UvHttpShared) -> u32 {
 
 /// Queue a finished answer behind the connection's earlier unanswered requests, so it leaves in
 /// request order. Returns `true` when more than `MAX_HELD_BYTES` now wait on this connection.
-#[cfg(unix)]
 fn park_behind_pending(
     st: &mut UvHttpShared,
     conn_id: u32,
@@ -1104,7 +1135,6 @@ fn park_behind_pending(
 
 /// Answer a request the parser refused and end the connection. A request still being handled on the
 /// connection owns the next bytes the client reads, so the error waits its turn behind it.
-#[cfg(unix)]
 fn refuse_request(
     st: &mut UvHttpShared,
     conn_id: u32,
@@ -1133,14 +1163,12 @@ fn refuse_request(
 }
 
 /// Direct-indexed O(1) free-list slab replacing `HashMap<u32, PendingReq>` on the hot path.
-#[cfg(unix)]
 struct PendingSlab {
     slots: Vec<Option<PendingReq>>,
     free: Vec<u32>,
     active: usize,
 }
 
-#[cfg(unix)]
 impl PendingSlab {
     fn with_capacity(cap: usize) -> Self {
         Self {
@@ -1247,7 +1275,7 @@ impl PendingSlab {
     }
 }
 
-#[cfg(all(unix, test))]
+#[cfg(test)]
 mod pending_tests {
     use super::*;
 
@@ -1284,24 +1312,23 @@ mod pending_tests {
     }
 }
 
-#[cfg(unix)]
 const H2_WS_ID_BIT: u32 = 1 << 30;
 
-#[cfg(unix)]
 #[derive(Clone, Copy)]
 struct CompressionCfg {
     enabled: bool,
+    zstd: bool,
     brotli: bool,
     gzip: bool,
     deflate: bool,
     min_bytes: usize,
 }
 
-#[cfg(unix)]
 impl Default for CompressionCfg {
     fn default() -> Self {
         Self {
             enabled: false,
+            zstd: true,
             brotli: true,
             gzip: true,
             deflate: true,
@@ -1310,7 +1337,6 @@ impl Default for CompressionCfg {
     }
 }
 
-#[cfg(unix)]
 struct WsConnState {
     conn: WsConn,
     /// A Ping from the idle sweep that nothing has been heard since.
@@ -1321,7 +1347,6 @@ struct WsConnState {
     topics: Vec<String>,
 }
 
-#[cfg(unix)]
 struct UvHttpShared {
     raw_env: sys::napi_env,
     on_batch_ref: sys::napi_ref,
@@ -1339,6 +1364,8 @@ struct UvHttpShared {
     ws_shared_pool: Option<SharedCompressorPool>,
     ws_topics: HashMap<String, Vec<u32>>,
     h2_ws_map: HashMap<u32, (u32, u32)>,
+    h2_cork_conns: HashMap<u32, (u32, u32)>,
+    pending_aborted: Vec<u32>,
     h2_ws_seq: u32,
     compression: CompressionCfg,
     http2_enabled: bool,
@@ -1371,7 +1398,6 @@ struct UvHttpShared {
     scratch_frame: Vec<u8>,
 }
 
-#[cfg(unix)]
 impl UvHttpShared {
     #[inline]
     fn insert_pending(&mut self, req: PendingReq) -> u32 {
@@ -1388,7 +1414,6 @@ impl UvHttpShared {
     }
 }
 
-#[cfg(unix)]
 #[inline]
 fn with_flat_header_pairs<R>(hdr_vec: &[String], f: impl FnOnce(&[(&str, &str)]) -> R) -> R {
     let count = hdr_vec.len() / 2;
@@ -1407,7 +1432,6 @@ fn with_flat_header_pairs<R>(hdr_vec: &[String], f: impl FnOnce(&[(&str, &str)])
     }
 }
 
-#[cfg(unix)]
 #[inline]
 fn with_tuple_header_pairs<R>(
     hdrs: &[(String, String)],
@@ -1427,7 +1451,6 @@ fn with_tuple_header_pairs<R>(
 }
 
 /// Call a registered callback once per id, resolving it each time: a handler may delete it.
-#[cfg(unix)]
 fn notify_each(
     shared: &Rc<RefCell<UvHttpShared>>,
     ids: Vec<u32>,
@@ -1442,7 +1465,6 @@ fn notify_each(
     }
 }
 
-#[cfg(unix)]
 fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
     let (raw_env, on_batch_ref, count) = {
         let mut st = shared.borrow_mut();
@@ -1502,19 +1524,16 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
     }
 }
 
-#[cfg(unix)]
 unsafe fn call_js_ws_drain(raw_env: sys::napi_env, cb_ref: sys::napi_ref, socket_id: u32) {
     call_js_u32(raw_env, cb_ref, socket_id);
 }
 
-#[cfg(unix)]
 fn head_has_header_name(raw_head: &[u8], target: &str) -> bool {
     collect_headers_in_head(raw_head)
         .chunks_exact(2)
         .any(|pair| pair[0] == target)
 }
 
-#[cfg(unix)]
 fn pending_accept_encoding(pending: &mut PendingReq, batch_heads: &[u8]) -> Option<String> {
     if let Some(hdrs) = pending.h2_headers() {
         return hdrs
@@ -1526,7 +1545,6 @@ fn pending_accept_encoding(pending: &mut PendingReq, batch_heads: &[u8]) -> Opti
     header_from_head(head, "accept-encoding")
 }
 
-#[cfg(unix)]
 fn unsubscribe_all_ws_topics(st: &mut UvHttpShared, socket_id: u32, topics: Vec<String>) {
     for topic in topics {
         if let Some(list) = st.ws_topics.get_mut(&topic) {
@@ -1538,7 +1556,6 @@ fn unsubscribe_all_ws_topics(st: &mut UvHttpShared, socket_id: u32, topics: Vec<
     }
 }
 
-#[cfg(unix)]
 fn ws_conn_id_for_socket(st: &UvHttpShared, socket_id: u32) -> Option<u32> {
     if socket_id >= H2_WS_ID_BIT {
         st.h2_ws_map.get(&socket_id).map(|&(cid, _)| cid)
@@ -1549,7 +1566,6 @@ fn ws_conn_id_for_socket(st: &UvHttpShared, socket_id: u32) -> Option<u32> {
     }
 }
 
-#[cfg(unix)]
 fn deliver_h1_body_stream(
     shared: &Rc<RefCell<UvHttpShared>>,
     conn_id: u32,
@@ -1579,9 +1595,24 @@ fn deliver_h1_body_stream(
             };
             let done = step.done;
             let advanced = step.consumed > 0;
+            let done_trailers = if done {
+                stream.decoder.take_trailers()
+            } else {
+                Vec::new()
+            };
             if done {
                 if let Some(slot) = st.conn_meta.get_mut(conn_id) {
                     slot.h1_body_stream = None;
+                }
+                if !done_trailers.is_empty() {
+                    if let Some(pending) = st
+                        .pending
+                        .get_mut(req_id)
+                        .filter(|p| p.stream_token == token)
+                    {
+                        pending.cold.get_or_insert_with(Default::default).trailers =
+                            Some(done_trailers);
+                    }
                 }
             }
             let deliver = (chunk.is_some() || done)
@@ -1613,7 +1644,6 @@ fn deliver_h1_body_stream(
     }
 }
 
-#[cfg(unix)]
 fn handle_h1_stream_body_error(
     shared: &Rc<RefCell<UvHttpShared>>,
     conn_id: u32,
@@ -1722,12 +1752,10 @@ fn handle_h1_stream_body_error(
     )
 }
 
-#[cfg(unix)]
 struct HttpUvCallbacks {
     shared: Rc<RefCell<UvHttpShared>>,
 }
 
-#[cfg(unix)]
 impl HttpUvCallbacks {
     fn on_data_body(
         &mut self,
@@ -1998,6 +2026,26 @@ impl HttpUvCallbacks {
                             };
                         }
                     }
+                    H2Event::StreamTrailers {
+                        stream_id,
+                        trailers,
+                    } => {
+                        if !trailers.is_empty() {
+                            let mut st = self.shared.borrow_mut();
+                            let pending_head = st.conn_meta.pending_head(conn_id);
+                            let req_id = st
+                                .pending
+                                .iter_connection(pending_head)
+                                .find(|(_, p)| p.h2_stream_id() == Some(stream_id))
+                                .map(|(id, _)| id);
+                            if let Some(req_id) = req_id {
+                                if let Some(pending) = st.pending.get_mut(req_id) {
+                                    pending.cold.get_or_insert_with(Default::default).trailers =
+                                        Some(trailers);
+                                }
+                            }
+                        }
+                    }
                     H2Event::StreamReset(stream_id) => {
                         let (aborted, ws_closed) = {
                             let mut st = self.shared.borrow_mut();
@@ -2209,20 +2257,28 @@ impl HttpUvCallbacks {
                     } else {
                         None
                     };
-                    let cold =
-                        if saved_body.is_some() || saved_query.is_some() || custom_method.is_some()
-                        {
-                            Some(Box::new(PendingCold {
-                                parsed_head: OnceCell::new(),
-                                custom_method,
-                                h2_stream_id: None,
-                                h2_headers: None,
-                                query: saved_query,
-                                body: saved_body,
-                            }))
-                        } else {
-                            None
-                        };
+                    let saved_trailers = if req.trailers.is_empty() {
+                        None
+                    } else {
+                        Some(req.trailers.clone())
+                    };
+                    let cold = if saved_body.is_some()
+                        || saved_query.is_some()
+                        || custom_method.is_some()
+                        || saved_trailers.is_some()
+                    {
+                        Some(Box::new(PendingCold {
+                            parsed_head: OnceCell::new(),
+                            custom_method,
+                            h2_stream_id: None,
+                            h2_headers: None,
+                            trailers: saved_trailers,
+                            query: saved_query,
+                            body: saved_body,
+                        }))
+                    } else {
+                        None
+                    };
 
                     // 2) Pack into zero-copy `inMeta` + `inData` and bump-allocate raw_head in `batch_heads`.
                     if st
@@ -2460,7 +2516,6 @@ impl HttpUvCallbacks {
     }
 }
 
-#[cfg(unix)]
 impl UvCallbacks for HttpUvCallbacks {
     fn on_data(&mut self, conn_id: u32, read_buf: &[u8], write_buf: &mut Vec<u8>) -> ConnAction {
         self.on_data_body(conn_id, read_buf, write_buf)
@@ -2488,27 +2543,29 @@ impl UvCallbacks for HttpUvCallbacks {
             h2.drain_expired_streams(now, out)
         };
         if !expired_streams.is_empty() {
-            let aborted = {
-                let mut st = self.shared.borrow_mut();
-                let mut ids = Vec::new();
-                for stream_id in expired_streams {
-                    let matching: Vec<u32> = st
-                        .pending
-                        .iter_connection(st.conn_meta.pending_head(conn_id))
-                        .filter(|(_, p)| p.h2_stream_id() == Some(stream_id))
-                        .map(|(id, _)| id)
-                        .collect();
-                    for id in matching {
-                        if st.remove_pending(id).is_some() {
-                            ids.push(id);
-                        }
+            let mut st = self.shared.borrow_mut();
+            for stream_id in expired_streams {
+                let matching: Vec<u32> = st
+                    .pending
+                    .iter_connection(st.conn_meta.pending_head(conn_id))
+                    .filter(|(_, p)| p.h2_stream_id() == Some(stream_id))
+                    .map(|(id, _)| id)
+                    .collect();
+                for id in matching {
+                    if st.remove_pending(id).is_some() {
+                        st.pending_aborted.push(id);
                     }
                 }
-                ids
-            };
-            notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+            }
         }
         close_conn
+    }
+
+    fn flush_aborted(&mut self) {
+        let aborted = std::mem::take(&mut self.shared.borrow_mut().pending_aborted);
+        if !aborted.is_empty() {
+            notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+        }
     }
 
     fn oldest_incomplete_head(&self, conn_id: u32) -> Option<std::time::Instant> {
@@ -2646,6 +2703,7 @@ impl UvCallbacks for HttpUvCallbacks {
                     closes.push((socket_id, 1006u16, String::new()));
                 }
             }
+            st.h2_cork_conns.retain(|_, (cid, _)| *cid != conn_id);
             (ids, closes)
         };
         notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
@@ -2660,7 +2718,6 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 }
 
-#[cfg(unix)]
 #[inline]
 fn has_batch_room(st: &UvHttpShared, needed_data: usize) -> bool {
     let slot_base = st.batch_count * IN_SLOT_U32S;
@@ -2668,7 +2725,6 @@ fn has_batch_room(st: &UvHttpShared, needed_data: usize) -> bool {
     slot_base + IN_SLOT_U32S <= max_u32s && st.batch_data_pos + needed_data <= st.in_data.len
 }
 
-#[cfg(unix)]
 fn pack_into_shared(
     st: &mut UvHttpShared,
     req_id: u32,
@@ -2765,7 +2821,6 @@ fn pack_into_shared(
 }
 
 /// The first `content-type` of an HTTP/2 request, as the header lookup would return it.
-#[cfg(unix)]
 fn h2_content_type(req: &H2Request) -> Option<&str> {
     req.headers
         .iter()
@@ -2773,7 +2828,6 @@ fn h2_content_type(req: &H2Request) -> Option<&str> {
         .map(|(_, value)| value.as_str())
 }
 
-#[cfg(unix)]
 fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> bool {
     let slot_base = st.batch_count * IN_SLOT_U32S;
     let max_u32s = st.in_meta.len / 4;
@@ -2859,6 +2913,7 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
         custom_method: (req.method_idx >= 7).then(|| req.method.into_boxed_str()),
         h2_stream_id: Some(req.stream_id),
         h2_headers: Some(req.headers),
+        trailers: (!req.trailers.is_empty()).then_some(req.trailers),
         query: (req.is_ws_upgrade && !req.query.is_empty()).then(|| Box::<str>::from(req.query)),
         body: (!inline_body && !req.streaming_body && !req.is_ws_upgrade).then_some(req.body),
     });
@@ -2884,7 +2939,6 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     true
 }
 
-#[cfg(unix)]
 fn pack_stream_head_into_shared(
     st: &mut UvHttpShared,
     req_id: u32,
@@ -2953,14 +3007,12 @@ fn pack_stream_head_into_shared(
     true
 }
 
-#[cfg(unix)]
 struct CompressedPayload {
     encoding: Option<&'static str>,
     body: Option<Vec<u8>>,
     append_vary: bool,
 }
 
-#[cfg(unix)]
 fn header_needs_vary_ae(pairs: &[(&str, &str)]) -> bool {
     for &(k, v) in pairs {
         if k.eq_ignore_ascii_case("vary")
@@ -2975,7 +3027,6 @@ fn header_needs_vary_ae(pairs: &[(&str, &str)]) -> bool {
     true
 }
 
-#[cfg(unix)]
 fn negotiate_compression_payload(
     compression: CompressionCfg,
     batch_heads: &[u8],
@@ -3011,6 +3062,7 @@ fn negotiate_compression_payload(
         compression.brotli,
         compression.gzip,
         compression.deflate,
+        compression.zstd,
     );
     if let Some(enc) = enc {
         if let Some(compressed) = nifra_http::compress::compress_bytes(enc, body) {
@@ -3028,7 +3080,6 @@ fn negotiate_compression_payload(
     })
 }
 
-#[cfg(unix)]
 fn with_compression_headers<R>(
     pairs: &[(&str, &str)],
     compressed: Option<&CompressedPayload>,
@@ -3067,7 +3118,6 @@ fn with_compression_headers<R>(
 }
 
 /// Zero-hop HTTP/1.1 + HTTP/2 + WebSocket server running directly on Node.js's main `libuv` event loop.
-#[cfg(unix)]
 struct EnvCleanupContext {
     server: UvServer,
     shared: Rc<RefCell<UvHttpShared>>,
@@ -3075,7 +3125,6 @@ struct EnvCleanupContext {
     cleanup_slot: Rc<Cell<*mut EnvCleanupContext>>,
 }
 
-#[cfg(unix)]
 fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, closed: &Cell<bool>) {
     if closed.get() {
         return;
@@ -3107,7 +3156,6 @@ fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, clo
     st.conn_meta.clear_all();
 }
 
-#[cfg(unix)]
 unsafe extern "C" fn on_env_cleanup(arg: *mut c_void) {
     if arg.is_null() {
         return;
@@ -3117,7 +3165,6 @@ unsafe extern "C" fn on_env_cleanup(arg: *mut c_void) {
     shutdown_uv_server(&ctx.server, &ctx.shared, &ctx.closed);
 }
 
-#[cfg(unix)]
 #[napi]
 pub struct UvHttpServer {
     port: u16,
@@ -3128,7 +3175,6 @@ pub struct UvHttpServer {
     cleanup_slot: Rc<Cell<*mut EnvCleanupContext>>,
 }
 
-#[cfg(unix)]
 #[napi]
 impl UvHttpServer {
     #[napi(getter)]
@@ -3352,6 +3398,26 @@ impl UvHttpServer {
         let st = self.shared.borrow();
         let pending = st.pending.get(req_id)?;
         pending.body().map(Buffer::from)
+    }
+
+    /// Return validated HTTP/1.1 chunked or HTTP/2 trailing headers as `[name, value, ...]`.
+    #[napi]
+    pub fn get_trailers(&self, req_id: u32) -> Vec<String> {
+        let st = self.shared.borrow();
+        let Some(trailers) = st
+            .pending
+            .get(req_id)
+            .and_then(|p| p.cold.as_ref())
+            .and_then(|c| c.trailers.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(trailers.len() * 2);
+        for (name, value) in trailers {
+            out.push(name.clone());
+            out.push(value.clone());
+        }
+        out
     }
 
     /// Lazily return the socket peer IP address for an in-flight request.
@@ -4410,6 +4476,50 @@ impl UvHttpServer {
         self.server.queued_bytes(conn_id).min(u32::MAX as usize) as u32
     }
 
+    /// Defer outbound TCP/TLS socket flushes on `socket_id`'s connection until `ws_cork_end`.
+    #[napi]
+    pub fn ws_cork_begin(&self, socket_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
+            return false;
+        };
+        if !self.server.cork_begin(conn_id) {
+            return false;
+        }
+        if socket_id >= H2_WS_ID_BIT {
+            let entry = st.h2_cork_conns.entry(socket_id).or_insert((conn_id, 0));
+            entry.0 = conn_id;
+            entry.1 = entry.1.saturating_add(1);
+        }
+        true
+    }
+
+    /// Flush deferred outbound writes when the outermost cork scope completes.
+    #[napi]
+    pub fn ws_cork_end(&self, socket_id: u32) -> bool {
+        let conn_id = {
+            let mut st = self.shared.borrow_mut();
+            if socket_id >= H2_WS_ID_BIT {
+                if let Some((cid, depth)) = st.h2_cork_conns.get_mut(&socket_id) {
+                    let out_cid = *cid;
+                    *depth = depth.saturating_sub(1);
+                    if *depth == 0 {
+                        st.h2_cork_conns.remove(&socket_id);
+                    }
+                    out_cid
+                } else {
+                    return false;
+                }
+            } else {
+                match ws_conn_id_for_socket(&st, socket_id) {
+                    Some(cid) => cid,
+                    None => return false,
+                }
+            }
+        };
+        self.server.cork_end(conn_id) != WriteResult::Closed
+    }
+
     /// Subscribe `socket_id` to a native WebSocket topic for native fan-out.
     #[napi]
     pub fn ws_subscribe(&self, socket_id: u32, topic: String) -> bool {
@@ -4762,7 +4872,6 @@ impl UvHttpServer {
     }
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SendWsOutcome {
     Sent,
@@ -4770,7 +4879,6 @@ enum SendWsOutcome {
     Closed,
 }
 
-#[cfg(unix)]
 fn close_h2_ws_stream_on_bp(
     server: &UvServer,
     shared: &Rc<RefCell<UvHttpShared>>,
@@ -4823,7 +4931,6 @@ fn close_h2_ws_stream_on_bp(
     }
 }
 
-#[cfg(unix)]
 fn send_ws_frame(
     server: &UvServer,
     shared: &Rc<RefCell<UvHttpShared>>,
@@ -4845,7 +4952,9 @@ fn send_ws_frame(
                 .get(conn_id)
                 .and_then(|s| s.h2.as_deref())
                 .map_or(0, |h2| h2.stream_queued_bytes(stream_id));
-            if max_bp > 0 && (stream_queued >= max_bp || server.queued_bytes(conn_id) >= max_bp) {
+            if max_bp > 0
+                && (stream_queued >= max_bp || server.backpressured_bytes(conn_id) >= max_bp)
+            {
                 if close_on_bp {
                     close_h2_stream = Some((conn_id, stream_id));
                 }
@@ -4893,7 +5002,7 @@ fn send_ws_frame(
                     SendWsOutcome::Sent
                 }
             }
-        } else if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+        } else if max_bp > 0 && server.backpressured_bytes(socket_id) >= max_bp {
             if close_on_bp {
                 server.close_conn(socket_id);
             }
@@ -4940,7 +5049,6 @@ fn send_ws_frame(
     outcome
 }
 
-#[cfg(unix)]
 fn publish_ws_topic(
     server: &UvServer,
     shared: &Rc<RefCell<UvHttpShared>>,
@@ -4979,7 +5087,7 @@ fn publish_ws_topic(
             continue;
         }
         let mut st = st;
-        if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+        if max_bp > 0 && server.backpressured_bytes(socket_id) >= max_bp {
             if close_on_bp {
                 server.close_conn(socket_id);
             }
@@ -5022,7 +5130,6 @@ fn publish_ws_topic(
     delivered
 }
 
-#[cfg(unix)]
 impl Drop for UvHttpServer {
     fn drop(&mut self) {
         self.close();
@@ -5030,7 +5137,6 @@ impl Drop for UvHttpServer {
 }
 
 /// Start a zero-hop HTTP/1.1 + HTTP/2 + WebSocket server directly on Node's `libuv` event loop.
-#[cfg(unix)]
 #[napi]
 pub fn create_uv_server(
     env: Env,
@@ -5060,6 +5166,7 @@ pub fn create_uv_server(
     let mut sock_cfg = SocketConfig::default();
     let mut tls_store: Option<Arc<TlsStore>> = None;
     let mut unix_path: Option<String> = None;
+    let mut listener_fd: Option<i32> = None;
     if let Some(opts) = options {
         if let Some(v) = opts.max_body_size {
             limits.max_body_size = v as usize;
@@ -5129,6 +5236,9 @@ pub fn create_uv_server(
         }
         if let Some(comp) = opts.compression {
             compression.enabled = comp.enabled.unwrap_or(true);
+            if let Some(v) = comp.zstd {
+                compression.zstd = v;
+            }
             if let Some(v) = comp.brotli {
                 compression.brotli = v;
             }
@@ -5144,6 +5254,9 @@ pub fn create_uv_server(
         }
         if let Some(p) = opts.unix_path {
             unix_path = Some(p);
+        }
+        if let Some(fd) = opts.listener_fd {
+            listener_fd = Some(fd);
         }
         if let Some(def) = opts.ws_deflate {
             ws_deflate_cfg.enabled = true;
@@ -5206,23 +5319,45 @@ pub fn create_uv_server(
 
     enum BoundListener {
         Tcp(std::net::TcpListener, u16),
+        #[cfg(unix)]
         Unix(BoundUnixSocket),
+        #[cfg(unix)]
+        Fd(i32),
     }
 
     let bound = if let Some(ref path) = unix_path {
-        let socket = bind_unix_listener(path, sock_cfg)
-            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
-        BoundListener::Unix(socket)
+        #[cfg(unix)]
+        {
+            let socket = bind_unix_listener(path, sock_cfg)
+                .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
+            BoundListener::Unix(socket)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            return Err(Error::new(
+                Status::InvalidArg,
+                "Unix domain socket listeners are only supported on Unix",
+            ));
+        }
+    } else if let Some(fd) = listener_fd {
+        #[cfg(unix)]
+        {
+            BoundListener::Fd(fd)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = fd;
+            return Err(Error::new(
+                Status::InvalidArg,
+                "listenerFd is only supported on Unix",
+            ));
+        }
     } else {
         let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
         BoundListener::Tcp(listener, local_addr.port())
     };
-    let bound_port = match &bound {
-        BoundListener::Tcp(_, p) => *p,
-        BoundListener::Unix(_) => 0,
-    };
-
     // Taken only once the options are valid and the port/path is bound, so a failed start holds no callback.
     let mut cb_ref: sys::napi_ref = std::ptr::null_mut();
     let status = unsafe { sys::napi_create_reference(env.raw(), on_batch.raw(), 1, &mut cb_ref) };
@@ -5273,6 +5408,8 @@ pub fn create_uv_server(
         ws_shared_pool,
         ws_topics: HashMap::new(),
         h2_ws_map: HashMap::new(),
+        h2_cork_conns: HashMap::new(),
+        pending_aborted: Vec::new(),
         h2_ws_seq: 0,
         compression,
         http2_enabled,
@@ -5307,14 +5444,25 @@ pub fn create_uv_server(
     });
 
     // SAFETY: `uv_loop` came from `napi_get_uv_event_loop` for this thread's environment just above.
-    let server = unsafe {
+    let (server, bound_port) = unsafe {
         match bound {
-            BoundListener::Tcp(listener, _) => {
+            BoundListener::Tcp(listener, port) => {
                 UvServer::start_with_tls(uv_loop.cast(), listener, sock_cfg, tls_store, callbacks)
+                    .map(|server| (server, port))
             }
+            #[cfg(unix)]
             BoundListener::Unix(bound_unix) => UvServer::start_unix_with_tls(
                 uv_loop.cast(),
                 bound_unix,
+                sock_cfg,
+                tls_store,
+                callbacks,
+            )
+            .map(|server| (server, 0)),
+            #[cfg(unix)]
+            BoundListener::Fd(fd) => UvServer::start_from_raw_fd_with_tls(
+                uv_loop.cast(),
+                fd,
                 sock_cfg,
                 tls_store,
                 callbacks,

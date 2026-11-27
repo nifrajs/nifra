@@ -109,6 +109,7 @@ pub struct H2Request {
     pub is_ws_upgrade: bool,
     pub streaming_body: bool,
     pub headers: Vec<(String, String)>,
+    pub trailers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
@@ -119,6 +120,10 @@ pub enum H2Event {
         stream_id: u32,
         data: Vec<u8>,
         end_stream: bool,
+    },
+    StreamTrailers {
+        stream_id: u32,
+        trailers: Vec<(String, String)>,
     },
     StreamReset(u32),
     GoAway,
@@ -139,6 +144,7 @@ struct InStream {
     query: String,
     authority: Option<String>,
     headers: Vec<(String, String)>,
+    trailers: Vec<(String, String)>,
     is_json_ct: bool,
     body: Vec<u8>,
     declared_cl: Option<u64>,
@@ -1068,7 +1074,7 @@ impl H2Conn {
                     return Ok(());
                 }
                 self.paused_recv_streams.remove(&stream_id);
-                if let Some(st) = self.active_streams.remove(&stream_id) {
+                if let Some(mut st) = self.active_streams.remove(&stream_id) {
                     if st.streaming {
                         if st.declared_cl.is_some_and(|cl| cl != st.received_len) {
                             self.reset_and_emit(
@@ -1081,6 +1087,12 @@ impl H2Conn {
                         } else if self.request_expired(st.started) {
                             self.reset_and_emit(stream_id, ERR_CANCEL, true, write_buf, res);
                         } else {
+                            if !decoded.is_empty() {
+                                res.events.push(H2Event::StreamTrailers {
+                                    stream_id,
+                                    trailers: decoded,
+                                });
+                            }
                             res.events.push(H2Event::StreamData {
                                 stream_id,
                                 data: Vec::new(),
@@ -1090,6 +1102,7 @@ impl H2Conn {
                     } else if st.declared_cl.is_some_and(|cl| cl != st.body.len() as u64) {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
+                        st.trailers = decoded;
                         self.finalize_request(stream_id, st, write_buf, res);
                     }
                 }
@@ -1312,6 +1325,7 @@ impl H2Conn {
             query,
             authority,
             headers,
+            trailers: Vec::new(),
             is_json_ct,
             body: Vec::new(),
             declared_cl,
@@ -1359,6 +1373,7 @@ impl H2Conn {
                 is_ws_upgrade: is_ws_connect,
                 streaming_body: streaming,
                 headers: std::mem::take(&mut st.headers),
+                trailers: Vec::new(),
                 body: Vec::new(),
             }));
             self.active_streams.insert(stream_id, st);
@@ -1404,6 +1419,7 @@ impl H2Conn {
             is_ws_upgrade: false,
             streaming_body: false,
             headers: st.headers,
+            trailers: st.trailers,
             body: st.body,
         }));
     }

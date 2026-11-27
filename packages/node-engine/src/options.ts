@@ -34,10 +34,12 @@ export interface TlsSniEntry {
   readonly passphrase?: string
 }
 
-/** Native HTTP response compression (`br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+/** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
 export interface CompressionOptions {
   /** Enable or disable compression. Default `true` when an options object is passed. */
   readonly enabled?: boolean
+  /** Allow Zstandard (`zstd`). Default `true`. */
+  readonly zstd?: boolean
   /** Allow Brotli (`br`). Default `true`. */
   readonly brotli?: boolean
   /** Allow Gzip (`gzip`). Default `true`. */
@@ -46,6 +48,17 @@ export interface CompressionOptions {
   readonly deflate?: boolean
   /** Minimum uncompressed body length in bytes before compressing. Default `1024`. */
   readonly minBytes?: number
+}
+
+/** Native engine probe result describing loaded platform, transport, and capability flags. */
+export interface ProbeResult {
+  readonly ok: boolean
+  readonly version: string
+  readonly platform: string
+  readonly arch: string
+  readonly transport: string
+  readonly reason?: string
+  readonly capabilities: Readonly<Record<string, boolean>>
 }
 
 /** In-process TLS: inline PEM or file names, encrypted key passphrase, mTLS & TLS policy. */
@@ -148,6 +161,8 @@ export interface EngineTuning {
   readonly wsCloseOnBackpressureLimit?: boolean
   /** Stream HTTP/1.1 & HTTP/2 request bodies incrementally to `req.body` instead of buffering whole payloads. */
   readonly streamRequestBodies?: boolean
+  /** Inherit a pre-bound TCP listener descriptor (used by `serveCluster` with `sharedListener`). */
+  readonly listenerFd?: number
   /** Bind with `SO_REUSEPORT` so several processes share the port. Off by default; `serveCluster` sets it. */
   readonly reusePort?: boolean
 }
@@ -172,7 +187,7 @@ export interface FetchHandler {
 }
 
 export interface ServeOptions extends HostPolicyOptions {
-  /** TCP port to bind (`0` for ephemeral). Omit when binding a Unix domain socket via {@link path}. */
+  /** TCP port to bind (`0` for ephemeral). Omit for {@link path} or an inherited listener descriptor. */
   readonly port?: number
   readonly hostname?: string
   /** Unix domain socket path to listen on (mutually exclusive with a TCP `hostname`/`port` bind). */
@@ -185,8 +200,10 @@ export interface ServeOptions extends HostPolicyOptions {
   readonly static?: (request: Request) => Response | undefined | Promise<Response | undefined>
   /** Replace `globalThis.Response` with the lazy direct-write response wrapper to skip stream drains. */
   readonly fastResponse?: boolean
-  /** Native HTTP response compression (`br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+  /** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
   readonly compression?: boolean | CompressionOptions
+  /** Fall back to `@nifrajs/node` (`node:http`/`node:https`) if the native addon binary cannot be loaded. Default `false`. */
+  readonly fallback?: boolean
   /**
    * Largest request body the engine accepts, 413 beyond it. The engine buffers a body whole before
    * the app runs, so this bounds the memory one request can hold. Default: 1 MiB, or the largest
@@ -221,7 +238,8 @@ export interface ServeOptions extends HostPolicyOptions {
   /**
    * Largest WebSocket message the engine accepts before it fails the connection with 1009. Defaults to
    * the largest `wsMaxPayloadBytes` among the app and the apps mounted in it that serve sockets (a
-   * route whose app declares less is held to its own), else the engine's 16 MiB.
+   * route whose app declares less is held to its own), else the engine's 16 MiB. The Node fallback
+   * rejects this option at startup.
    */
   readonly wsMaxMessageSize?: number
   /** Enable RFC 7692 WebSocket `permessage-deflate` compression (`true` for defaults, or options). */

@@ -15,13 +15,17 @@
  */
 import cluster, { type Worker } from "node:cluster"
 import { randomBytes } from "node:crypto"
+import { closeSync } from "node:fs"
+import { Socket } from "node:net"
 import { availableParallelism } from "node:os"
 import type { EngineServer, FetchHandler, NodeStopOptions, ServeOptions } from "./options.ts"
-import { serve } from "./serve.ts"
+import { bindSharedListenerSocket, dupSharedListenerFd, serve } from "./serve.ts"
 
 export interface ClusterOptions extends ServeOptions {
-  /** Fixed port every worker binds with `SO_REUSEPORT`. */
+  /** Fixed port every worker binds with `SO_REUSEPORT` (or `0` when {@link sharedListener} is `true`). */
   readonly port: number
+  /** Share a single primary-bound listener socket across workers via IPC handle passing (supports `port: 0` and zero-drop rolling restarts). */
+  readonly sharedListener?: boolean
   /** Worker processes. Default: one per available core. */
   readonly workers?: number
   /** Start a replacement when a worker dies while the cluster is running. Default `true`. */
@@ -99,7 +103,7 @@ const DEFAULT_START_TIMEOUT_MS = 30_000
 const DEFAULT_DRAIN_MS = 10_000
 
 type ToWorker =
-  | { readonly nifra: "init"; readonly tls?: ServeOptions["tls"] }
+  | { readonly nifra: "init"; readonly port?: number; readonly tls?: ServeOptions["tls"] }
   | { readonly nifra: "stop"; readonly options: NodeStopOptions }
   | { readonly nifra: "reloadTls"; readonly id: number; readonly tls?: ServeOptions["tls"] }
 
@@ -149,15 +153,69 @@ function isToPrimary(message: unknown): message is ToPrimary {
   )
 }
 
+interface InitPayload {
+  readonly port?: number | undefined
+  readonly tls?: ServeOptions["tls"]
+  readonly listenerFd?: number | undefined
+  readonly ownsFd?: boolean
+  readonly closeHandle?: (() => void) | undefined
+}
+
 /** Ask the primary what to start with, so a worker never listens with a certificate since replaced. */
-function askForTls(): Promise<ServeOptions["tls"]> {
+function askForInit(): Promise<InitPayload> {
   return new Promise((resolve) => {
-    const onMessage = (message: unknown): void => {
+    const onMessage = (message: unknown, sendHandle?: unknown): void => {
       if (!isToWorker(message)) return
       if (message.nifra === "stop") process.exit(0)
       if (message.nifra !== "init") return
       process.removeListener("message", onMessage)
-      resolve(message.tls)
+      let listenerFd: number | undefined
+      let ownsFd = false
+      let closeHandle: (() => void) | undefined
+      if (typeof sendHandle === "object" && sendHandle !== null) {
+        const onFn: unknown = Reflect.get(sendHandle, "on")
+        if (typeof onFn === "function") {
+          Reflect.apply(onFn, sendHandle, ["error", () => {}])
+        }
+        const innerHandle: unknown = Reflect.get(sendHandle, "_handle")
+        const rawFd: unknown =
+          Reflect.get(sendHandle, "fd") ??
+          (typeof innerHandle === "object" && innerHandle !== null
+            ? Reflect.get(innerHandle, "fd")
+            : undefined)
+        if (typeof rawFd === "number" && Number.isInteger(rawFd) && rawFd >= 0) {
+          const duped = dupSharedListenerFd(rawFd)
+          if (duped !== undefined) {
+            listenerFd = duped
+            ownsFd = true
+            const destroyFn: unknown = Reflect.get(sendHandle, "destroy")
+            if (typeof destroyFn === "function") {
+              Reflect.apply(destroyFn, sendHandle, [])
+            }
+          } else {
+            listenerFd = rawFd
+          }
+        }
+        if (!ownsFd) {
+          const closeFn: unknown = Reflect.get(sendHandle, "close")
+          if (typeof closeFn === "function") {
+            closeHandle = () => {
+              try {
+                Reflect.apply(closeFn, sendHandle, [])
+              } catch {
+                // ignore close errors on received handle
+              }
+            }
+          }
+        }
+      }
+      resolve({
+        port: message.port,
+        tls: message.tls,
+        listenerFd,
+        ownsFd,
+        closeHandle,
+      })
     }
     process.on("message", onMessage)
     const hello: ToPrimary = { nifra: "hello" }
@@ -188,7 +246,15 @@ export function serveCluster(
   app: () => FetchHandler | Promise<FetchHandler>,
   options: ClusterOptions,
 ): Promise<ClusterPrimary | ClusterWorker> {
-  if (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port < 1) {
+  const sharedListener = options.sharedListener === true
+  if (options.sharedListener !== undefined && typeof options.sharedListener !== "boolean") {
+    return Promise.reject(new TypeError("@nifrajs/node-engine: `sharedListener` must be a boolean"))
+  }
+  if (
+    typeof options.port !== "number" ||
+    !Number.isInteger(options.port) ||
+    (sharedListener ? options.port < 0 : options.port < 1)
+  ) {
     return Promise.reject(
       new TypeError(
         "@nifrajs/node-engine: a cluster needs a fixed `port` (workers cannot share an ephemeral one)",
@@ -215,7 +281,13 @@ async function runWorker(
   app: () => FetchHandler | Promise<FetchHandler>,
   options: ClusterOptions,
 ): Promise<ClusterWorker> {
-  const { workers: _workers, respawn: _respawn, onWorkerEvent: _onWorkerEvent, ...rest } = options
+  const {
+    workers: _workers,
+    respawn: _respawn,
+    onWorkerEvent: _onWorkerEvent,
+    sharedListener: _sharedListener,
+    ...rest
+  } = options
   const hex = process.env[TICKET_ENV]
   // The ticket key decrypts resumed sessions: a process the app spawns must not inherit it.
   delete process.env[TICKET_ENV]
@@ -223,7 +295,8 @@ async function runWorker(
     options.tls?.ticketKeys === undefined && hex !== undefined ? Buffer.from(hex, "hex") : undefined
   // Keys preserved on a certificate-only reload: explicit keys first, then primary-generated keys.
   const fallbackTicketKeys = options.tls?.ticketKeys ?? autoTicketKeys
-  const reloaded = await askForTls()
+  const init = await askForInit()
+  const reloaded = init.tls
   const current =
     reloaded === undefined
       ? options.tls
@@ -235,13 +308,30 @@ async function runWorker(
       ? current
       : { ...current, ticketKeys: fallbackTicketKeys }
   let server: EngineServer
+  const releaseInitFd = (): void => {
+    if (init.ownsFd && init.listenerFd !== undefined) {
+      try {
+        closeSync(init.listenerFd)
+      } catch {
+        // ignore close errors after UvServer duplicated the descriptor
+      }
+    }
+    init.closeHandle?.()
+  }
   try {
     server = await serve(await app(), {
       ...rest,
+      port: init.port ?? rest.port,
       ...(tls === undefined ? {} : { tls }),
-      engine: { ...options.engine, reusePort: true },
+      engine: {
+        ...options.engine,
+        ...(init.listenerFd === undefined
+          ? { reusePort: true }
+          : { listenerFd: init.listenerFd, reusePort: false }),
+      },
     })
   } catch (error) {
+    releaseInitFd()
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error)
     const reported: ToPrimary = { nifra: "error", message }
     // Exit once the report is flushed: the IPC channel would otherwise keep the process alive.
@@ -250,6 +340,7 @@ async function runWorker(
     send(reported, undefined, undefined, () => process.exit(1))
     throw error
   }
+  releaseInitFd()
 
   let stopping: Promise<void> | undefined
   const shutdown = (stopOptions: NodeStopOptions): Promise<void> => {
@@ -305,11 +396,47 @@ interface Slot {
   readonly ready: Promise<void>
 }
 
+interface SharedListenerHandle {
+  readonly sendHandle: Socket
+  readonly port: number
+  readonly close: () => Promise<void>
+}
+
+function bindSharedListener(
+  port: number,
+  host: string | undefined,
+  backlog: number | undefined,
+): Promise<SharedListenerHandle> {
+  const native = bindSharedListenerSocket(port, host ?? "0.0.0.0", backlog)
+  if (native === undefined) {
+    return Promise.reject(
+      new Error(
+        "@nifrajs/node-engine: `sharedListener` requires the native addon and is not supported in fallback mode",
+      ),
+    )
+  }
+  const sock = new Socket({ fd: native.fd, readable: false, writable: false })
+  sock.on("error", () => {})
+  return Promise.resolve({
+    sendHandle: sock,
+    port: native.port,
+    close: () => {
+      sock.destroy()
+      return Promise.resolve()
+    },
+  })
+}
+
 async function runPrimary(options: ClusterOptions, count: number): Promise<ClusterPrimary> {
   const env: Record<string, string> =
     options.tls === undefined || options.tls.ticketKeys !== undefined
       ? {}
       : { [TICKET_ENV]: randomBytes(48).toString("hex") }
+  const shared =
+    options.sharedListener === true
+      ? await bindSharedListener(options.port, options.hostname, options.engine?.backlog)
+      : undefined
+  const activePort = shared?.port ?? options.port
   const slots = new Map<number, Slot>()
   const respawn = options.respawn ?? true
   let stopping = false
@@ -357,9 +484,15 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
           if (!worker.isConnected()) return
           slot.started = true
           const reply: ToWorker =
-            currentTls === undefined ? { nifra: "init" } : { nifra: "init", tls: currentTls }
+            currentTls === undefined
+              ? { nifra: "init", port: activePort }
+              : { nifra: "init", port: activePort, tls: currentTls }
           // A send that fails means the worker has gone; its `exit` handles that.
-          worker.send(reply, () => {})
+          if (shared !== undefined) {
+            worker.send(reply, shared.sendHandle, { keepOpen: true }, () => {})
+          } else {
+            worker.send(reply, () => {})
+          }
         }
         void reloading.then(init, init)
       } else if (message.nifra === "listening") {
@@ -432,6 +565,9 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
       }
       await Promise.all(all.map(exited))
       clearTimeout(killer)
+      if (shared !== undefined) {
+        await shared.close()
+      }
     })()
     return shutdown
   }
@@ -565,7 +701,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
 
   return {
     role: "primary",
-    port: options.port,
+    port: activePort,
     workers: () =>
       [...slots.values()]
         .filter((slot) => slot.listening)
