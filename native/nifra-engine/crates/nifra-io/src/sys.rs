@@ -643,7 +643,23 @@ fn compact_sent_prefix(core: &mut ConnCore) {
 /// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
 /// falling back to buffering the tail only on partial writes, backpressure, or TLS.
 #[inline]
-pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAction {
+pub(crate) fn write_buf_limit(cfg: SocketConfig) -> usize {
+    if cfg.max_write_buf_bytes > 0 {
+        cfg.max_write_buf_bytes
+    } else {
+        MAX_WRITE_BUF_BYTES
+    }
+}
+
+/// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
+/// falling back to buffering the tail only on partial writes, backpressure, or TLS.
+#[inline]
+pub(crate) fn write_bytes_or_queue(
+    core: &mut ConnCore,
+    bytes: &[u8],
+    max_write: usize,
+) -> FlushAction {
+    let budget = max_write.saturating_sub(core.queued_bytes());
     if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
         match send_nonblock(core.fd, bytes) {
             SendOutcome::All => {
@@ -657,12 +673,19 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
                 return FlushAction::None;
             }
             SendOutcome::Partial(n) => {
+                let tail = &bytes[n..];
+                if tail.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
-                core.write_buf.extend_from_slice(&bytes[n..]);
+                core.write_buf.extend_from_slice(tail);
                 core.write_pos = 0;
                 return backed_up(core, true);
             }
             SendOutcome::WouldBlock => {
+                if bytes.len() > budget {
+                    return FlushAction::Close;
+                }
                 core.write_buf.clear();
                 core.write_buf.extend_from_slice(bytes);
                 core.write_pos = 0;
@@ -672,6 +695,9 @@ pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAc
         }
     }
 
+    if bytes.len() > budget {
+        return FlushAction::Close;
+    }
     compact_sent_prefix(core);
     if let Some(ref mut tls_conn) = core.tls {
         if nifra_tls::encrypt_plaintext(tls_conn, bytes, &mut core.write_buf).is_err() {
@@ -700,6 +726,8 @@ pub(crate) fn collect_timeouts<'a>(
 ) -> Sweep {
     let limit = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
     let idle_limit = limit(cfg.idle_timeout_ms);
+    let response_limit = limit(cfg.response_timeout_ms.unwrap_or(cfg.idle_timeout_ms));
+    let ws_lifetime_limit = limit(cfg.ws_max_lifetime_ms);
     let request_limit = limit(cfg.request_timeout_ms);
     // A request head (and a TLS handshake before it) gets the shorter of the two budgets.
     let head_limit = limit(cfg.headers_timeout_ms)
@@ -717,7 +745,12 @@ pub(crate) fn collect_timeouts<'a>(
     let mut reply = Vec::new();
 
     for (id, c) in conns {
-        if past(c.last_activity, idle_limit) {
+        if past(c.accepted_at, ws_lifetime_limit)
+            && callbacks.as_deref().is_some_and(|cb| cb.is_websocket(id))
+        {
+            overdue.push(id);
+        }
+        if c.queued_bytes() == 0 && past(c.last_activity, idle_limit) {
             idle.push(id);
         }
         if c.partial_since.is_some_and(|at| past(at, request_limit))
@@ -753,7 +786,11 @@ pub(crate) fn collect_timeouts<'a>(
                 .as_deref()
                 .and_then(|cb| cb.output_stalled_since(id)),
         ];
-        if stalled.into_iter().flatten().any(|at| past(at, idle_limit)) {
+        if stalled
+            .into_iter()
+            .flatten()
+            .any(|at| past(at, response_limit))
+        {
             overdue.push(id);
         }
         if c.close_deadline.is_some_and(|d| now >= d) {

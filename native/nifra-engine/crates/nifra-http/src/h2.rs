@@ -64,6 +64,8 @@ const STREAM_RECV_WINDOW_TARGET: u32 = 1024 * 1024;
 pub struct H2Config {
     pub max_concurrent_streams: u32,
     pub max_header_list_size: usize,
+    pub max_headers: usize,
+    pub max_uri_size: usize,
     pub max_body_size: usize,
     pub oversize_window: usize,
     pub max_rst_streams: u32,
@@ -76,6 +78,8 @@ impl Default for H2Config {
         Self {
             max_concurrent_streams: 128,
             max_header_list_size: 64 * 1024,
+            max_headers: 100,
+            max_uri_size: 0,
             max_body_size: 1_048_576,
             oversize_window: 1_048_576,
             max_rst_streams: 100,
@@ -1069,6 +1073,16 @@ impl H2Conn {
             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
         };
+        if self.cfg.max_uri_size > 0 && raw_target.len() > self.cfg.max_uri_size {
+            self.open_response_streams.insert(stream_id, ());
+            self.write_response(stream_id, 414, &[], None, write_buf);
+            return Ok(());
+        }
+        if self.cfg.max_headers > 0 && headers.len() > self.cfg.max_headers {
+            self.open_response_streams.insert(stream_id, ());
+            self.write_response(stream_id, 431, &[], None, write_buf);
+            return Ok(());
+        }
         if !has_host {
             if let Some(ref auth) = authority {
                 headers.push(("host".to_owned(), auth.clone()));

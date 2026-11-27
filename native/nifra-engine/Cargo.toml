@@ -20,6 +20,7 @@ arc-swap = "1"
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys"] }
 bytes = "1"
 fastwebsockets = "0.10"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 httparse = "1.9"
 itoa = "1"
 libc = "0.2"

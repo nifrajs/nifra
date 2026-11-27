@@ -10,7 +10,8 @@
  * can hold (plus `oversizeWindow`, for answering a body only a little over it); set it to the largest
  * body any route accepts.
  */
-import { existsSync } from "node:fs"
+import { createPrivateKey } from "node:crypto"
+import { existsSync, readFileSync } from "node:fs"
 import { Module } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -39,6 +40,7 @@ import {
   payloadCeiling,
   type ServeOptions,
   type TlsOptions,
+  type WsDeflateOptions,
 } from "./options.ts"
 
 type WsUpgrade = Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>
@@ -67,6 +69,7 @@ const MAX_NATIVE_LENGTH = 0xffff_ffff
 const DEFAULT_MAX_BODY_SIZE = 1_048_576
 const MAX_BUFFERED_RESPONSE_BYTES = 2 * 1024 * 1024
 const STREAM_CHUNK_BYTES = 256 * 1024
+const CHUNK_FRAMING_HEADROOM = 64
 const DEFAULT_OVERSIZE_WINDOW = 1_048_576
 const PAYLOAD_TOO_LARGE_BODY = '{"ok":false,"error":"payload_too_large"}'
 const WEBSOCKET_REFUSAL = '{"ok":false,"error":"websocket_unsupported"}'
@@ -96,7 +99,29 @@ interface RustTlsOptions {
   readonly key: string | undefined
   readonly certFileName: string | undefined
   readonly keyFileName: string | undefined
+  readonly ca: string | undefined
+  readonly caFileName: string | undefined
+  readonly crl: string | undefined
+  readonly crlFileName: string | undefined
+  readonly requestCert: boolean | undefined
+  readonly rejectUnauthorized: boolean | undefined
+  readonly minVersion: string | undefined
+  readonly maxVersion: string | undefined
+  readonly ciphers: string | undefined
+  readonly ciphersuites: string | undefined
+  readonly ecdhCurve: string | undefined
   readonly ticketKeys: Buffer | undefined
+}
+
+interface RustWsDeflateOptions {
+  serverNoContextTakeover?: boolean
+  clientNoContextTakeover?: boolean
+  serverMaxWindowBits?: number
+  clientMaxWindowBits?: number
+  threshold?: number
+  maxDecompressedSize?: number
+  level?: number
+  sharedCompressor?: boolean
 }
 
 interface RustUvServer {
@@ -159,11 +184,19 @@ interface RustAddon {
       readonly maxBodySize?: number
       readonly oversizeWindow?: number
       readonly maxHeaderBytes?: number | undefined
+      readonly maxHeaders?: number | undefined
+      readonly maxUriSize?: number | undefined
+      readonly maxPendingBytes?: number | undefined
       readonly idleTimeoutMs?: number | undefined
+      readonly responseTimeoutMs?: number | undefined
+      readonly responseBackpressureLimit?: number | undefined
+      readonly backlog?: number | undefined
       readonly maxConnections?: number | undefined
       readonly requestTimeoutMs?: number | undefined
       readonly headersTimeoutMs?: number | undefined
       readonly wsMaxMessageSize?: number | undefined
+      readonly wsMaxLifetimeMs?: number | undefined
+      readonly wsDeflate?: RustWsDeflateOptions | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
       readonly reusePort?: boolean | undefined
@@ -179,6 +212,22 @@ function pemToString(value: string | ArrayBuffer | Uint8Array | undefined): stri
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("utf8")
 }
 
+function pemBundleToString(
+  value:
+    | string
+    | ArrayBuffer
+    | Uint8Array
+    | readonly (string | ArrayBuffer | Uint8Array)[]
+    | undefined,
+): string | undefined {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) {
+    return value.map((item) => pemToString(item) ?? "").join("\n")
+  }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: narrowed non-array PEM union by Array.isArray
+  return pemToString(value as string | ArrayBuffer | Uint8Array)
+}
+
 function toTicketBuffer(value: string | ArrayBuffer | Uint8Array | undefined): Buffer | undefined {
   if (value === undefined) return undefined
   if (typeof value === "string") return Buffer.from(value)
@@ -187,17 +236,207 @@ function toTicketBuffer(value: string | ArrayBuffer | Uint8Array | undefined): B
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
 }
 
+function decryptKeyIfNeeded(
+  keyPem: string | undefined,
+  keyFileName: string | undefined,
+  passphrase: string | undefined,
+): { readonly key: string | undefined; readonly keyFileName: string | undefined } {
+  if (passphrase === undefined) return { key: keyPem, keyFileName }
+  if (typeof passphrase !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.passphrase` must be a string")
+  }
+  const sourcePem =
+    keyPem ?? (keyFileName === undefined ? undefined : readFileSync(keyFileName, "utf8"))
+  if (sourcePem === undefined) return { key: undefined, keyFileName }
+  const exported = createPrivateKey({
+    key: sourcePem,
+    format: "pem",
+    passphrase,
+  }).export({ format: "pem", type: "pkcs8" })
+  return { key: exported, keyFileName: undefined }
+}
+
 function toRustTls(tls: TlsOptions): RustTlsOptions {
+  if (tls.requestCert !== undefined && typeof tls.requestCert !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `tls.requestCert` must be a boolean")
+  }
+  if (tls.rejectUnauthorized !== undefined && typeof tls.rejectUnauthorized !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `tls.rejectUnauthorized` must be a boolean")
+  }
+  if (
+    tls.minVersion !== undefined &&
+    tls.minVersion !== "TLSv1.2" &&
+    tls.minVersion !== "TLSv1.3"
+  ) {
+    throw new TypeError('@nifrajs/node-engine: `tls.minVersion` must be "TLSv1.2" or "TLSv1.3"')
+  }
+  if (
+    tls.maxVersion !== undefined &&
+    tls.maxVersion !== "TLSv1.2" &&
+    tls.maxVersion !== "TLSv1.3"
+  ) {
+    throw new TypeError('@nifrajs/node-engine: `tls.maxVersion` must be "TLSv1.2" or "TLSv1.3"')
+  }
+  if (tls.ciphers !== undefined && typeof tls.ciphers !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ciphers` must be a string")
+  }
+  if (tls.ciphersuites !== undefined && typeof tls.ciphersuites !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ciphersuites` must be a string")
+  }
+  if (tls.ecdhCurve !== undefined && typeof tls.ecdhCurve !== "string") {
+    throw new TypeError("@nifrajs/node-engine: `tls.ecdhCurve` must be a string")
+  }
   const cert = pemToString(tls.cert)
-  const key = pemToString(tls.key)
+  const rawKey = pemToString(tls.key)
+  const { key, keyFileName } = decryptKeyIfNeeded(rawKey, tls.key_file_name, tls.passphrase)
+  const ca = pemBundleToString(tls.ca)
+  const crl = pemBundleToString(tls.crl)
   const ticketKeys = toTicketBuffer(tls.ticketKeys)
   return {
     cert,
     key,
     certFileName: tls.cert_file_name,
-    keyFileName: tls.key_file_name,
+    keyFileName,
+    ca,
+    caFileName: tls.ca_file_name,
+    crl,
+    crlFileName: tls.crl_file_name,
+    requestCert: tls.requestCert,
+    rejectUnauthorized: tls.rejectUnauthorized,
+    minVersion: tls.minVersion,
+    maxVersion: tls.maxVersion,
+    ciphers: tls.ciphers,
+    ciphersuites: tls.ciphersuites,
+    ecdhCurve: tls.ecdhCurve,
     ticketKeys,
   }
+}
+
+function toRustWsDeflate(
+  opt: boolean | WsDeflateOptions | undefined,
+): RustWsDeflateOptions | undefined {
+  if (opt === undefined || opt === false) return undefined
+  if (opt === true) return {}
+  if (typeof opt !== "object" || opt === null) {
+    throw new TypeError("@nifrajs/node-engine: `wsDeflate` must be a boolean or options object")
+  }
+  const out: RustWsDeflateOptions = {}
+  if (opt.serverNoContextTakeover !== undefined) {
+    if (typeof opt.serverNoContextTakeover !== "boolean") {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.serverNoContextTakeover` must be a boolean",
+      )
+    }
+    out.serverNoContextTakeover = opt.serverNoContextTakeover
+  }
+  if (opt.clientNoContextTakeover !== undefined) {
+    if (typeof opt.clientNoContextTakeover !== "boolean") {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.clientNoContextTakeover` must be a boolean",
+      )
+    }
+    out.clientNoContextTakeover = opt.clientNoContextTakeover
+  }
+  if (opt.serverMaxWindowBits !== undefined) {
+    if (
+      typeof opt.serverMaxWindowBits !== "number" ||
+      !Number.isInteger(opt.serverMaxWindowBits) ||
+      opt.serverMaxWindowBits < 9 ||
+      opt.serverMaxWindowBits > 15
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.serverMaxWindowBits` must be an integer 9..15",
+      )
+    }
+    out.serverMaxWindowBits = opt.serverMaxWindowBits
+  }
+  if (opt.clientMaxWindowBits !== undefined) {
+    if (
+      typeof opt.clientMaxWindowBits !== "number" ||
+      !Number.isInteger(opt.clientMaxWindowBits) ||
+      opt.clientMaxWindowBits < 8 ||
+      opt.clientMaxWindowBits > 15
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.clientMaxWindowBits` must be an integer 8..15",
+      )
+    }
+    out.clientMaxWindowBits = opt.clientMaxWindowBits
+  }
+  if (opt.threshold !== undefined) {
+    if (
+      typeof opt.threshold !== "number" ||
+      !Number.isSafeInteger(opt.threshold) ||
+      opt.threshold < 0 ||
+      opt.threshold > MAX_NATIVE_LENGTH
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.threshold` must be a non-negative integer below 2^32",
+      )
+    }
+    out.threshold = opt.threshold
+  }
+  if (opt.maxDecompressedSize !== undefined) {
+    if (!(isCap(opt.maxDecompressedSize) && opt.maxDecompressedSize <= MAX_NATIVE_LENGTH)) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `wsDeflate.maxDecompressedSize` must be a positive integer below 2^32",
+      )
+    }
+    out.maxDecompressedSize = opt.maxDecompressedSize
+  }
+  if (opt.level !== undefined) {
+    if (
+      typeof opt.level !== "number" ||
+      !Number.isInteger(opt.level) ||
+      opt.level < 1 ||
+      opt.level > 9
+    ) {
+      throw new TypeError("@nifrajs/node-engine: `wsDeflate.level` must be an integer 1..9")
+    }
+    out.level = opt.level
+  }
+  if (opt.sharedCompressor !== undefined) {
+    if (typeof opt.sharedCompressor !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `wsDeflate.sharedCompressor` must be a boolean")
+    }
+    out.sharedCompressor = opt.sharedCompressor
+  }
+  return out
+}
+
+function optionalPositiveCap(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (!(isCap(value) && value <= MAX_NATIVE_LENGTH)) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a positive integer below 2^32`,
+    )
+  }
+  return value
+}
+
+function optionalNonNegCap(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_NATIVE_LENGTH
+  ) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a non-negative integer below 2^32`,
+    )
+  }
+  return value
+}
+
+function optionalNonNegMs(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a non-negative finite number`,
+    )
+  }
+  return Math.min(Math.round(value), MAX_NATIVE_LENGTH)
 }
 
 let cachedAddon: RustAddon | undefined
@@ -288,6 +527,53 @@ function fixedHeaders(headers: readonly (readonly [string, string])[]): string[]
     if (!ownedHeader(name)) flat.push(name, value)
   }
   return flat
+}
+
+const checkedNames = new Set<string>()
+
+/**
+ * The header lines of a batched response, under the rules of `validateAndBuildFlatHeaders`.
+ * `undefined` when one cannot be written: the unbatched writer then refuses it and answers.
+ */
+function headerBlock(
+  headers: HeaderRecord | undefined,
+  cookies: readonly string[] | undefined,
+  defaultType: string | undefined,
+): string | undefined {
+  let block = ""
+  let typed = false
+  if (headers !== undefined) {
+    for (const name in headers) {
+      if (!Object.hasOwn(headers, name)) continue
+      if (!checkedNames.has(name)) {
+        if (!TOKEN.test(name)) return undefined
+        if (checkedNames.size >= 512) checkedNames.clear()
+        checkedNames.add(name)
+      }
+      const value = headers[name]
+      const skip = ownedHeader(name)
+      if (!skip && !typed && name.length === 12 && name.toLowerCase() === "content-type") {
+        typed = true
+      }
+      if (typeof value === "string") {
+        if (BAD_VALUE.test(value)) return undefined
+        if (!skip) block += `${name}: ${value}\r\n`
+      } else if (value !== undefined) {
+        for (const each of value) {
+          if (BAD_VALUE.test(each)) return undefined
+          if (!skip) block += `${name}: ${each}\r\n`
+        }
+      }
+    }
+  }
+  if (!typed && defaultType !== undefined) block += `content-type: ${defaultType}\r\n`
+  if (cookies !== undefined) {
+    for (const cookie of cookies) {
+      if (BAD_VALUE.test(cookie)) return undefined
+      block += `set-cookie: ${cookie}\r\n`
+    }
+  }
+  return block
 }
 
 const NO_BODY_BYTES = new Uint8Array(0)
@@ -621,6 +907,27 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     MAX_NATIVE_LENGTH,
   )
   const oversizeWindow = options.oversizeWindow ?? DEFAULT_OVERSIZE_WINDOW
+  const writeHighWaterMark = optionalPositiveCap(
+    "writeHighWaterMark",
+    options.engine?.writeHighWaterMark,
+  )
+  const responseBackpressureLimit = optionalPositiveCap(
+    "responseBackpressureLimit",
+    options.engine?.responseBackpressureLimit,
+  )
+  const nativeWriteBudget =
+    responseBackpressureLimit === undefined
+      ? MAX_NATIVE_LENGTH
+      : Math.max(
+          1,
+          responseBackpressureLimit -
+            Math.min(CHUNK_FRAMING_HEADROOM, Math.floor(responseBackpressureLimit / 2)),
+        )
+  const bufferedResponseLimit = Math.min(
+    writeHighWaterMark ?? MAX_BUFFERED_RESPONSE_BYTES,
+    nativeWriteBudget,
+  )
+  const streamChunkBytes = Math.min(STREAM_CHUNK_BYTES, bufferedResponseLimit)
 
   let uvServer: RustUvServer
   let bufs: RustBatchBuffers
@@ -728,11 +1035,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     let unblock: (() => void) | undefined
     source.onAbort = () => unblock?.()
     source.onWritable = () => unblock?.()
-    uvServer.writeHead(source.requestId, status, flat, len)
+    if (!uvServer.writeHead(source.requestId, status, flat, len)) return
     source.headWritten = true
 
-    for (let offset = 0; offset < len && !source.aborted; offset += STREAM_CHUNK_BYTES) {
-      const chunkLen = Math.min(STREAM_CHUNK_BYTES, len - offset)
+    for (let offset = 0; offset < len && !source.aborted; offset += streamChunkBytes) {
+      const chunkLen = Math.min(streamChunkBytes, len - offset)
       const buf = Buffer.from(bytes.buffer, bytes.byteOffset + offset, chunkLen)
       if (offset + chunkLen === len) {
         uvServer.end(source.requestId, buf)
@@ -786,7 +1093,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       else if (next.value.byteLength > 0) pending.push(next.value)
     }
 
-    if (finished && (pending[0]?.byteLength ?? 0) <= MAX_BUFFERED_RESPONSE_BYTES) {
+    if (finished && (pending[0]?.byteLength ?? 0) <= bufferedResponseLimit) {
       const [first] = pending
       const only =
         first === undefined ? null : pending.length === 1 ? first : Buffer.concat(pending)
@@ -800,7 +1107,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       void reader.cancel().catch(() => {})
       throw new RangeError(`Content-Length ${declared} is larger than the engine can frame`)
     }
-    uvServer.writeHead(source.requestId, status, flat, declared ?? null)
+    if (!uvServer.writeHead(source.requestId, status, flat, declared ?? null)) {
+      void reader.cancel().catch(() => {})
+      return
+    }
     source.headWritten = true
 
     let sent = 0
@@ -810,9 +1120,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       for (
         let offset = startOffset;
         offset < chunk.byteLength && !source.aborted;
-        offset += STREAM_CHUNK_BYTES
+        offset += streamChunkBytes
       ) {
-        const len = Math.min(STREAM_CHUNK_BYTES, chunk.byteLength - offset)
+        const len = Math.min(streamChunkBytes, chunk.byteLength - offset)
         const buf = Buffer.from(chunk.buffer, chunk.byteOffset + offset, len)
         sent += len
         if (declared !== undefined && sent === declared) {
@@ -882,7 +1192,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           cookies === undefined &&
           !isHead &&
           !isBodyless(status) &&
-          len <= MAX_BUFFERED_RESPONSE_BYTES &&
+          len <= bufferedResponseLimit &&
           (outcome.kind === "json" || defaultBodyType === "text/plain; charset=utf-8")
         ) {
           const buf =
@@ -902,7 +1212,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           body !== undefined &&
           !isHead &&
           !isBodyless(status) &&
-          len > MAX_BUFFERED_RESPONSE_BYTES
+          len > bufferedResponseLimit
         ) {
           const bytes = typeof body === "string" ? Buffer.from(body) : body
           pumpBuffer(source, status, headers, cookies, bytes, type, len).then(
@@ -1010,7 +1320,36 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     outMeta[ob + 1] = templateId
     outMeta[ob + 2] = outOff
     outMeta[ob + 3] = len
+    outMeta[ob + 4] = 0
     outOff += len
+    outCount += 1
+    return true
+  }
+
+  /** `queueSync` for a response with its own header lines; `block` is never empty. */
+  const queueBlock = (
+    reqId: number,
+    status: number,
+    block: string,
+    body: string | Uint8Array,
+  ): boolean => {
+    const bodyUnits = typeof body === "string" ? body.length * 3 : body.byteLength
+    const bound = block.length * 3 + bodyUnits
+    if ((outCount + 1) * outSlotU32s > outMeta.length || bound > maxOutBytes - outOff) {
+      flush()
+      if (bound > maxOutBytes) return false
+    }
+    const blockLen = outData.write(block, outOff, "utf8")
+    const bodyAt = outOff + blockLen
+    const len = typeof body === "string" ? outData.write(body, bodyAt, "utf8") : body.byteLength
+    if (typeof body !== "string") outData.set(body, bodyAt)
+    const ob = outCount * outSlotU32s
+    outMeta[ob] = reqId
+    outMeta[ob + 1] = status
+    outMeta[ob + 2] = outOff
+    outMeta[ob + 3] = len
+    outMeta[ob + 4] = blockLen
+    outOff = bodyAt + len
     outCount += 1
     return true
   }
@@ -1024,18 +1363,40 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     })
   }
 
+  const outcomeBodyBytes = (body: string | Uint8Array | null | undefined): number => {
+    if (body === null || body === undefined) return 0
+    if (typeof body === "string") {
+      return body.length * 3 <= bufferedResponseLimit ? body.length * 3 : Buffer.byteLength(body)
+    }
+    return body.byteLength
+  }
+
   /** Queues a plain json or text outcome into the out slab; `false` when it needs the full writer. */
   const queueOutcome = (reqId: number, outcome: NodeServeOutcome, isHead: boolean): boolean => {
     if (isHead || outcome.kind === "response") return false
-    if (outcome.headers !== undefined || isBodyless(outcome.status)) return false
-    if (outcome.kind === "json") {
-      return (
-        outcome.cookies === undefined &&
-        queueSync(reqId, jsonTemplate(outcome.status), outcome.body ?? "")
-      )
+    const { status, headers } = outcome
+    if (isBodyless(status)) return false
+    const cookies = outcome.kind === "json" ? outcome.cookies : undefined
+    const body = outcome.body ?? ""
+    if (outcomeBodyBytes(body) > bufferedResponseLimit) return false
+    if (headers === undefined && cookies === undefined) {
+      const template = outcome.kind === "json" ? jsonTemplate(status) : textTemplate(status)
+      return queueSync(reqId, template, body)
     }
-    return queueSync(reqId, textTemplate(outcome.status), outcome.body ?? "")
+    if (!Number.isInteger(status) || status < 100 || status > 999) return false
+    const type = outcome.kind === "json" ? JSON_CONTENT_TYPE : undefined
+    const block = headerBlock(headers, cookies, type)
+    // An empty block would read as a templated slot.
+    return block !== undefined && block !== "" && queueBlock(reqId, status, block, body)
   }
+
+  const defaultOutcomeContentType = (
+    outcome: NodeServeOutcome,
+    isHead: boolean,
+  ): string | undefined =>
+    outcome.kind === "body" && outcome.headers === undefined && !isHead
+      ? "text/plain; charset=utf-8"
+      : undefined
 
   const settleOutcome = (
     source: RustBatchSource,
@@ -1047,7 +1408,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       flushSoon()
       return
     }
-    writeComplexOutcome(source, outcome, isHead)
+    writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
   }
 
   const onBatch = (count: number): void => {
@@ -1183,11 +1544,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           source.release()
         } else {
           inflight.set(reqId, source)
-          const defaultType =
-            outcome.kind === "body" && outcome.headers === undefined && !isHead
-              ? "text/plain; charset=utf-8"
-              : undefined
-          writeComplexOutcome(source, outcome, isHead, defaultType)
+          writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
         }
       } catch (err) {
         report?.(err)
@@ -1367,29 +1724,54 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     typeof options.http2 === "object" && options.http2 !== null
       ? options.http2.maxConcurrentStreams
       : undefined
-  const idleTimeoutMs = nativeMs(options.engine?.idleTimeoutMs)
-  const requestTimeoutMs = nativeMs(options.engine?.requestTimeoutMs)
+  const idleTimeoutMs = optionalNonNegMs("idleTimeoutMs", options.engine?.idleTimeoutMs)
+  const responseTimeoutMs = optionalNonNegMs("responseTimeoutMs", options.engine?.responseTimeoutMs)
+  const requestTimeoutMs = optionalNonNegMs("requestTimeoutMs", options.engine?.requestTimeoutMs)
+  const wsMaxLifetimeMs = optionalNonNegMs("wsMaxLifetimeMs", options.engine?.wsMaxLifetimeMs)
+  const maxConnections = optionalNonNegCap("maxConnections", options.engine?.maxConnections)
   const headersTimeoutMs = nativeMs(options.engine?.headersTimeoutMs)
-  const rawHeaderBytes = options.engine?.maxHeaderBytes
   const maxHeaderBytes =
-    isCap(rawHeaderBytes) && rawHeaderBytes <= MAX_NATIVE_LENGTH ? rawHeaderBytes : undefined
-  const rawMax = options.engine?.maxConnections
-  const maxConnections =
-    typeof rawMax === "number" && Number.isInteger(rawMax) && rawMax > 0 ? rawMax : undefined
+    optionalPositiveCap("maxHeaderBytes", options.engine?.maxHeaderBytes) ??
+    optionalPositiveCap("maxHeadSize", options.engine?.maxHeadSize)
+  const maxHeaders = optionalPositiveCap("maxHeaders", options.engine?.maxHeaders)
+  const maxUriSize = optionalPositiveCap("maxUriSize", options.engine?.maxUriSize)
+  const maxPendingBytes = optionalPositiveCap("maxPendingBytes", options.engine?.maxPendingBytes)
+  const backlog =
+    options.engine?.backlog === undefined
+      ? undefined
+      : (() => {
+          const b = options.engine.backlog
+          if (!(isCap(b) && b <= 0x7fff_ffff)) {
+            throw new TypeError(
+              "@nifrajs/node-engine: `engine.backlog` must be a positive 32-bit integer",
+            )
+          }
+          return b
+        })()
+  const wsDeflate = toRustWsDeflate(options.wsDeflate)
+  const rustTls = currentTls === undefined ? undefined : toRustTls(currentTls)
   try {
     uvServer = addon.createUvServer(host, options.port, onBatch, {
       maxBodySize,
       oversizeWindow,
+      maxHeaders,
+      maxUriSize,
+      maxPendingBytes,
       idleTimeoutMs,
+      responseTimeoutMs,
+      responseBackpressureLimit,
+      backlog,
       maxConnections,
       requestTimeoutMs,
       headersTimeoutMs,
       maxHeaderBytes,
       reusePort: options.engine?.reusePort,
       wsMaxMessageSize: wsCap,
+      wsMaxLifetimeMs,
+      wsDeflate,
       http2: http2Enabled ? true : undefined,
       http2MaxConcurrentStreams: http2MaxStreams,
-      tls: currentTls === undefined ? undefined : toRustTls(currentTls),
+      tls: rustTls,
     })
   } catch (cause) {
     return Promise.reject(
@@ -1443,6 +1825,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   outMeta = bufs.outMeta
   outData = bufs.outData
   outSlotU32s = bufs.outSlotU32s
+  // A header slot needs the fifth field: an older addon would read its status as a template id.
+  if (outSlotU32s < 5) {
+    uvServer.close()
+    throw new TypeError(
+      "@nifrajs/node-engine: the native addon is older than this package, rebuild it",
+    )
+  }
   maxOutBytes = outData.byteLength
   tpl400 = textTemplate(400)
   tpl413 = jsonTemplate(413)

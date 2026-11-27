@@ -20,9 +20,9 @@ use crate::epoll::EpollServer;
 use crate::sys::{
     alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
     free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_nosigpipe_if_supported,
-    set_tcp_nodelay, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
-    UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
-    SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE, WS_PING_FRAME,
+    set_tcp_nodelay, uv_api, write_buf_limit, write_bytes_or_queue, ConnCore, ConnSlab,
+    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
+    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE, WS_PING_FRAME,
 };
 use crate::{ConnAction, SocketConfig};
 
@@ -77,10 +77,14 @@ pub trait UvCallbacks {
     fn probe_idle(&self, _conn_id: u32) -> bool {
         false
     }
+    fn is_websocket(&self, _conn_id: u32) -> bool {
+        false
+    }
     fn on_writable(&mut self, conn_id: u32);
     fn on_disconnect(&mut self, conn_id: u32);
 }
 
+#[derive(Clone)]
 enum ServerBackend {
     Uv(Rc<RefCell<UvPollState>>),
     #[cfg(target_os = "linux")]
@@ -88,6 +92,7 @@ enum ServerBackend {
 }
 
 /// Zero-hop HTTP/HTTPS server handle attached directly to Node.js's `uv_loop_t`.
+#[derive(Clone)]
 pub struct UvServer {
     backend: ServerBackend,
 }
@@ -293,6 +298,7 @@ struct UvPollState {
     dispatching: Option<u32>,
     deferred: Vec<u8>,
     deferred_close: bool,
+    deferred_bp: bool,
     callbacks: Option<Box<dyn UvCallbacks>>,
 }
 
@@ -338,6 +344,7 @@ impl UvPollState {
             dispatching: None,
             deferred: Vec::new(),
             deferred_close: false,
+            deferred_bp: false,
             callbacks: Some(callbacks),
         }));
 
@@ -466,11 +473,13 @@ impl UvPollState {
         if st.read_ended.contains(&conn_id) {
             st.turn_dirty = true;
         }
+        let max_write = write_buf_limit(st.cfg);
         if st.dispatching == Some(conn_id) {
             if let Some(conn) = st.conns.get(conn_id) {
                 let effective_close = close_after
                     || (close_if_read_ended && conn.core.read_ended && !conn.core.dispatching);
-                if st.deferred.len().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+                let next_len = st.deferred.len().saturating_add(bytes.len());
+                if next_len > max_write.max(MAX_WRITE_BUF_BYTES) {
                     if let Some(c) = st.conns.remove(conn_id) {
                         close_client_handle(uv, c.poll_handle);
                     }
@@ -478,6 +487,10 @@ impl UvPollState {
                 }
                 st.deferred.extend_from_slice(bytes);
                 st.deferred_close |= effective_close;
+                if next_len > (max_write / 2).max(1) {
+                    st.deferred_bp = true;
+                    return WriteResult::Backpressured;
+                }
                 return WriteResult::Written;
             }
         }
@@ -487,7 +500,7 @@ impl UvPollState {
         conn.core.last_activity = now;
         let effective_close =
             close_after || (close_if_read_ended && conn.core.read_ended && !conn.core.dispatching);
-        if conn.core.queued_bytes().saturating_add(bytes.len()) > MAX_WRITE_BUF_BYTES {
+        if conn.core.queued_bytes() >= max_write {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
             }
@@ -496,17 +509,17 @@ impl UvPollState {
         if effective_close {
             conn.core.close_after_write = true;
         }
-        let action = write_bytes_or_queue(&mut conn.core, bytes);
-        let armed = conn.core.writable_armed;
-        let poll_handle = conn.poll_handle;
-        let no_read = conn.core.read_ended || conn.core.read_paused;
-        apply_uv_flush_action(uv, poll_handle, no_read, action);
-        if action == FlushAction::Close {
+        let action = write_bytes_or_queue(&mut conn.core, bytes, max_write);
+        if action == FlushAction::Close || conn.core.queued_bytes() > max_write {
             if let Some(c) = st.conns.remove(conn_id) {
                 close_client_handle(uv, c.poll_handle);
             }
             return WriteResult::Closed;
         }
+        let armed = conn.core.writable_armed;
+        let poll_handle = conn.poll_handle;
+        let no_read = conn.core.read_ended || conn.core.read_paused;
+        apply_uv_flush_action(uv, poll_handle, no_read, action);
         if action == FlushAction::DisarmWritable {
             // A producer waiting for the queue to drain is woken at the turn's end.
             st.pending_writable.push(conn_id);
@@ -960,6 +973,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
         st.dispatching = None;
         let mut deferred = std::mem::take(&mut st.deferred);
         let deferred_close = std::mem::take(&mut st.deferred_close);
+        let deferred_bp = std::mem::take(&mut st.deferred_bp);
         if st.closed {
             return;
         }
@@ -974,6 +988,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
         };
         st.callbacks = cb;
         st.turn_dirty = true;
+        let max_write = write_buf_limit(st.cfg);
         if let Some(conn) = st.conns.get_mut(conn_id) {
             conn.core.dispatching = false;
             conn.core.linger |= matches!(action, ConnAction::Refuse { .. });
@@ -1037,8 +1052,8 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                 conn.core.read_buf = read_buf;
             }
             if !remove && !cleartext_write.is_empty() {
-                let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write);
-                if fa == FlushAction::Close || conn.core.queued_bytes() > MAX_WRITE_BUF_BYTES {
+                let fa = write_bytes_or_queue(&mut conn.core, &cleartext_write, max_write);
+                if fa == FlushAction::Close || conn.core.queued_bytes() > max_write {
                     remove = true;
                 } else if fa != FlushAction::None {
                     if fa == FlushAction::DisarmWritable {
@@ -1071,6 +1086,9 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                         fa,
                     );
                 }
+            }
+            if !remove && deferred_bp && !conn.core.writable_armed {
+                fire_writable = true;
             }
         }
         cleartext_write.clear();
@@ -1238,11 +1256,12 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
             st.callbacks.as_deref_mut(),
         )
     };
+    let max_write = write_buf_limit(st.cfg);
     let mut close = sweep.close;
     for id in sweep.ping {
         if let Some(conn) = st.conns.get_mut(id) {
             conn.core.last_activity = now;
-            let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME);
+            let fa = write_bytes_or_queue(&mut conn.core, &WS_PING_FRAME, max_write);
             if fa == FlushAction::Close {
                 close.push(id);
             } else {

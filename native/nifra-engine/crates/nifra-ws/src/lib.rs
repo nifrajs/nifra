@@ -2,8 +2,11 @@
 //! per-route payload cap enforcement, and peer close-reason propagation.
 
 pub use fastwebsockets::{Frame, OpCode, Payload};
+pub use flate2::Compress;
+use flate2::{Compression, Decompress, FlushCompress, FlushDecompress, Status};
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const DEFLATE_TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
 pub const OPCODE_CONT: u8 = 0x0;
 pub const OPCODE_TEXT: u8 = 0x1;
@@ -12,10 +15,55 @@ pub const OPCODE_CLOSE: u8 = 0x8;
 pub const OPCODE_PING: u8 = 0x9;
 pub const OPCODE_PONG: u8 = 0xA;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WsDeflateConfig {
+    pub enabled: bool,
+    pub server_no_context_takeover: bool,
+    pub client_no_context_takeover: bool,
+    pub server_max_window_bits: u8,
+    pub client_max_window_bits: u8,
+    pub threshold: usize,
+    /// Hard upper bound on inflated message bytes (protection against zip bombs). `0` inherits
+    /// `max_message_size`.
+    pub max_decompressed_size: usize,
+    pub level: u8,
+    pub shared_compressor: bool,
+}
+
+impl Default for WsDeflateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_no_context_takeover: false,
+            client_no_context_takeover: false,
+            server_max_window_bits: 15,
+            client_max_window_bits: 15,
+            threshold: 0,
+            max_decompressed_size: 0,
+            level: 6,
+            shared_compressor: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NegotiatedDeflate {
+    pub header_value: String,
+    pub server_no_context_takeover: bool,
+    pub client_no_context_takeover: bool,
+    pub server_max_window_bits: u8,
+    pub client_max_window_bits: u8,
+    pub threshold: usize,
+    pub max_decompressed_size: usize,
+    pub level: u8,
+    pub shared_compressor: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WsConfig {
     pub max_message_size: usize,
     pub backpressure_limit: usize,
+    pub deflate: WsDeflateConfig,
 }
 
 impl Default for WsConfig {
@@ -23,6 +71,7 @@ impl Default for WsConfig {
         Self {
             max_message_size: 16 * 1024 * 1024,
             backpressure_limit: 1024 * 1024,
+            deflate: WsDeflateConfig::default(),
         }
     }
 }
@@ -134,18 +183,177 @@ pub fn compute_accept_key(key: &str) -> String {
     base64_encode(&digest)
 }
 
-/// Write an HTTP/1.1 `101 Switching Protocols` WebSocket handshake response.
-pub fn write_upgrade_response(accept_key: &str, out: &mut Vec<u8>) {
+/// Write an HTTP/1.1 `101 Switching Protocols` WebSocket handshake response with optional
+/// `Sec-WebSocket-Extensions`.
+pub fn write_upgrade_response_with_extensions(
+    accept_key: &str,
+    extensions: Option<&str>,
+    out: &mut Vec<u8>,
+) {
     out.extend_from_slice(
         b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ",
     );
     out.extend_from_slice(accept_key.as_bytes());
+    if let Some(ext) = extensions {
+        out.extend_from_slice(b"\r\nSec-WebSocket-Extensions: ");
+        out.extend_from_slice(ext.as_bytes());
+    }
     out.extend_from_slice(b"\r\n\r\n");
 }
 
-/// Write an unmasked server-to-client RFC 6455 frame.
-pub fn write_server_frame(opcode: u8, payload: &[u8], out: &mut Vec<u8>) {
-    out.push(0x80 | (opcode & 0x0F));
+/// Write an HTTP/1.1 `101 Switching Protocols` WebSocket handshake response.
+pub fn write_upgrade_response(accept_key: &str, out: &mut Vec<u8>) {
+    write_upgrade_response_with_extensions(accept_key, None, out);
+}
+
+fn parse_window_bits(raw: &str) -> Option<u8> {
+    let trimmed = raw.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    let val: u8 = unquoted.parse().ok()?;
+    (8..=15).contains(&val).then_some(val)
+}
+
+/// Negotiate an RFC 7692 `permessage-deflate` offer from `Sec-WebSocket-Extensions`.
+pub fn negotiate_permessage_deflate(
+    header: Option<&str>,
+    cfg: WsDeflateConfig,
+) -> Option<NegotiatedDeflate> {
+    if !cfg.enabled {
+        return None;
+    }
+    let header = header?;
+    // Raw deflate in zlib/flate2 cannot compress with an 8-bit (256-byte) window; floor to 9.
+    let cfg_server_bits = cfg.server_max_window_bits.clamp(9, 15);
+    let cfg_client_bits = cfg.client_max_window_bits.clamp(8, 15);
+
+    for offer in header.split(',') {
+        let mut parts = offer.split(';').map(str::trim).filter(|s| !s.is_empty());
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("permessage-deflate") {
+            continue;
+        }
+
+        let mut seen_snc = false;
+        let mut seen_cnc = false;
+        let mut seen_smwb = false;
+        let mut seen_cmwb = false;
+        let mut req_smwb: Option<u8> = None;
+        let mut req_cmwb: Option<Option<u8>> = None;
+        let mut valid = true;
+
+        for param in parts {
+            let (k, v) = match param.split_once('=') {
+                Some((k, v)) => (k.trim(), Some(v.trim())),
+                None => (param, None),
+            };
+            if k.eq_ignore_ascii_case("server_no_context_takeover") {
+                if seen_snc || v.is_some() {
+                    valid = false;
+                    break;
+                }
+                seen_snc = true;
+            } else if k.eq_ignore_ascii_case("client_no_context_takeover") {
+                if seen_cnc || v.is_some() {
+                    valid = false;
+                    break;
+                }
+                seen_cnc = true;
+            } else if k.eq_ignore_ascii_case("server_max_window_bits") {
+                if seen_smwb {
+                    valid = false;
+                    break;
+                }
+                let Some(bits) = v.and_then(parse_window_bits) else {
+                    valid = false;
+                    break;
+                };
+                seen_smwb = true;
+                req_smwb = Some(bits);
+            } else if k.eq_ignore_ascii_case("client_max_window_bits") {
+                if seen_cmwb {
+                    valid = false;
+                    break;
+                }
+                seen_cmwb = true;
+                match v {
+                    None => req_cmwb = Some(None),
+                    Some(raw) => {
+                        let Some(bits) = parse_window_bits(raw) else {
+                            valid = false;
+                            break;
+                        };
+                        req_cmwb = Some(Some(bits));
+                    }
+                }
+            } else {
+                valid = false;
+                break;
+            }
+        }
+        if !valid {
+            continue;
+        }
+
+        // RFC 7692 §7.1.2.2: server cannot limit client window bits below 15 unless the client
+        // explicitly included `client_max_window_bits` in its offer.
+        let client_bits = match req_cmwb {
+            None => {
+                if cfg_client_bits < 15 {
+                    continue;
+                }
+                15
+            }
+            Some(None) => cfg_client_bits,
+            Some(Some(bits)) => cfg_client_bits.min(bits),
+        };
+        let server_bits = match req_smwb {
+            // The server cannot honor a 256-byte compression window with raw deflate; decline.
+            Some(bits) if bits < 9 => continue,
+            Some(bits) => cfg_server_bits.min(bits),
+            None => cfg_server_bits,
+        };
+        let snc = seen_snc || cfg.server_no_context_takeover || cfg.shared_compressor;
+        let cnc = seen_cnc || cfg.client_no_context_takeover;
+
+        let mut header_value = String::from("permessage-deflate");
+        if snc {
+            header_value.push_str("; server_no_context_takeover");
+        }
+        if cnc {
+            header_value.push_str("; client_no_context_takeover");
+        }
+        if server_bits < 15 || req_smwb.is_some() {
+            header_value.push_str(&format!("; server_max_window_bits={server_bits}"));
+        }
+        if matches!(req_cmwb, Some(Some(_))) || (matches!(req_cmwb, Some(None)) && client_bits < 15)
+        {
+            header_value.push_str(&format!("; client_max_window_bits={client_bits}"));
+        }
+
+        return Some(NegotiatedDeflate {
+            header_value,
+            server_no_context_takeover: snc,
+            client_no_context_takeover: cnc,
+            server_max_window_bits: server_bits,
+            client_max_window_bits: client_bits,
+            threshold: cfg.threshold,
+            max_decompressed_size: cfg.max_decompressed_size,
+            level: cfg.level.clamp(1, 9),
+            shared_compressor: cfg.shared_compressor,
+        });
+    }
+    None
+}
+
+/// Write an unmasked server-to-client RFC 6455 frame with optional RSV1 bit (`permessage-deflate`).
+pub fn write_server_frame_rsv(opcode: u8, rsv1: bool, payload: &[u8], out: &mut Vec<u8>) {
+    let rsv_bit = if rsv1 { 0x40 } else { 0 };
+    out.push(0x80 | rsv_bit | (opcode & 0x0F));
     let len = payload.len();
     if len < 126 {
         out.push(len as u8);
@@ -157,6 +365,11 @@ pub fn write_server_frame(opcode: u8, payload: &[u8], out: &mut Vec<u8>) {
         out.extend_from_slice(&(len as u64).to_be_bytes());
     }
     out.extend_from_slice(payload);
+}
+
+/// Write an unmasked server-to-client RFC 6455 frame.
+pub fn write_server_frame(opcode: u8, payload: &[u8], out: &mut Vec<u8>) {
+    write_server_frame_rsv(opcode, false, payload, out);
 }
 
 /// Write an unmasked server-to-client RFC 6455 Close frame with `(code, reason)`.
@@ -187,31 +400,286 @@ pub struct WsFeedResult {
     pub close_after_write: bool,
 }
 
+pub struct WsDeflateState {
+    compress: Option<Compress>,
+    decompress: Decompress,
+    server_max_window_bits: u8,
+    server_no_context_takeover: bool,
+    client_no_context_takeover: bool,
+    threshold: usize,
+    max_decompressed_size: usize,
+    shared_compressor: bool,
+}
+
+impl std::fmt::Debug for WsDeflateState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WsDeflateState")
+            .field("server_max_window_bits", &self.server_max_window_bits)
+            .field(
+                "server_no_context_takeover",
+                &self.server_no_context_takeover,
+            )
+            .field(
+                "client_no_context_takeover",
+                &self.client_no_context_takeover,
+            )
+            .field("threshold", &self.threshold)
+            .field("max_decompressed_size", &self.max_decompressed_size)
+            .field("shared_compressor", &self.shared_compressor)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Pool of shared stateless raw-deflate compressors keyed by negotiated `server_max_window_bits`
+/// (`9..=15`) so connections lowering the window never receive back-references past their limit.
+pub struct SharedCompressorPool {
+    level: u8,
+    slots: [Option<Compress>; 7],
+}
+
+impl SharedCompressorPool {
+    pub fn new(level: u8) -> Self {
+        Self {
+            level: level.clamp(1, 9),
+            slots: std::array::from_fn(|_| None),
+        }
+    }
+
+    pub fn get_mut(&mut self, window_bits: u8) -> &mut Compress {
+        let bits = window_bits.clamp(9, 15);
+        let idx = usize::from(bits - 9);
+        self.slots[idx].get_or_insert_with(|| new_shared_compressor(self.level, bits))
+    }
+}
+
+/// Create a raw-deflate compressor configured for shared stateless PMCE reuse (`window_bits` 9..=15).
+pub fn new_shared_compressor(level: u8, window_bits: u8) -> Compress {
+    Compress::new_with_window_bits(
+        Compression::new(u32::from(level.clamp(1, 9))),
+        false,
+        window_bits.clamp(9, 15),
+    )
+}
+
+/// Compress `payload` with RFC 7692 `Z_SYNC_FLUSH`, removing the trailing `0x00 0x00 0xff 0xff`.
+pub fn compress_deflate_payload(compress: &mut Compress, payload: &[u8], out: &mut Vec<u8>) {
+    let mut off = 0usize;
+    let mut tmp = [0u8; 4096];
+    let start_len = out.len();
+    loop {
+        let before_in = compress.total_in();
+        let before_out = compress.total_out();
+        let status = compress.compress(&payload[off..], &mut tmp, FlushCompress::Sync);
+        let in_delta = (compress.total_in() - before_in) as usize;
+        let out_delta = (compress.total_out() - before_out) as usize;
+        off += in_delta;
+        if out_delta > 0 {
+            out.extend_from_slice(&tmp[..out_delta]);
+        }
+        match status {
+            Ok(Status::Ok) | Ok(Status::BufError) => {
+                if off >= payload.len() && out_delta < tmp.len() {
+                    break;
+                }
+                if in_delta == 0 && out_delta == 0 {
+                    break;
+                }
+            }
+            Ok(Status::StreamEnd) | Err(_) => break,
+        }
+    }
+    let written = out.len() - start_len;
+    if written >= 4 && out[out.len() - 4..] == DEFLATE_TAIL {
+        out.truncate(out.len() - 4);
+    }
+    if out.len() == start_len {
+        // After a completed Sync flush under context takeover, an empty slice yields no new
+        // output bytes; emit the RFC 7692 empty stored-block header so RSV1 frames stay aligned.
+        out.push(0x00);
+    }
+}
+
+/// Charged per mid-message `BFINAL=1` restart on top of the history it copies back, so restarts
+/// that add no output are bounded too.
+const DEFLATE_RESTART_COST: usize = 1024;
+const DEFLATE_MIN_RESTART_BUDGET: usize = 1024 * 1024;
+
+fn decompress_deflate_payload(
+    decompress: &mut Decompress,
+    payload: &[u8],
+    max_out: usize,
+) -> Result<Vec<u8>, u16> {
+    let mut out = Vec::with_capacity(payload.len().saturating_mul(2).min(max_out).min(64 * 1024));
+    let mut tmp = [0u8; 8192];
+    let mut stream_ended = false;
+    // Without a budget a few wire bytes per block buy a 32 KiB history copy on the event loop.
+    let mut restart_budget = max_out.max(DEFLATE_MIN_RESTART_BUDGET);
+
+    for &(seg, flush) in &[
+        (payload, FlushDecompress::None),
+        (&DEFLATE_TAIL[..], FlushDecompress::Sync),
+    ] {
+        let mut off = 0usize;
+        loop {
+            let before_in = decompress.total_in();
+            let before_out = decompress.total_out();
+            let avail = max_out.saturating_sub(out.len());
+            // Leave room for at least 1 byte so output exceeding `max_out` is caught before OOM.
+            let slice_cap = if avail == 0 { 1 } else { avail.min(tmp.len()) };
+            let status = decompress
+                .decompress(&seg[off..], &mut tmp[..slice_cap], flush)
+                .map_err(|_| 1002u16)?;
+            let in_delta = (decompress.total_in() - before_in) as usize;
+            let out_delta = (decompress.total_out() - before_out) as usize;
+            off += in_delta;
+
+            if out.len().saturating_add(out_delta) > max_out {
+                return Err(1009);
+            }
+            if out_delta > 0 {
+                out.extend_from_slice(&tmp[..out_delta]);
+            }
+            match status {
+                Status::StreamEnd => {
+                    if off < seg.len() {
+                        // RFC 7692 §7.2.2 permits another DEFLATE block after an internal BFINAL=1
+                        // block; preserve up to 32 KiB of decoded history as its raw dictionary.
+                        let dict_start = out.len().saturating_sub(32 * 1024);
+                        restart_budget = restart_budget
+                            .checked_sub(out.len() - dict_start + DEFLATE_RESTART_COST)
+                            .ok_or(1009u16)?;
+                        decompress.reset(false);
+                        if !out.is_empty() {
+                            decompress
+                                .set_dictionary(&out[dict_start..])
+                                .map_err(|_| 1002u16)?;
+                        }
+                        stream_ended = false;
+                        continue;
+                    }
+                    stream_ended = true;
+                    break;
+                }
+                Status::Ok | Status::BufError => {
+                    if off >= seg.len() && out_delta < slice_cap {
+                        break;
+                    }
+                    if in_delta == 0 && out_delta == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        if stream_ended {
+            break;
+        }
+    }
+    if stream_ended {
+        decompress.reset(false);
+    }
+    Ok(out)
+}
+
 /// Sans-I/O RFC 6455 server-side WebSocket connection state machine.
 #[derive(Debug)]
 pub struct WsConn {
     max_message_size: usize,
     frag_opcode: Option<u8>,
+    frag_compressed: bool,
     frag_buf: Vec<u8>,
+    deflate: Option<WsDeflateState>,
     close_sent: bool,
     closed: bool,
 }
 
 impl WsConn {
     pub fn new(max_message_size: usize) -> Self {
+        Self::with_deflate(max_message_size, None)
+    }
+
+    pub fn with_deflate(max_message_size: usize, negotiated: Option<&NegotiatedDeflate>) -> Self {
+        let deflate = negotiated.map(|n| {
+            let server_bits = n.server_max_window_bits.clamp(9, 15);
+            WsDeflateState {
+                compress: if n.shared_compressor {
+                    None
+                } else {
+                    Some(Compress::new_with_window_bits(
+                        Compression::new(u32::from(n.level)),
+                        false,
+                        server_bits,
+                    ))
+                },
+                decompress: Decompress::new_with_window_bits(
+                    false,
+                    n.client_max_window_bits.clamp(9, 15),
+                ),
+                server_max_window_bits: server_bits,
+                server_no_context_takeover: n.server_no_context_takeover,
+                client_no_context_takeover: n.client_no_context_takeover,
+                threshold: n.threshold,
+                max_decompressed_size: if n.max_decompressed_size > 0 {
+                    n.max_decompressed_size.min(max_message_size)
+                } else {
+                    max_message_size
+                },
+                shared_compressor: n.shared_compressor,
+            }
+        });
         Self {
             max_message_size,
             frag_opcode: None,
+            frag_compressed: false,
             frag_buf: Vec::new(),
+            deflate,
             close_sent: false,
             closed: false,
         }
+    }
+
+    /// Negotiated `server_max_window_bits` (`9..=15`) when `shared_compressor` is active.
+    pub fn deflate_server_window_bits(&self) -> Option<u8> {
+        self.deflate
+            .as_ref()
+            .filter(|d| d.shared_compressor)
+            .map(|d| d.server_max_window_bits)
+    }
+
+    /// Encode an outgoing text/binary message, applying RFC 7692 compression when negotiated and
+    /// above `threshold`. Pass `shared_compress` when `shared_compressor: true` is active.
+    pub fn encode_server_message(
+        &mut self,
+        opcode: u8,
+        payload: &[u8],
+        shared_compress: Option<&mut Compress>,
+        out: &mut Vec<u8>,
+    ) {
+        if let Some(ref mut d) = self.deflate {
+            if !payload.is_empty() && payload.len() >= d.threshold {
+                let comp_opt = if d.shared_compressor {
+                    shared_compress
+                } else {
+                    d.compress.as_mut()
+                };
+                if let Some(comp) = comp_opt {
+                    let mut compressed = Vec::with_capacity(payload.len().min(4096) + 16);
+                    compress_deflate_payload(comp, payload, &mut compressed);
+                    if d.server_no_context_takeover || d.shared_compressor {
+                        comp.reset();
+                    }
+                    write_server_frame_rsv(opcode, true, &compressed, out);
+                    return;
+                }
+            }
+        }
+        write_server_frame_rsv(opcode, false, payload, out);
     }
 
     pub fn mark_close_sent(&mut self) {
         self.close_sent = true;
         // A half-received message is never delivered, and must not count against later frames.
         self.frag_opcode = None;
+        self.frag_compressed = false;
         self.frag_buf = Vec::new();
     }
 
@@ -246,14 +714,22 @@ impl WsConn {
             let opcode = b0 & 0x0F;
             let masked = (b1 & 0x80) != 0;
             let len7 = (b1 & 0x7F) as usize;
+            let is_control = (opcode & 0x08) != 0;
 
-            // RFC 6455 §5.2: RSV bits must be 0 without extensions; client frames MUST be masked.
-            if rsv != 0 || !masked {
+            let rsv1 = (rsv & 0x40) != 0;
+            let bad_rsv = if is_control || self.deflate.is_none() || opcode == OPCODE_CONT {
+                rsv != 0
+            } else {
+                (rsv & 0x30) != 0
+            };
+
+            // RFC 6455 §5.2 & RFC 7692 §6: reserved bits must be 0 except RSV1 on first data frame
+            // when `permessage-deflate` was negotiated; client frames MUST be masked.
+            if bad_rsv || !masked {
                 self.fail_protocol(1002, "protocol error", write_buf, &mut res, buf.len());
                 return res;
             }
 
-            let is_control = (opcode & 0x08) != 0;
             if is_control && (!fin || len7 > 125) {
                 self.fail_protocol(1002, "protocol error", write_buf, &mut res, buf.len());
                 return res;
@@ -359,11 +835,12 @@ impl WsConn {
                         return res;
                     }
                     if fin {
-                        if !self.emit_message(opcode, payload, write_buf, &mut res, pos) {
+                        if !self.emit_message(opcode, rsv1, payload, write_buf, &mut res, pos) {
                             return res;
                         }
                     } else {
                         self.frag_opcode = Some(opcode);
+                        self.frag_compressed = rsv1;
                         self.frag_buf = payload;
                     }
                 }
@@ -375,9 +852,11 @@ impl WsConn {
                     self.frag_buf.extend_from_slice(&payload);
                     if fin {
                         let op = orig_op;
+                        let compressed = self.frag_compressed;
                         self.frag_opcode = None;
+                        self.frag_compressed = false;
                         let full = std::mem::take(&mut self.frag_buf);
-                        if !self.emit_message(op, full, write_buf, &mut res, pos) {
+                        if !self.emit_message(op, compressed, full, write_buf, &mut res, pos) {
                             return res;
                         }
                     }
@@ -396,11 +875,40 @@ impl WsConn {
     fn emit_message(
         &mut self,
         opcode: u8,
-        payload: Vec<u8>,
+        compressed: bool,
+        mut payload: Vec<u8>,
         write_buf: &mut Vec<u8>,
         res: &mut WsFeedResult,
         consumed: usize,
     ) -> bool {
+        if compressed {
+            let Some(ref mut d) = self.deflate else {
+                self.fail_protocol(1002, "protocol error", write_buf, res, consumed);
+                return false;
+            };
+            match decompress_deflate_payload(&mut d.decompress, &payload, d.max_decompressed_size) {
+                Ok(inflated) => {
+                    if d.client_no_context_takeover {
+                        d.decompress.reset(false);
+                    }
+                    payload = inflated;
+                }
+                Err(1009) => {
+                    self.fail_protocol(1009, "message too large", write_buf, res, consumed);
+                    return false;
+                }
+                Err(code) => {
+                    self.fail_protocol(
+                        code,
+                        "invalid compressed payload",
+                        write_buf,
+                        res,
+                        consumed,
+                    );
+                    return false;
+                }
+            }
+        }
         if opcode == OPCODE_TEXT {
             match String::from_utf8(payload) {
                 Ok(text) => {
@@ -788,5 +1296,262 @@ mod tests {
         );
         assert_eq!(out[0], 0x80 | OPCODE_CLOSE);
         assert_eq!(u16::from_be_bytes([out[2], out[3]]), 1009);
+    }
+
+    #[test]
+    fn negotiates_and_roundtrips_permessage_deflate() {
+        let cfg = WsDeflateConfig {
+            enabled: true,
+            server_no_context_takeover: true,
+            client_no_context_takeover: true,
+            server_max_window_bits: 12,
+            client_max_window_bits: 12,
+            threshold: 0,
+            max_decompressed_size: 4096,
+            level: 6,
+            shared_compressor: false,
+        };
+        let negotiated =
+            negotiate_permessage_deflate(Some("permessage-deflate; client_max_window_bits"), cfg)
+                .expect("negotiated");
+        assert!(negotiated
+            .header_value
+            .contains("server_no_context_takeover"));
+        assert!(negotiated
+            .header_value
+            .contains("server_max_window_bits=12"));
+        assert!(negotiated
+            .header_value
+            .contains("client_max_window_bits=12"));
+
+        // RFC 7692 §7.1.2.2: cannot force client window bits < 15 if client omitted the param.
+        assert!(negotiate_permessage_deflate(Some("permessage-deflate"), cfg).is_none());
+
+        // Compress with raw deflate + strip 00 00 ff ff, send masked client frame with RSV1=1.
+        let mut comp = Compress::new_with_window_bits(Compression::default(), false, 12);
+        let msg = b"hello permessage-deflate ".repeat(32);
+        let mut compressed = Vec::new();
+        compress_deflate_payload(&mut comp, &msg, &mut compressed);
+        let mut frame = make_client_frame(true, OPCODE_TEXT, &compressed, [7, 8, 9, 10]);
+        frame[0] |= 0x40; // set RSV1
+
+        let mut server_ws = WsConn::with_deflate(4096, Some(&negotiated));
+        let mut out = Vec::new();
+        let res = server_ws.feed(&frame, &mut out);
+        assert_eq!(res.consumed, frame.len());
+        assert_eq!(
+            res.events,
+            vec![WsEvent::Text(String::from_utf8(msg.clone()).unwrap())]
+        );
+
+        // Shared compressor mode forces server_no_context_takeover and resets state.
+        let mut shared_cfg = cfg;
+        shared_cfg.shared_compressor = true;
+        shared_cfg.client_max_window_bits = 15;
+        let shared_neg = negotiate_permessage_deflate(Some("permessage-deflate"), shared_cfg)
+            .expect("shared negotiated");
+        let mut shared_comp =
+            new_shared_compressor(shared_neg.level, shared_neg.server_max_window_bits);
+        let mut ws2 = WsConn::with_deflate(4096, Some(&shared_neg));
+        let mut encoded = Vec::new();
+        ws2.encode_server_message(OPCODE_BINARY, &msg, Some(&mut shared_comp), &mut encoded);
+        assert_ne!(encoded[0] & 0x40, 0);
+        assert!(encoded.len() < msg.len());
+    }
+
+    #[test]
+    fn permessage_deflate_rejects_zip_bomb_and_invalid_rsv1() {
+        let cfg = WsDeflateConfig {
+            enabled: true,
+            max_decompressed_size: 64,
+            ..WsDeflateConfig::default()
+        };
+        let negotiated =
+            negotiate_permessage_deflate(Some("permessage-deflate"), cfg).expect("negotiated");
+
+        // Tiny compressed wire payload expands cleanly past 64 bytes -> 1009 before allocation.
+        let mut comp = Compress::new_with_window_bits(Compression::best(), false, 15);
+        let bomb_plain = vec![b'A'; 4096];
+        let mut compressed = Vec::new();
+        compress_deflate_payload(&mut comp, &bomb_plain, &mut compressed);
+        assert!(compressed.len() < 64);
+
+        let mut frame = make_client_frame(true, OPCODE_TEXT, &compressed, [1, 2, 3, 4]);
+        frame[0] |= 0x40;
+        let mut ws = WsConn::with_deflate(1024, Some(&negotiated));
+        let mut out = Vec::new();
+        let res = ws.feed(&frame, &mut out);
+        assert!(res.close_after_write);
+        assert_eq!(
+            res.events,
+            vec![WsEvent::Close {
+                code: 1009,
+                reason: "message too large".to_owned(),
+            }]
+        );
+
+        // RSV1 on continuation frame is forbidden by RFC 7692 §6 -> 1002.
+        let mut ws2 = WsConn::with_deflate(1024, Some(&negotiated));
+        let mut wire = make_client_frame(false, OPCODE_TEXT, b"hi", [1, 2, 3, 4]);
+        let mut cont = make_client_frame(true, OPCODE_CONT, b"!", [5, 6, 7, 8]);
+        cont[0] |= 0x40;
+        wire.extend(cont);
+        let mut out2 = Vec::new();
+        let res2 = ws2.feed(&wire, &mut out2);
+        assert!(res2.close_after_write);
+        assert_eq!(
+            res2.events,
+            vec![WsEvent::Close {
+                code: 1002,
+                reason: "protocol error".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn declines_eight_bit_server_window_and_caps_inflation_by_max_message_size() {
+        let mut cfg = WsDeflateConfig {
+            enabled: true,
+            server_max_window_bits: 8,
+            max_decompressed_size: 4096,
+            ..WsDeflateConfig::default()
+        };
+        let negotiated = negotiate_permessage_deflate(Some("permessage-deflate"), cfg).unwrap();
+        assert_eq!(negotiated.server_max_window_bits, 9);
+        assert!(negotiated.header_value.contains("server_max_window_bits=9"));
+
+        cfg.server_max_window_bits = 15;
+        assert!(negotiate_permessage_deflate(
+            Some("permessage-deflate; server_max_window_bits=8"),
+            cfg
+        )
+        .is_none());
+
+        // `max_message_size` = 128 must still block a 256-byte inflation even when
+        // `max_decompressed_size` = 4096.
+        let mut comp = Compress::new_with_window_bits(Compression::best(), false, 15);
+        let mut compressed = Vec::new();
+        compress_deflate_payload(&mut comp, &[b'B'; 256], &mut compressed);
+        assert!(compressed.len() < 128);
+        let mut frame = make_client_frame(true, OPCODE_BINARY, &compressed, [1, 2, 3, 4]);
+        frame[0] |= 0x40;
+        let offer = negotiate_permessage_deflate(Some("permessage-deflate"), cfg).unwrap();
+        let mut ws = WsConn::with_deflate(128, Some(&offer));
+        let mut out = Vec::new();
+        let res = ws.feed(&frame, &mut out);
+        assert!(res.close_after_write);
+        assert_eq!(
+            res.events,
+            vec![WsEvent::Close {
+                code: 1009,
+                reason: "message too large".to_owned(),
+            }]
+        );
+
+        let mut pool = SharedCompressorPool::new(6);
+        let _ = pool.get_mut(10);
+        let _ = pool.get_mut(15);
+    }
+
+    #[test]
+    fn compresses_empty_message_without_desynchronizing_context_takeover() {
+        let cfg = WsDeflateConfig {
+            enabled: true,
+            server_no_context_takeover: false,
+            client_no_context_takeover: false,
+            threshold: 0,
+            shared_compressor: false,
+            ..WsDeflateConfig::default()
+        };
+        let negotiated =
+            negotiate_permessage_deflate(Some("permessage-deflate"), cfg).expect("negotiated");
+
+        // Encode Hello, "", Hello via `encode_server_message`: empty frame skips compression
+        // (`RSV1=0`) so context takeover stays valid across subsequent messages.
+        let mut server = WsConn::with_deflate(4096, Some(&negotiated));
+        let mut frame1 = Vec::new();
+        let mut frame2 = Vec::new();
+        let mut frame3 = Vec::new();
+        server.encode_server_message(OPCODE_TEXT, b"Hello", None, &mut frame1);
+        server.encode_server_message(OPCODE_TEXT, b"", None, &mut frame2);
+        server.encode_server_message(OPCODE_TEXT, b"Hello", None, &mut frame3);
+        assert_ne!(frame1[0] & 0x40, 0);
+        assert_eq!(frame2, vec![0x81, 0x00]);
+        assert_ne!(frame3[0] & 0x40, 0);
+
+        let mut client_decomp = Decompress::new_with_window_bits(false, 15);
+        assert_eq!(
+            decompress_deflate_payload(&mut client_decomp, &frame1[2..], 4096).unwrap(),
+            b"Hello"
+        );
+        assert_eq!(
+            decompress_deflate_payload(&mut client_decomp, &frame3[2..], 4096).unwrap(),
+            b"Hello"
+        );
+
+        // Calling `compress_deflate_payload` directly with `&[]` after a Sync flush emits `0x00`
+        // (empty stored block header) rather than zero bytes so repeated flushes remain decodable.
+        let mut direct_comp = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let mut direct_decomp = Decompress::new_with_window_bits(false, 15);
+        for msg in [&b"Hello"[..], &b""[..], &b"Hello"[..]] {
+            let mut wire = Vec::new();
+            compress_deflate_payload(&mut direct_comp, msg, &mut wire);
+            assert!(!wire.is_empty());
+            assert_eq!(
+                decompress_deflate_payload(&mut direct_decomp, &wire, 4096).unwrap(),
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn decompresses_internal_bfinal_blocks_and_remaining_payload() {
+        let mut decomp = Decompress::new_with_window_bits(false, 15);
+        // RFC 7692 multi-block payload with internal `BFINAL=1`: stored 'A' + non-final stored 'B'.
+        let multi = [
+            0x01, 0x01, 0x00, 0xfe, 0xff, b'A', 0x00, 0x01, 0x00, 0xfe, 0xff, b'B', 0x00,
+        ];
+        assert_eq!(
+            decompress_deflate_payload(&mut decomp, &multi, 4096).unwrap(),
+            b"AB"
+        );
+
+        // Two consecutive blocks where the first ends in `BFINAL=1` and the second compressed
+        // block uses a backward reference into the first block via the preserved dictionary tail.
+        let first_plain = b"internal-bfinal-history-prefix-0123456789-";
+        let mut comp1 = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let mut wire = Vec::with_capacity(256);
+        let _ = comp1.compress_vec(first_plain, &mut wire, FlushCompress::Finish);
+        let mut comp2 = Compress::new_with_window_bits(Compression::default(), false, 15);
+        let _ = comp2.set_dictionary(first_plain);
+        compress_deflate_payload(&mut comp2, first_plain, &mut wire);
+
+        let mut decomp2 = Decompress::new_with_window_bits(false, 15);
+        let decoded = decompress_deflate_payload(&mut decomp2, &wire, 4096).unwrap();
+        let expected = [first_plain.as_slice(), first_plain.as_slice()].concat();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn bounds_the_work_of_mid_message_bfinal_restarts() {
+        // An empty final fixed-Huffman block: two wire bytes, one restart, no output.
+        const EMPTY_FINAL: [u8; 2] = [0x03, 0x00];
+        let inflate = |history: usize, restarts: usize| {
+            // A non-final stored block of `history` bytes, then the restarts.
+            let len = u16::try_from(history).unwrap();
+            let mut wire = vec![0x00];
+            wire.extend_from_slice(&len.to_le_bytes());
+            wire.extend_from_slice(&(!len).to_le_bytes());
+            wire.extend(std::iter::repeat_n(b'a', history));
+            for _ in 0..restarts {
+                wire.extend_from_slice(&EMPTY_FINAL);
+            }
+            let mut decomp = Decompress::new_with_window_bits(false, 15);
+            decompress_deflate_payload(&mut decomp, &wire, 64 * 1024).map(|out| out.len())
+        };
+        assert_eq!(inflate(32 * 1024, 16), Ok(32 * 1024));
+        assert_eq!(inflate(32 * 1024, 64), Err(1009));
+        assert_eq!(inflate(0, 512), Ok(0));
+        assert_eq!(inflate(0, 2048), Err(1009));
     }
 }

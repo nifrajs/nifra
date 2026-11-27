@@ -103,7 +103,7 @@ pub mod abi {
     /// 8 x u32 (32 bytes) per inbound request in `inMeta`.
     pub const IN_SLOT_U32S: usize = 10;
     /// 4 x u32 (16 bytes) per outbound response in `outMeta`.
-    pub const OUT_SLOT_U32S: usize = 4;
+    pub const OUT_SLOT_U32S: usize = 5;
 
     pub const METHOD_MASK: u32 = 0x0F;
     pub const FLAG_HAS_BODY: u32 = 1 << 4;
@@ -134,6 +134,7 @@ pub enum ParseError {
     DuplicateTransferEncoding,
     PayloadTooLarge,
     HeadersTooLarge,
+    UriTooLarge,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +142,10 @@ pub struct ParseLimits {
     pub max_body_size: usize,
     pub oversize_window: usize,
     pub max_header_bytes: usize,
+    /// Maximum number of headers allowed on one request (`0` = default 64, capped conservatively).
+    pub max_headers: usize,
+    /// Maximum length in bytes of the request target (`path` + `?query`); `0` = bounded only by `max_header_bytes`.
+    pub max_uri_size: usize,
 }
 
 impl Default for ParseLimits {
@@ -149,6 +154,8 @@ impl Default for ParseLimits {
             max_body_size: 1_048_576,
             oversize_window: 1_048_576,
             max_header_bytes: 16 * 1024,
+            max_headers: 0,
+            max_uri_size: 0,
         }
     }
 }
@@ -514,6 +521,21 @@ fn parse_trimmed_usize(raw: &str) -> Result<usize, ParseError> {
     Ok(acc)
 }
 
+#[inline]
+fn partial_request_target_len(buf: &[u8]) -> Option<usize> {
+    let first_line = match memchr::memchr(b'\n', buf) {
+        Some(pos) => &buf[..pos],
+        None => buf,
+    };
+    let line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
+    let sp1 = memchr::memchr(b' ', line)?;
+    let after_method = &line[sp1 + 1..];
+    match memchr::memchr(b' ', after_method) {
+        Some(sp2) => Some(sp2),
+        None => Some(after_method.len()),
+    }
+}
+
 /// [`parse_http1`] that continues a partly decoded chunked body from `resume` instead of restarting.
 ///
 /// Pass the same `resume` with a buffer that starts at the same request on every call until it returns
@@ -524,6 +546,11 @@ pub fn parse_http1_resume<'a>(
     resume: &mut ChunkResume,
 ) -> Result<ParseStatus<'a>, ParseError> {
     if head_surely_partial(buf) {
+        if limits.max_uri_size > 0
+            && partial_request_target_len(buf).is_some_and(|len| len > limits.max_uri_size)
+        {
+            return Err(ParseError::UriTooLarge);
+        }
         if buf.len() > limits.max_header_bytes {
             return Err(ParseError::HeadersTooLarge);
         }
@@ -534,7 +561,13 @@ pub fn parse_http1_resume<'a>(
     let (req, parsed) = parse_head(buf, &mut inline, &mut heavy);
     let head_len = match parsed {
         Ok(httparse::Status::Complete(n)) => {
-            if n > limits.max_header_bytes {
+            let target_len = req.path.map_or(0, str::len);
+            if limits.max_uri_size > 0 && target_len > limits.max_uri_size {
+                return Err(ParseError::UriTooLarge);
+            }
+            if n > limits.max_header_bytes
+                || (limits.max_headers > 0 && req.headers.len() > limits.max_headers)
+            {
                 return Err(ParseError::HeadersTooLarge);
             }
             if !lines_end_in_crlf(&buf[..n]) {
@@ -543,6 +576,11 @@ pub fn parse_http1_resume<'a>(
             n
         }
         Ok(httparse::Status::Partial) => {
+            if limits.max_uri_size > 0
+                && partial_request_target_len(buf).is_some_and(|len| len > limits.max_uri_size)
+            {
+                return Err(ParseError::UriTooLarge);
+            }
             if buf.len() > limits.max_header_bytes {
                 return Err(ParseError::HeadersTooLarge);
             }
@@ -920,6 +958,23 @@ pub fn write_buffered_response(
     }
 }
 
+/// [`write_buffered_response`] for header lines the caller already serialized and validated: each
+/// ends in CRLF and none is `date`, `content-length` or `transfer-encoding`. Not for bodyless statuses.
+pub fn write_block_response(out: &mut Vec<u8>, status: u16, block: &[u8], body: &[u8]) {
+    let mut num = itoa::Buffer::new();
+    out.extend_from_slice(b"HTTP/1.1 ");
+    out.extend_from_slice(num.format(status).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(reason_phrase(status).as_bytes());
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(block);
+    date::append_header(out);
+    out.extend_from_slice(b"content-length: ");
+    out.extend_from_slice(num.format(body.len()).as_bytes());
+    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(body);
+}
+
 /// Write the HTTP/1.1 head for a streamed response (`Transfer-Encoding: chunked` unless
 /// `content_length` is declared).
 pub fn write_stream_head(
@@ -1259,6 +1314,7 @@ mod tests {
             max_body_size: 4,
             oversize_window: 0,
             max_header_bytes: 64 * 1024,
+            ..ParseLimits::default()
         };
         assert_eq!(
             parse_http1(raw, tiny).unwrap_err(),
@@ -1317,6 +1373,7 @@ mod tests {
             max_body_size: 1024,
             oversize_window: 1024,
             max_header_bytes: 1024,
+            ..ParseLimits::default()
         };
         let mut fat = head.to_vec();
         for _ in 0..200 {
@@ -1446,6 +1503,20 @@ mod tests {
             resume.examined(),
             wire.len()
         );
+    }
+
+    #[test]
+    fn block_response_matches_the_pair_writer() {
+        let mut pairs = Vec::new();
+        write_buffered_response(
+            &mut pairs,
+            201,
+            &[("x-a", "1"), ("x-b", "a: b")],
+            Some(b"hi"),
+        );
+        let mut block = Vec::new();
+        write_block_response(&mut block, 201, b"x-a: 1\r\nx-b: a: b\r\n", b"hi");
+        assert_eq!(block, pairs);
     }
 
     #[test]
@@ -1722,5 +1793,65 @@ mod tests {
             awaits_continue(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\n"),
             Some(false)
         );
+    }
+
+    #[test]
+    fn enforces_max_uri_size_and_max_headers() {
+        let uri_limits = ParseLimits {
+            max_uri_size: 16,
+            ..ParseLimits::default()
+        };
+        assert_eq!(
+            parse_http1(
+                b"GET /0123456789abcdef HTTP/1.1\r\nHost: a\r\n\r\n",
+                uri_limits
+            )
+            .unwrap_err(),
+            ParseError::UriTooLarge
+        );
+        // Enforced early on incomplete requests too.
+        assert_eq!(
+            parse_http1(b"GET /0123456789abcdef", uri_limits).unwrap_err(),
+            ParseError::UriTooLarge
+        );
+        assert!(matches!(
+            parse_http1(b"GET /ok HTTP/1.1\r\nHost: a\r\n\r\n", uri_limits),
+            Ok(ParseStatus::Complete(_))
+        ));
+
+        let hdr_limits = ParseLimits {
+            max_headers: 3,
+            ..ParseLimits::default()
+        };
+        assert!(matches!(
+            parse_http1(
+                b"GET / HTTP/1.1\r\nHost: a\r\nX-1: 1\r\nX-2: 2\r\n\r\n",
+                hdr_limits
+            ),
+            Ok(ParseStatus::Complete(_))
+        ));
+        assert_eq!(
+            parse_http1(
+                b"GET / HTTP/1.1\r\nHost: a\r\nX-1: 1\r\nX-2: 2\r\nX-3: 3\r\n\r\n",
+                hdr_limits
+            )
+            .unwrap_err(),
+            ParseError::HeadersTooLarge
+        );
+
+        // Above default 64 stack cap still succeeds dynamically up to configured limit.
+        let high_hdr_limits = ParseLimits {
+            max_headers: 80,
+            ..ParseLimits::default()
+        };
+        let mut req_bytes = b"GET / HTTP/1.1\r\nHost: a\r\n".to_vec();
+        for i in 0..70 {
+            req_bytes.extend_from_slice(format!("X-H-{i}: v\r\n").as_bytes());
+        }
+        req_bytes.extend_from_slice(b"\r\n");
+        assert!(matches!(
+            parse_http1(&req_bytes, high_hdr_limits),
+            Ok(ParseStatus::Complete(_))
+        ));
     }
 }
