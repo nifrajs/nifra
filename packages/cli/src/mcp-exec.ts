@@ -781,7 +781,7 @@ export async function spawnChild(
   } catch {
     return `${label} input is not serializable.`
   }
-  if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+  if (Buffer.byteLength(encodedInput, "utf8") > CHILD_INPUT_MAX_BYTES)
     return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
   const proc = Bun.spawn([process.execPath, childPath(child), cwd], {
@@ -861,25 +861,31 @@ async function warmRunFingerprint(cwd: string): Promise<string> {
     } catch {
       return
     }
+    const tasks: Promise<void>[] = []
     for (const entry of entries) {
       const rel = dir === "" ? entry.name : `${dir}/${entry.name}`
       if (entry.isDirectory()) {
-        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) await walk(rel)
+        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) tasks.push(walk(rel))
         continue
       }
       if (entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)) continue
-      try {
-        const s = await stat(resolve(cwd, rel))
-        if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
-      } catch {
-        // A file can disappear while an agent is editing. The next call will rescan the settled tree.
-      }
+      tasks.push(
+        stat(resolve(cwd, rel))
+          .then((s) => {
+            if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+          })
+          .catch(() => {
+            // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+          }),
+      )
     }
+    await Promise.all(tasks)
   }
   await walk("")
-  for (const rel of WARM_RUN_EXTRA_FILES) {
-    parts.push(`${rel}:${await fileFingerprint(resolve(cwd, rel))}`)
-  }
+  const extra = await Promise.all(
+    WARM_RUN_EXTRA_FILES.map(async (rel) => `${rel}:${await fileFingerprint(resolve(cwd, rel))}`),
+  )
+  parts.push(...extra)
   return cacheToken(parts.sort().join("|"))
 }
 
@@ -983,7 +989,7 @@ export class WarmWorker {
     } catch {
       throw new Error(`warm ${this.label} input is not serializable`)
     }
-    if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+    if (Buffer.byteLength(encodedInput, "utf8") > CHILD_INPUT_MAX_BYTES)
       throw new Error(`warm ${this.label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes`)
     if (signal?.aborted) return `${this.label} cancelled${cancellationSuffix(signal)}.`
     return new Promise((resolve, reject) => {
@@ -1046,7 +1052,7 @@ export class WarmWorker {
       }
       const text = decoder.decode(value, { stream: true })
       this.stdoutBuffer += text
-      this.stdoutBufferBytes += new TextEncoder().encode(text).byteLength
+      this.stdoutBufferBytes += Buffer.byteLength(text, "utf8")
       if (this.stdoutBufferBytes > CHILD_OUTPUT_MAX_BYTES) {
         this.stderrBuffer = boundedAppend(
           this.stderrBuffer,
@@ -1055,13 +1061,19 @@ export class WarmWorker {
         this.stop()
         return
       }
-      let nl = this.stdoutBuffer.indexOf("\n")
+      let start = 0
+      let nl = this.stdoutBuffer.indexOf("\n", start)
       while (nl !== -1) {
-        const line = this.stdoutBuffer.slice(0, nl).trim()
-        this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1)
-        this.stdoutBufferBytes = new TextEncoder().encode(this.stdoutBuffer).byteLength
-        nl = this.stdoutBuffer.indexOf("\n")
+        const rawLine = this.stdoutBuffer.slice(start, nl)
+        start = nl + 1
+        this.stdoutBufferBytes -= Buffer.byteLength(rawLine, "utf8") + 1
+        const line = rawLine.trim()
+        nl = this.stdoutBuffer.indexOf("\n", start)
         if (line !== "") this.handleLine(line)
+      }
+      if (start > 0) {
+        this.stdoutBuffer = this.stdoutBuffer.slice(start)
+        if (this.stdoutBuffer.length === 0) this.stdoutBufferBytes = 0
       }
     }
   }
@@ -1122,7 +1134,7 @@ export class WarmWorker {
       this.stop()
       return
     }
-    if (new TextEncoder().encode(output).byteLength > CHILD_OUTPUT_MAX_BYTES) {
+    if (Buffer.byteLength(output, "utf8") > CHILD_OUTPUT_MAX_BYTES) {
       this.pending.delete(response.id)
       pending.cleanup()
       pending.reject(new Error(`warm ${this.label} worker response exceeded the size limit`))

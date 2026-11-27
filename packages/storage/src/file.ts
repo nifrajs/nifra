@@ -130,6 +130,7 @@ export async function renameOver(
 }
 
 export class FileStorage implements StorageAdapter {
+  private readonly maxReadBytes: number
   private root = ""
   private metadataRoot = ""
   private legacyMetadataRoot = ""
@@ -143,7 +144,11 @@ export class FileStorage implements StorageAdapter {
     | Promise<{ readonly path: string; readonly dev: number; readonly ino: number }>
     | undefined
 
-  constructor(root: string) {
+  constructor(root: string, options: { readonly maxReadBytes?: number } = {}) {
+    this.maxReadBytes = options.maxReadBytes ?? 16 * 1024 * 1024
+    if (!Number.isSafeInteger(this.maxReadBytes) || this.maxReadBytes < 0) {
+      throw new RangeError("FileStorage maxReadBytes must be a non-negative safe integer")
+    }
     this.placeRoot(resolve(root))
   }
 
@@ -570,6 +575,7 @@ export class FileStorage implements StorageAdapter {
     })
   }
 
+  /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */
   async get(key: string): Promise<StorageObject | null> {
     await this.pinRoot(key)
     const path = this.pathFor(key)
@@ -578,8 +584,15 @@ export class FileStorage implements StorageAdapter {
     let body: Uint8Array
     let identity: FileIdentity
     try {
-      identity = await identityOf(bodyHandle)
+      const info = await bodyHandle.stat({ bigint: true })
+      if (info.size < 0n || info.size > BigInt(this.maxReadBytes)) {
+        throw new RangeError("FileStorage object exceeds maxReadBytes")
+      }
+      identity = { dev: String(info.dev), ino: String(info.ino) }
       body = new Uint8Array(await bodyHandle.readFile())
+      if (body.byteLength > this.maxReadBytes) {
+        throw new RangeError("FileStorage object exceeds maxReadBytes")
+      }
     } finally {
       await bodyHandle.close()
     }

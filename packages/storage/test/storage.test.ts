@@ -139,6 +139,18 @@ test("R2Storage bounds buffered reads before consuming oversized objects", async
   expect(() => new R2Storage(new FakeR2(), { maxReadBytes: NaN })).toThrow(RangeError)
 })
 
+test("FileStorage bounds buffered reads before consuming oversized objects", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nifra-storage-limit-"))
+  tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
+  const storage = new FileStorage(dir, { maxReadBytes: 3 })
+  await storage.put("fits", "abc")
+  await storage.put("large", "abcd")
+  expect((await storage.get("fits"))?.body.byteLength).toBe(3)
+  await expect(storage.get("large")).rejects.toThrow(RangeError)
+  expect(() => new FileStorage(dir, { maxReadBytes: -1 })).toThrow(RangeError)
+  expect(() => new FileStorage(dir, { maxReadBytes: NaN })).toThrow(RangeError)
+})
+
 const tmpDirs: string[] = []
 afterAll(() => Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))))
 async function freshFileStorage(): Promise<FileStorage> {

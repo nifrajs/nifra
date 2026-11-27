@@ -70,11 +70,17 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 interface RedactConfig {
-  readonly keyParts: readonly string[]
+  readonly keyPattern: RegExp
   readonly maxScanLength: number
+  readonly minScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
 }
+
+const escapeKeyPart = (part: string): string => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const DEFAULT_KEY_PATTERN = new RegExp(SENSITIVE_KEY_PARTS.map(escapeKeyPart).join("|"), "i")
+// Shortest possible match in `commonSecretPatterns` is a minimal email (`a@b.cd`, 6 chars).
+const COMMON_SECRET_MIN_LENGTH = 6
 
 // `String.replace` with a global regex replaces every match and is stateless across calls; a
 // non-global pattern would only scrub the first occurrence, so normalize to global once up front.
@@ -87,19 +93,22 @@ function buildConfig(
   maxScanLength = Infinity,
 ): RedactConfig {
   const extra = options?.keyParts
+  const keyPattern =
+    extra === undefined || extra.length === 0
+      ? DEFAULT_KEY_PATTERN
+      : new RegExp([...SENSITIVE_KEY_PARTS, ...extra].map(escapeKeyPart).join("|"), "i")
+  const rawPatterns = options?.valuePatterns ?? defaultPatterns
   return {
-    keyParts:
-      extra === undefined
-        ? SENSITIVE_KEY_PARTS
-        : [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())],
+    keyPattern,
     maxScanLength,
-    valuePatterns: (options?.valuePatterns ?? defaultPatterns).map(ensureGlobal),
+    minScanLength: rawPatterns === commonSecretPatterns ? COMMON_SECRET_MIN_LENGTH : 0,
+    valuePatterns: rawPatterns.map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
 }
 
 function redactString(value: string, config: RedactConfig): string {
-  if (config.valuePatterns.length === 0) return value
+  if (config.valuePatterns.length === 0 || value.length < config.minScanLength) return value
   if (value.length > config.maxScanLength) return config.placeholder
   let out = value
   for (const pattern of config.valuePatterns) out = out.replace(pattern, () => config.placeholder)
@@ -115,15 +124,21 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   seen.add(value)
   if (Array.isArray(value)) return value.map((item) => redactValue(item, seen, config))
   const out: Record<string, unknown> = Object.create(null)
-  const entries = Object.entries(value)
   // An Error's own name and message are not enumerable.
-  if (value instanceof Error) entries.unshift(["name", value.name], ["message", value.message])
-  for (const [key, val] of entries) {
-    // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    const lower = key.toLowerCase()
-    out[key] = config.keyParts.some((part) => lower.includes(part))
+  if (value instanceof Error) {
+    out.name = config.keyPattern.test("name")
       ? config.placeholder
-      : redactValue(val, seen, config)
+      : redactValue(value.name, seen, config)
+    out.message = config.keyPattern.test("message")
+      ? config.placeholder
+      : redactValue(value.message, seen, config)
+  }
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue
+    // A sensitive key wins outright (don't scan it) - the whole value is replaced.
+    out[key] = config.keyPattern.test(key)
+      ? config.placeholder
+      : redactValue((value as Record<string, unknown>)[key], seen, config)
   }
   return out
 }
