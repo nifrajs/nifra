@@ -30,7 +30,6 @@ napi = { version = "2", default-features = false, features = ["napi9"] }
 napi-build = "2"
 napi-derive = "2"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-pemfile = "2"
 socket2 = { version = "0.5", features = ["all"] }
 
 [profile.release]
