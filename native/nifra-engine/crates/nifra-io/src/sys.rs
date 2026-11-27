@@ -43,11 +43,11 @@ pub(crate) const WS_PING_FRAME: [u8; 2] = [0x89, 0x00];
 /// Number of low bits reserved for the slot index inside a `conn_id`.
 ///
 /// A retired id is refused only until its slot has been reused `MAX_GEN` times, so the generation
-/// takes the 13 bits a 262,144-connection slab leaves free.
+/// takes 12 of the bits a 262,144-connection slab leaves free (keeping bit 30 free for virtual H2 WebSocket ids).
 pub const SLOT_BITS: u32 = 18;
 pub const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
 const MAX_SLOTS: usize = 1 << SLOT_BITS;
-const MAX_GEN: u16 = 8191; // keeps bit 31 = 0 so `conn_id as i32 > 0` always holds
+const MAX_GEN: u16 = 4095; // keeps bits 30..31 = 0 so every conn_id stays below H2_WS_ID_BIT (1 << 30)
 
 /// Extract the direct O(1) slot index from a `conn_id`.
 #[inline]

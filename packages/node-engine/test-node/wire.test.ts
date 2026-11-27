@@ -147,3 +147,43 @@ test("pipelined answers keep request order when a finished request's id is used 
     await running.stop({ drainMs: 50 })
   }
 })
+
+test("streamed GET responses support 64-bit Content-Length >= 4 GiB", async () => {
+  const app = server().get("/huge", () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("prefix-"))
+      },
+    })
+    return new Response(body, {
+      status: 200,
+      headers: { "content-length": "4294967296" },
+    })
+  })
+  const running = await serve(app, loopback)
+  try {
+    const received = await new Promise<string>((resolve, reject) => {
+      let text = ""
+      const socket = connect(running.port, "127.0.0.1", () => {
+        socket.write("GET /huge HTTP/1.1\r\nHost: x\r\n\r\n")
+      })
+      socket.on("data", (data) => {
+        text += data.toString("latin1")
+        if (text.includes("prefix-")) {
+          socket.destroy()
+          resolve(text)
+        }
+      })
+      socket.on("error", reject)
+      setTimeout(() => {
+        socket.destroy()
+        reject(new Error(`timed out reading 4 GiB header: ${text}`))
+      }, 3000).unref()
+    })
+    assert.match(received, /HTTP\/1\.1 200 OK/i)
+    assert.match(received, /content-length:\s*4294967296/i)
+    assert.ok(received.includes("prefix-"))
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})

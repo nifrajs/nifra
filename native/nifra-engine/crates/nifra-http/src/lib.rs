@@ -934,7 +934,13 @@ impl H1BodyDecoder {
                                 });
                             }
                             let Some(rel_lf) = memchr::memchr(b'\n', rest) else {
-                                if used.saturating_add(rest.len()) > MAX_CHUNK_TRAILERS {
+                                if rest != b"\r"
+                                    && used.saturating_add(rest.len()) > MAX_CHUNK_TRAILERS
+                                {
+                                    return Err(ParseError::Malformed);
+                                }
+                                if rest == b"\r" && used.saturating_add(1) > MAX_CHUNK_TRAILERS + 1
+                                {
                                     return Err(ParseError::Malformed);
                                 }
                                 return Ok(H1BodyStep {
@@ -1008,15 +1014,44 @@ pub struct FastRoutes {
 struct StaticRoute {
     head: Vec<u8>,
     body: Vec<u8>,
+    omit_body: bool,
+    force_zero_cl: bool,
 }
 
 impl StaticRoute {
     fn new(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Self {
         let mut head = Vec::with_capacity(128);
-        write_head_prefix(&mut head, status, headers);
+        let omit_body = status < 200 || matches!(status, 204 | 205 | 304);
+        if omit_body {
+            let filtered: Vec<(&str, &str)> = headers
+                .iter()
+                .copied()
+                .filter(|&(k, _)| !k.eq_ignore_ascii_case("content-length"))
+                .collect();
+            write_head_prefix(&mut head, status, &filtered);
+        } else {
+            write_head_prefix(&mut head, status, headers);
+        }
         Self {
             head,
-            body: body.to_vec(),
+            body: if omit_body { Vec::new() } else { body.to_vec() },
+            omit_body,
+            force_zero_cl: status == 205,
+        }
+    }
+
+    #[inline]
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.head);
+        if self.omit_body {
+            date::append_header(out);
+            if self.force_zero_cl {
+                out.extend_from_slice(b"content-length: 0\r\n\r\n");
+            } else {
+                out.extend_from_slice(b"\r\n");
+            }
+        } else {
+            append_content_length_and_body(out, &self.body);
         }
     }
 }
@@ -1073,8 +1108,7 @@ impl FastRoutes {
     #[inline]
     pub fn try_match_get(&self, path: &str, out: &mut Vec<u8>) -> bool {
         if let Some(route) = self.static_get.get(path) {
-            out.extend_from_slice(&route.head);
-            append_content_length_and_body(out, &route.body);
+            route.write_to(out);
             return true;
         }
         for route in &self.param_get {
@@ -1094,8 +1128,7 @@ impl FastRoutes {
     #[inline]
     pub fn try_match_post(&self, path: &str, out: &mut Vec<u8>) -> bool {
         if let Some(route) = self.static_post.get(path) {
-            out.extend_from_slice(&route.head);
-            append_content_length_and_body(out, &route.body);
+            route.write_to(out);
             return true;
         }
         false

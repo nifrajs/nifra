@@ -131,18 +131,76 @@ pub fn bind_tcp_listener(
     Err(failure)
 }
 
+/// Bound non-blocking Unix domain socket listener paired with an ownership-checked unlink guard.
+#[cfg(unix)]
+pub struct BoundUnixSocket {
+    pub listener: std::os::unix::net::UnixListener,
+    pub guard: UnixSocketGuard,
+}
+
+/// Removes a created Unix domain socket path on drop only if the entry still matches `(dev, ino)`.
+#[cfg(unix)]
+pub struct UnixSocketGuard {
+    path: std::path::PathBuf,
+    dev: u64,
+    ino: u64,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl UnixSocketGuard {
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    pub fn cleanup_now(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        if let Ok(meta) = std::fs::symlink_metadata(&self.path) {
+            use std::os::unix::fs::MetadataExt;
+            if meta.dev() == self.dev && meta.ino() == self.ino {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnixSocketGuard {
+    fn drop(&mut self) {
+        self.cleanup_now();
+    }
+}
+
 /// Bind a non-blocking Unix domain socket listener with the configured backlog.
 #[cfg(unix)]
-pub fn bind_unix_listener(
-    path: &str,
-    cfg: SocketConfig,
-) -> io::Result<std::os::unix::net::UnixListener> {
+pub fn bind_unix_listener(path: &str, cfg: SocketConfig) -> io::Result<BoundUnixSocket> {
+    use std::os::unix::fs::MetadataExt;
     let addr = socket2::SockAddr::unix(path)?;
     let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
     socket.set_nonblocking(true)?;
     socket.bind(&addr)?;
+    let guard = if !path.is_empty() && !path.starts_with('\0') {
+        let meta = std::fs::symlink_metadata(path)?;
+        UnixSocketGuard {
+            path: std::path::PathBuf::from(path),
+            dev: meta.dev(),
+            ino: meta.ino(),
+            armed: true,
+        }
+    } else {
+        UnixSocketGuard {
+            path: std::path::PathBuf::new(),
+            dev: 0,
+            ino: 0,
+            armed: false,
+        }
+    };
     socket.listen(cfg.backlog)?;
-    Ok(socket.into())
+    let listener: std::os::unix::net::UnixListener = socket.into();
+    Ok(BoundUnixSocket { listener, guard })
 }
 
 fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, SocketAddr)> {

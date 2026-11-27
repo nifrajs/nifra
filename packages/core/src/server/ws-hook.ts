@@ -54,4 +54,12 @@ export interface WsRuntime {
   ): NifraWebSocket
   /** `webSocketSender` - `ws.send` for an adapter that wires its own sockets (Node, Deno). */
   sender: WsSender
+  /** Binds the multi-listener native pub/sub installer onto a server instance (outside the base bundle). */
+  pub(
+    app: object,
+    eligible: () => boolean,
+    set: (
+      publish: ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void) | undefined,
+    ) => void,
+  ): void
 }

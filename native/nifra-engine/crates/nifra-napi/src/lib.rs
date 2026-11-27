@@ -24,10 +24,10 @@ use nifra_http::{
     H1BodyDecoder, ParseLimits, ParseStatus, ParsedStreamHead, PreparedTemplates,
 };
 #[cfg(unix)]
-use nifra_io::bind_unix_listener;
-#[cfg(unix)]
 use nifra_io::conn_slot;
 use nifra_io::{bind_tcp_listener, detect_transport, run_mio_loop, ConnAction, SocketConfig};
+#[cfg(unix)]
+use nifra_io::{bind_unix_listener, BoundUnixSocket};
 
 #[cfg(unix)]
 use nifra_io::uv::{UvCallbacks, UvServer, WriteResult};
@@ -499,6 +499,7 @@ fn to_tls_input(opts: &TlsOptions, http2_enabled: bool) -> TlsInput {
 
 #[napi(object)]
 pub struct WsDeflateOptions {
+    pub enabled: Option<bool>,
     pub server_no_context_takeover: Option<bool>,
     pub client_no_context_takeover: Option<bool>,
     pub server_max_window_bits: Option<u32>,
@@ -615,6 +616,7 @@ struct PendingReq {
     conn_id: u32,
     prev_on_conn: u32,
     next_on_conn: u32,
+    stream_token: u64,
     flags: u8,
     raw_head: HeadStorage,
     cold: Option<Box<PendingCold>>,
@@ -637,6 +639,7 @@ impl PendingReq {
             conn_id,
             prev_on_conn: 0,
             next_on_conn: 0,
+            stream_token: 0,
             flags,
             raw_head,
             cold,
@@ -759,6 +762,7 @@ struct H1Order {
 #[cfg(unix)]
 struct H1StreamBody {
     req_id: u32,
+    token: u64,
     decoder: H1BodyDecoder,
 }
 
@@ -1363,6 +1367,7 @@ struct UvHttpShared {
     conn_meta: ConnMetaTable,
     /// The last id given to a finished answer parked behind an earlier request.
     placeholder_seq: u32,
+    h1_stream_seq: u64,
     scratch_frame: Vec<u8>,
 }
 
@@ -1564,6 +1569,7 @@ fn deliver_h1_body_stream(
                 return Ok((consumed, true));
             };
             let req_id = stream.req_id;
+            let token = stream.token;
             let step = stream.decoder.feed(&buf[consumed..])?;
             consumed += step.consumed;
             let chunk = if step.chunk.is_empty() {
@@ -1578,10 +1584,16 @@ fn deliver_h1_body_stream(
                     slot.h1_body_stream = None;
                 }
             }
-            (raw_env, body_ref, req_id, chunk, done, advanced)
+            let deliver = (chunk.is_some() || done)
+                && !body_ref.is_null()
+                && st
+                    .pending
+                    .get(req_id)
+                    .is_some_and(|p| p.stream_token == token);
+            (raw_env, body_ref, req_id, chunk, done, advanced, deliver)
         };
-        let (raw_env, body_ref, req_id, chunk, done, advanced) = step_out;
-        if chunk.is_some() || done {
+        let (raw_env, body_ref, req_id, chunk, done, advanced, deliver) = step_out;
+        if deliver {
             unsafe {
                 call_js_req_body(
                     raw_env,
@@ -1599,6 +1611,115 @@ fn deliver_h1_body_stream(
             return Ok((consumed, false));
         }
     }
+}
+
+#[cfg(unix)]
+fn handle_h1_stream_body_error(
+    shared: &Rc<RefCell<UvHttpShared>>,
+    conn_id: u32,
+    write_buf: &mut Vec<u8>,
+    read_len: usize,
+) -> ConnAction {
+    let mut st = shared.borrow_mut();
+    let broken = st.conn_meta.ensure(conn_id).h1_body_stream.take();
+    if let Some(stream) = broken {
+        if st
+            .pending
+            .get(stream.req_id)
+            .is_some_and(|p| p.stream_token == stream.token)
+        {
+            if let Some(pending) = st.remove_pending(stream.req_id) {
+                let was_streaming = pending.streaming();
+                let raw_env = st.raw_env;
+                let abort_ref = st.on_aborted_ref;
+                let mut still_pending = false;
+                if !was_streaming {
+                    let tpl = st.bad_req_tpl;
+                    let mut frame = Vec::new();
+                    st.templates.write_prepared(tpl, b"Bad Request", &mut frame);
+                    let taken = st
+                        .conn_meta
+                        .get_mut(conn_id)
+                        .and_then(|s| s.h1_overflow.take());
+                    if let Some(mut order) = taken {
+                        if order.queue.front() == Some(&stream.req_id) {
+                            order.queue.pop_front();
+                            write_buf.extend_from_slice(&frame);
+                            while let Some(&next) = order.queue.front() {
+                                let Some(held) = order.held.get_mut(&next) else {
+                                    break;
+                                };
+                                let chunk = std::mem::take(&mut held.bytes);
+                                order.held_bytes -= chunk.len();
+                                if !held.done {
+                                    write_buf.extend_from_slice(&chunk);
+                                    break;
+                                }
+                                let keep = held.keep_alive;
+                                order.held.remove(&next);
+                                order.queue.pop_front();
+                                write_buf.extend_from_slice(&chunk);
+                                if !keep {
+                                    order.queue.clear();
+                                    order.held.clear();
+                                    break;
+                                }
+                            }
+                        } else if order.queue.contains(&stream.req_id) {
+                            let held = order.held.entry(stream.req_id).or_default();
+                            held.bytes.extend_from_slice(&frame);
+                            held.done = true;
+                            held.keep_alive = false;
+                            order.held_bytes += frame.len();
+                            let own = next_placeholder(&mut st);
+                            if let Some(h) = order.held.remove(&stream.req_id) {
+                                order.held.insert(own, h);
+                            }
+                            if let Some(id) =
+                                order.queue.iter_mut().find(|id| **id == stream.req_id)
+                            {
+                                *id = own;
+                            }
+                        }
+                        still_pending = !order.queue.is_empty();
+                        if still_pending {
+                            if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                                slot.h1_overflow = Some(order);
+                            }
+                        }
+                    } else {
+                        if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                            if slot.h1_head == stream.req_id {
+                                slot.h1_head = 0;
+                            }
+                        }
+                        write_buf.extend_from_slice(&frame);
+                    }
+                }
+                st.conn_meta.ensure(conn_id).refuse_input = true;
+                drop(st);
+                if !abort_ref.is_null() {
+                    unsafe { call_js_u32(raw_env, abort_ref, stream.req_id) };
+                }
+                return if was_streaming {
+                    ConnAction::CloseNow
+                } else if still_pending {
+                    ConnAction::Continue { consumed: read_len }
+                } else {
+                    ConnAction::CloseAfterWrite { consumed: read_len }
+                };
+            }
+        }
+    }
+    let template = st.bad_req_tpl;
+    refuse_request(
+        &mut st,
+        conn_id,
+        template,
+        b"Bad Request",
+        write_buf,
+        read_len,
+    )
 }
 
 #[cfg(unix)]
@@ -1974,14 +2095,9 @@ impl HttpUvCallbacks {
                     st = self.shared.borrow_mut();
                 }
                 Err(_) => {
-                    let mut st = self.shared.borrow_mut();
-                    st.conn_meta.ensure(conn_id).h1_body_stream = None;
-                    let template = st.bad_req_tpl;
-                    return refuse_request(
-                        &mut st,
+                    return handle_h1_stream_body_error(
+                        &self.shared,
                         conn_id,
-                        template,
-                        b"Bad Request",
                         write_buf,
                         read_buf.len(),
                     );
@@ -2189,7 +2305,10 @@ impl HttpUvCallbacks {
                             ..PendingCold::default()
                         })
                     });
+                    st.h1_stream_seq = st.h1_stream_seq.wrapping_add(1).max(1);
+                    let stream_token = st.h1_stream_seq;
                     let mut pending = PendingReq::new(conn_id, head.keep_alive, raw_head, cold);
+                    pending.stream_token = stream_token;
                     if head.http10 {
                         pending.flags |= PENDING_HTTP10;
                     }
@@ -2210,6 +2329,20 @@ impl HttpUvCallbacks {
                             read_buf.len(),
                         );
                     }
+                    if read_buf.len() == consumed {
+                        if let Some(true) = awaits_continue(req_head) {
+                            const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+                            let slot = st.conn_meta.ensure(conn_id);
+                            slot.continue_checked = true;
+                            if !slot.has_h1_pending() {
+                                write_buf.extend_from_slice(CONTINUE);
+                            } else if park_behind_pending(&mut st, conn_id, CONTINUE.to_vec(), true)
+                            {
+                                st.remove_pending(req_id);
+                                return ConnAction::CloseNow;
+                            }
+                        }
+                    }
                     st.batch_req_ids.push(req_id);
                     st.conn_meta.ensure(conn_id).push_h1(req_id);
                     let decoder = if is_chunked {
@@ -2217,8 +2350,11 @@ impl HttpUvCallbacks {
                     } else {
                         H1BodyDecoder::fixed(cl.unwrap_or(0))
                     };
-                    st.conn_meta.ensure(conn_id).h1_body_stream =
-                        Some(H1StreamBody { req_id, decoder });
+                    st.conn_meta.ensure(conn_id).h1_body_stream = Some(H1StreamBody {
+                        req_id,
+                        token: stream_token,
+                        decoder,
+                    });
                     drop(st);
                     invoke_on_batch_unlocked(&self.shared);
                     match deliver_h1_body_stream(&self.shared, conn_id, &read_buf[consumed..]) {
@@ -2234,14 +2370,9 @@ impl HttpUvCallbacks {
                             }
                         }
                         Err(_) => {
-                            let mut st = self.shared.borrow_mut();
-                            st.conn_meta.ensure(conn_id).h1_body_stream = None;
-                            let template = st.bad_req_tpl;
-                            return refuse_request(
-                                &mut st,
+                            return handle_h1_stream_body_error(
+                                &self.shared,
                                 conn_id,
-                                template,
-                                b"Bad Request",
                                 write_buf,
                                 read_buf.len(),
                             );
@@ -2345,12 +2476,39 @@ impl UvCallbacks for HttpUvCallbacks {
         now: std::time::Instant,
         out: &mut Vec<u8>,
     ) -> bool {
-        self.shared
-            .borrow_mut()
-            .conn_meta
-            .get_mut(conn_id)
-            .and_then(|slot| slot.h2.as_deref_mut())
-            .is_some_and(|h2| h2.expire_requests(now, out))
+        let (close_conn, expired_streams) = {
+            let mut st = self.shared.borrow_mut();
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(conn_id)
+                .and_then(|slot| slot.h2.as_deref_mut())
+            else {
+                return false;
+            };
+            h2.drain_expired_streams(now, out)
+        };
+        if !expired_streams.is_empty() {
+            let aborted = {
+                let mut st = self.shared.borrow_mut();
+                let mut ids = Vec::new();
+                for stream_id in expired_streams {
+                    let matching: Vec<u32> = st
+                        .pending
+                        .iter_connection(st.conn_meta.pending_head(conn_id))
+                        .filter(|(_, p)| p.h2_stream_id() == Some(stream_id))
+                        .map(|(id, _)| id)
+                        .collect();
+                    for id in matching {
+                        if st.remove_pending(id).is_some() {
+                            ids.push(id);
+                        }
+                    }
+                }
+                ids
+            };
+            notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+        }
+        close_conn
     }
 
     fn oldest_incomplete_head(&self, conn_id: u32) -> Option<std::time::Instant> {
@@ -2796,14 +2954,36 @@ fn pack_stream_head_into_shared(
 }
 
 #[cfg(unix)]
-fn maybe_compress_payload(
+struct CompressedPayload {
+    encoding: Option<&'static str>,
+    body: Option<Vec<u8>>,
+    append_vary: bool,
+}
+
+#[cfg(unix)]
+fn header_needs_vary_ae(pairs: &[(&str, &str)]) -> bool {
+    for &(k, v) in pairs {
+        if k.eq_ignore_ascii_case("vary")
+            && v.split(',').any(|tok| {
+                let t = tok.trim();
+                t == "*" || t.eq_ignore_ascii_case("accept-encoding")
+            })
+        {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(unix)]
+fn negotiate_compression_payload(
     compression: CompressionCfg,
     batch_heads: &[u8],
     pending: &mut PendingReq,
     status: u16,
     pairs: &[(&str, &str)],
     body: &[u8],
-) -> Option<(&'static str, Vec<u8>)> {
+) -> Option<CompressedPayload> {
     if !compression.enabled || status < 200 || status == 204 || status == 304 {
         return None;
     }
@@ -2824,15 +3004,66 @@ fn maybe_compress_payload(
     if has_ce || !nifra_http::compress::is_compressible_content_type(content_type) {
         return None;
     }
+    let append_vary = header_needs_vary_ae(pairs);
     let ae = pending_accept_encoding(pending, batch_heads);
     let enc = nifra_http::compress::negotiate_encoding(
         ae.as_deref(),
         compression.brotli,
         compression.gzip,
         compression.deflate,
-    )?;
-    let compressed = nifra_http::compress::compress_bytes(enc, body)?;
-    Some((enc.header_value(), compressed))
+    );
+    if let Some(enc) = enc {
+        if let Some(compressed) = nifra_http::compress::compress_bytes(enc, body) {
+            return Some(CompressedPayload {
+                encoding: Some(enc.header_value()),
+                body: Some(compressed),
+                append_vary,
+            });
+        }
+    }
+    append_vary.then_some(CompressedPayload {
+        encoding: None,
+        body: None,
+        append_vary: true,
+    })
+}
+
+#[cfg(unix)]
+fn with_compression_headers<R>(
+    pairs: &[(&str, &str)],
+    compressed: Option<&CompressedPayload>,
+    f: impl FnOnce(&[(&str, &str)]) -> R,
+) -> R {
+    let Some(comp) = compressed.filter(|c| c.encoding.is_some() || c.append_vary) else {
+        return f(pairs);
+    };
+    let mut extended = Vec::with_capacity(pairs.len() + 2);
+    let mut existing_vary: Option<String> = None;
+    if comp.append_vary {
+        let mut parts: Vec<&str> = Vec::new();
+        for &(k, v) in pairs {
+            if k.eq_ignore_ascii_case("vary") {
+                parts.push(v);
+            } else {
+                extended.push((k, v));
+            }
+        }
+        if !parts.is_empty() {
+            parts.push("accept-encoding");
+            existing_vary = Some(parts.join(", "));
+        }
+    } else {
+        extended.extend_from_slice(pairs);
+    }
+    if let Some(enc) = comp.encoding {
+        extended.push(("content-encoding", enc));
+    }
+    if let Some(ref merged) = existing_vary {
+        extended.push(("vary", merged.as_str()));
+    } else if comp.append_vary {
+        extended.push(("vary", "accept-encoding"));
+    }
+    f(&extended)
 }
 
 /// Zero-hop HTTP/1.1 + HTTP/2 + WebSocket server running directly on Node.js's main `libuv` event loop.
@@ -3248,7 +3479,7 @@ impl UvHttpServer {
                     .split_terminator("\r\n")
                     .filter_map(|line| line.split_once(": "))
                     .collect();
-                let compressed = maybe_compress_payload(
+                let compressed = negotiate_compression_payload(
                     compression,
                     &st.batch_heads,
                     &mut pending,
@@ -3258,19 +3489,8 @@ impl UvHttpServer {
                 );
                 let out_body = compressed
                     .as_ref()
-                    .map_or(body_slice, |(_, b)| b.as_slice());
-                let mut pairs_with_ce: Vec<(&str, &str)> = Vec::new();
-                let out_pairs: &[(&str, &str)] = if let Some((enc_name, _)) = &compressed {
-                    pairs_with_ce.reserve(pairs.len() + 2);
-                    pairs_with_ce.extend_from_slice(&pairs);
-                    pairs_with_ce.push(("content-encoding", enc_name));
-                    if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
-                        pairs_with_ce.push(("vary", "accept-encoding"));
-                    }
-                    &pairs_with_ce
-                } else {
-                    &pairs
-                };
+                    .and_then(|c| c.body.as_deref())
+                    .unwrap_or(body_slice);
                 if let Some(stream_id) = pending.h2_stream_id() {
                     let Some(h2) = st
                         .conn_meta
@@ -3279,10 +3499,14 @@ impl UvHttpServer {
                     else {
                         continue;
                     };
-                    h2.write_response(stream_id, status, out_pairs, Some(out_body), &mut frame);
+                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                        h2.write_response(stream_id, status, out_pairs, Some(out_body), &mut frame);
+                    });
                     let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
                 } else if compressed.is_some() {
-                    write_buffered_response(&mut frame, status, out_pairs, Some(out_body));
+                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                        write_buffered_response(&mut frame, status, out_pairs, Some(out_body));
+                    });
                     let _ = h1_send(
                         &self.server,
                         &mut st,
@@ -3312,7 +3536,7 @@ impl UvHttpServer {
                         .get(template_id as usize)
                         .and_then(|(status, hdrs)| {
                             with_tuple_header_pairs(hdrs, |pairs| {
-                                maybe_compress_payload(
+                                negotiate_compression_payload(
                                     compression,
                                     &st.batch_heads,
                                     &mut pending,
@@ -3335,31 +3559,18 @@ impl UvHttpServer {
                 ) {
                     let out_body = compressed
                         .as_ref()
-                        .map_or(body_slice, |(_, b)| b.as_slice());
+                        .and_then(|c| c.body.as_deref())
+                        .unwrap_or(body_slice);
                     with_tuple_header_pairs(hdrs, |pairs| {
-                        if let Some((enc_name, _)) = &compressed {
-                            let mut extended = Vec::with_capacity(pairs.len() + 2);
-                            extended.extend_from_slice(pairs);
-                            extended.push(("content-encoding", enc_name));
-                            if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
-                                extended.push(("vary", "accept-encoding"));
-                            }
+                        with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
                             h2.write_response(
                                 stream_id,
                                 *status,
-                                &extended,
+                                out_pairs,
                                 Some(out_body),
                                 &mut frame,
                             );
-                        } else {
-                            h2.write_response(
-                                stream_id,
-                                *status,
-                                pairs,
-                                Some(out_body),
-                                &mut frame,
-                            );
-                        }
+                        });
                     });
                     let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
                 }
@@ -3371,7 +3582,7 @@ impl UvHttpServer {
                             .get(template_id as usize)
                             .and_then(|(status, hdrs)| {
                                 with_tuple_header_pairs(hdrs, |pairs| {
-                                    maybe_compress_payload(
+                                    negotiate_compression_payload(
                                         compression,
                                         &st.batch_heads,
                                         &mut pending,
@@ -3383,21 +3594,18 @@ impl UvHttpServer {
                             })
                     })
                     .flatten();
-                if let Some((enc_name, comp_bytes)) = compressed {
+                if let Some(ref comp) = compressed {
                     if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
+                        let out_body = comp.body.as_deref().unwrap_or(body_slice);
                         with_tuple_header_pairs(hdrs, |pairs| {
-                            let mut extended = Vec::with_capacity(pairs.len() + 2);
-                            extended.extend_from_slice(pairs);
-                            extended.push(("content-encoding", enc_name));
-                            if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
-                                extended.push(("vary", "accept-encoding"));
-                            }
-                            write_buffered_response(
-                                &mut frame,
-                                *status,
-                                &extended,
-                                Some(&comp_bytes),
-                            );
+                            with_compression_headers(pairs, Some(comp), |out_pairs| {
+                                write_buffered_response(
+                                    &mut frame,
+                                    *status,
+                                    out_pairs,
+                                    Some(out_body),
+                                );
+                            });
                         });
                         let _ = h1_send(
                             &self.server,
@@ -3435,12 +3643,28 @@ impl UvHttpServer {
     #[napi]
     pub fn respond_prepared(&self, req_id: u32, template_id: u32, body: Buffer) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.remove_pending(req_id) else {
+        let Some(mut pending) = st.remove_pending(req_id) else {
             return false;
         };
         let mut frame = std::mem::take(&mut st.scratch_frame);
         frame.clear();
+        let compression = st.compression;
         if let Some(stream_id) = pending.h2_stream_id() {
+            let compressed =
+                st.template_meta
+                    .get(template_id as usize)
+                    .and_then(|(status, hdrs)| {
+                        with_tuple_header_pairs(hdrs, |pairs| {
+                            negotiate_compression_payload(
+                                compression,
+                                &st.batch_heads,
+                                &mut pending,
+                                *status,
+                                pairs,
+                                body.as_ref(),
+                            )
+                        })
+                    });
             let UvHttpShared {
                 ref template_meta,
                 ref mut conn_meta,
@@ -3455,18 +3679,56 @@ impl UvHttpServer {
                 st.scratch_frame = frame;
                 return false;
             };
+            let out_body = compressed
+                .as_ref()
+                .and_then(|c| c.body.as_deref())
+                .unwrap_or(body.as_ref());
             with_tuple_header_pairs(hdrs, |pairs| {
-                h2.write_response(stream_id, *status, pairs, Some(body.as_ref()), &mut frame);
+                with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
+                    h2.write_response(stream_id, *status, out_pairs, Some(out_body), &mut frame);
+                });
             });
             let sent =
                 self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
             st.scratch_frame = frame;
             return sent;
         }
-        let (sec, date_text) = nifra_http::date::now_cached();
-        let written =
+        let compressed = compression
+            .enabled
+            .then(|| {
+                st.template_meta
+                    .get(template_id as usize)
+                    .and_then(|(status, hdrs)| {
+                        with_tuple_header_pairs(hdrs, |pairs| {
+                            negotiate_compression_payload(
+                                compression,
+                                &st.batch_heads,
+                                &mut pending,
+                                *status,
+                                pairs,
+                                body.as_ref(),
+                            )
+                        })
+                    })
+            })
+            .flatten();
+        let written = if let Some(ref comp) = compressed {
+            if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
+                let out_body = comp.body.as_deref().unwrap_or(body.as_ref());
+                with_tuple_header_pairs(hdrs, |pairs| {
+                    with_compression_headers(pairs, Some(comp), |out_pairs| {
+                        write_buffered_response(&mut frame, *status, out_pairs, Some(out_body));
+                    });
+                });
+                true
+            } else {
+                false
+            }
+        } else {
+            let (sec, date_text) = nifra_http::date::now_cached();
             st.templates
-                .write_prepared_at(template_id, sec, &date_text, body.as_ref(), &mut frame);
+                .write_prepared_at(template_id, sec, &date_text, body.as_ref(), &mut frame)
+        };
         let sent = written
             && h1_send(
                 &self.server,
@@ -3498,7 +3760,7 @@ impl UvHttpServer {
         let compression = st.compression;
         let compressed = body.as_ref().and_then(|b| {
             with_flat_header_pairs(&hdr_vec, |pairs| {
-                maybe_compress_payload(
+                negotiate_compression_payload(
                     compression,
                     &st.batch_heads,
                     &mut pending,
@@ -3511,7 +3773,7 @@ impl UvHttpServer {
         let raw_body_ref = body.as_ref().map(|b| b.as_ref());
         let out_body_ref = compressed
             .as_ref()
-            .map(|(_, c)| c.as_slice())
+            .and_then(|c| c.body.as_deref())
             .or(raw_body_ref);
 
         let mut frame = std::mem::take(&mut st.scratch_frame);
@@ -3526,17 +3788,9 @@ impl UvHttpServer {
                 return false;
             };
             with_flat_header_pairs(&hdr_vec, |pairs| {
-                if let Some((enc_name, _)) = &compressed {
-                    let mut extended = Vec::with_capacity(pairs.len() + 2);
-                    extended.extend_from_slice(pairs);
-                    extended.push(("content-encoding", enc_name));
-                    if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
-                        extended.push(("vary", "accept-encoding"));
-                    }
-                    h2.write_response(stream_id, status, &extended, out_body_ref, &mut frame);
-                } else {
-                    h2.write_response(stream_id, status, pairs, out_body_ref, &mut frame);
-                }
+                with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
+                    h2.write_response(stream_id, status, out_pairs, out_body_ref, &mut frame);
+                });
             });
             let sent =
                 self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
@@ -3544,17 +3798,9 @@ impl UvHttpServer {
             return sent;
         }
         with_flat_header_pairs(&hdr_vec, |pairs| {
-            if let Some((enc_name, _)) = &compressed {
-                let mut extended = Vec::with_capacity(pairs.len() + 2);
-                extended.extend_from_slice(pairs);
-                extended.push(("content-encoding", enc_name));
-                if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
-                    extended.push(("vary", "accept-encoding"));
-                }
-                write_buffered_response(&mut frame, status, &extended, out_body_ref);
-            } else {
-                write_buffered_response(&mut frame, status, pairs, out_body_ref);
-            }
+            with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
+                write_buffered_response(&mut frame, status, out_pairs, out_body_ref);
+            });
         });
         let sent = h1_send(
             &self.server,
@@ -3877,33 +4123,37 @@ impl UvHttpServer {
                 ..
             } = *st;
             if let Some(ov) = deflate_override {
-                ws_deflate_cfg.enabled = true;
-                if let Some(v) = ov.server_no_context_takeover {
-                    ws_deflate_cfg.server_no_context_takeover = v;
-                }
-                if let Some(v) = ov.client_no_context_takeover {
-                    ws_deflate_cfg.client_no_context_takeover = v;
-                }
-                if let Some(v) = ov.server_max_window_bits {
-                    if !(9..=15).contains(&v) {
-                        return -1;
+                if ov.enabled == Some(false) {
+                    ws_deflate_cfg.enabled = false;
+                } else {
+                    ws_deflate_cfg.enabled = true;
+                    if let Some(v) = ov.server_no_context_takeover {
+                        ws_deflate_cfg.server_no_context_takeover = v;
                     }
-                    ws_deflate_cfg.server_max_window_bits = v as u8;
-                }
-                if let Some(v) = ov.client_max_window_bits {
-                    ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
-                }
-                if let Some(v) = ov.threshold {
-                    ws_deflate_cfg.threshold = v as usize;
-                }
-                if let Some(v) = ov.max_decompressed_size {
-                    ws_deflate_cfg.max_decompressed_size = v as usize;
-                }
-                if let Some(v) = ov.level {
-                    ws_deflate_cfg.level = (v as u8).clamp(1, 9);
-                }
-                if let Some(v) = ov.shared_compressor {
-                    ws_deflate_cfg.shared_compressor = v;
+                    if let Some(v) = ov.client_no_context_takeover {
+                        ws_deflate_cfg.client_no_context_takeover = v;
+                    }
+                    if let Some(v) = ov.server_max_window_bits {
+                        if !(9..=15).contains(&v) {
+                            return -1;
+                        }
+                        ws_deflate_cfg.server_max_window_bits = v as u8;
+                    }
+                    if let Some(v) = ov.client_max_window_bits {
+                        ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
+                    }
+                    if let Some(v) = ov.threshold {
+                        ws_deflate_cfg.threshold = v as usize;
+                    }
+                    if let Some(v) = ov.max_decompressed_size {
+                        ws_deflate_cfg.max_decompressed_size = v as usize;
+                    }
+                    if let Some(v) = ov.level {
+                        ws_deflate_cfg.level = (v as u8).clamp(1, 9);
+                    }
+                    if let Some(v) = ov.shared_compressor {
+                        ws_deflate_cfg.shared_compressor = v;
+                    }
                 }
             }
             let Some(pending) = pending.get_mut(req_id) else {
@@ -4097,7 +4347,7 @@ impl UvHttpServer {
                 OPCODE_TEXT
             },
             payload.as_ref(),
-        )
+        ) != SendWsOutcome::Closed
     }
 
     /// Send a UTF-8 text WebSocket frame directly from a JS `string`.
@@ -4109,7 +4359,7 @@ impl UvHttpServer {
             socket_id,
             OPCODE_TEXT,
             text.as_bytes(),
-        )
+        ) != SendWsOutcome::Closed
     }
 
     /// Send multiple UTF-8 text WebSocket messages in a single N-API crossing.
@@ -4117,25 +4367,43 @@ impl UvHttpServer {
     pub fn ws_send_batch(&self, socket_id: u32, messages: Vec<String>) -> u32 {
         let mut sent = 0u32;
         for msg in messages {
-            if send_ws_frame(
+            match send_ws_frame(
                 &self.server,
                 &self.shared,
                 socket_id,
                 OPCODE_TEXT,
                 msg.as_bytes(),
             ) {
-                sent += 1;
-            } else {
-                break;
+                SendWsOutcome::Sent => sent += 1,
+                SendWsOutcome::Backpressured => {
+                    sent += 1;
+                    break;
+                }
+                SendWsOutcome::Closed => break,
             }
         }
         sent
     }
 
-    /// Current queued outbound bytes on the underlying TCP socket for a WebSocket.
+    /// Current queued outbound bytes on the underlying TCP socket (or H2 stream) for a WebSocket.
     #[napi]
     pub fn ws_get_buffered_amount(&self, socket_id: u32) -> u32 {
         let st = self.shared.borrow();
+        if socket_id >= H2_WS_ID_BIT {
+            let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+                return 0;
+            };
+            let stream_queued = st
+                .conn_meta
+                .get(conn_id)
+                .and_then(|s| s.h2.as_deref())
+                .map_or(0, |h2| h2.stream_queued_bytes(stream_id));
+            return self
+                .server
+                .queued_bytes(conn_id)
+                .saturating_add(stream_queued)
+                .min(u32::MAX as usize) as u32;
+        }
         let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
             return 0;
         };
@@ -4495,83 +4763,181 @@ impl UvHttpServer {
 }
 
 #[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendWsOutcome {
+    Sent,
+    Backpressured,
+    Closed,
+}
+
+#[cfg(unix)]
+fn close_h2_ws_stream_on_bp(
+    server: &UvServer,
+    shared: &Rc<RefCell<UvHttpShared>>,
+    conn_id: u32,
+    stream_id: u32,
+    socket_id: u32,
+) {
+    let close_notify = {
+        let mut st = shared.borrow_mut();
+        let UvHttpShared {
+            ref mut conn_meta,
+            ref mut h2_ws_map,
+            ref mut ws_topics,
+            ref mut scratch_frame,
+            raw_env,
+            on_ws_close_ref,
+            ..
+        } = *st;
+        h2_ws_map.remove(&socket_id);
+        let removed = conn_meta
+            .get_mut(conn_id)
+            .and_then(|s| s.h2_ws.remove(&stream_id));
+        if let Some(slot) = conn_meta.get_mut(conn_id) {
+            if let Some(h2) = slot.h2.as_deref_mut() {
+                scratch_frame.clear();
+                h2.reset_stream(stream_id, 0x8, scratch_frame);
+                let _ = server.write_to_conn(conn_id, scratch_frame, false);
+            }
+        }
+        if let Some((_, mut ws)) = removed {
+            for topic in std::mem::take(&mut ws.topics) {
+                if let Some(list) = ws_topics.get_mut(&topic) {
+                    list.retain(|&id| id != socket_id);
+                    if list.is_empty() {
+                        ws_topics.remove(&topic);
+                    }
+                }
+            }
+            if !ws.close_emitted && !on_ws_close_ref.is_null() {
+                Some((raw_env, on_ws_close_ref))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some((raw_env, close_ref)) = close_notify {
+        unsafe { call_js_ws_close(raw_env, close_ref, socket_id, 1006, "") };
+    }
+}
+
+#[cfg(unix)]
 fn send_ws_frame(
     server: &UvServer,
     shared: &Rc<RefCell<UvHttpShared>>,
     socket_id: u32,
     opcode: u8,
     bytes: &[u8],
-) -> bool {
-    let mut st = shared.borrow_mut();
-    let max_bp = st.ws_max_backpressure;
-    let close_on_bp = st.ws_close_on_backpressure_limit;
-    if socket_id >= H2_WS_ID_BIT {
-        let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
-            return false;
-        };
-        if max_bp > 0 && server.queued_bytes(conn_id) >= max_bp {
-            if close_on_bp {
-                server.close_conn(conn_id);
+) -> SendWsOutcome {
+    let mut close_h2_stream: Option<(u32, u32)> = None;
+    let outcome = {
+        let mut st = shared.borrow_mut();
+        let max_bp = st.ws_max_backpressure;
+        let close_on_bp = st.ws_close_on_backpressure_limit;
+        if socket_id >= H2_WS_ID_BIT {
+            let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+                return SendWsOutcome::Closed;
+            };
+            let stream_queued = st
+                .conn_meta
+                .get(conn_id)
+                .and_then(|s| s.h2.as_deref())
+                .map_or(0, |h2| h2.stream_queued_bytes(stream_id));
+            if max_bp > 0 && (stream_queued >= max_bp || server.queued_bytes(conn_id) >= max_bp) {
+                if close_on_bp {
+                    close_h2_stream = Some((conn_id, stream_id));
+                }
+                SendWsOutcome::Closed
+            } else {
+                let UvHttpShared {
+                    ref mut conn_meta,
+                    ref mut ws_shared_pool,
+                    ref mut scratch_frame,
+                    ..
+                } = *st;
+                let Some(slot) = conn_meta.get_mut(conn_id) else {
+                    return SendWsOutcome::Closed;
+                };
+                let mut encoded = Vec::new();
+                let Some((_, ws)) = slot.h2_ws.get_mut(&stream_id) else {
+                    return SendWsOutcome::Closed;
+                };
+                let shared_comp = ws
+                    .conn
+                    .deflate_server_window_bits()
+                    .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
+                ws.conn
+                    .encode_server_message(opcode, bytes, shared_comp, &mut encoded);
+                let Some(h2) = slot.h2.as_deref_mut() else {
+                    return SendWsOutcome::Closed;
+                };
+                scratch_frame.clear();
+                let room = h2.write_stream_data(stream_id, &encoded, false, scratch_frame);
+                let after_stream = h2.stream_queued_bytes(stream_id);
+                let res = server.write_to_conn(conn_id, scratch_frame, false);
+                let hit_bp = !room
+                    || res == WriteResult::Backpressured
+                    || (max_bp > 0 && after_stream > max_bp);
+                if res == WriteResult::Closed {
+                    SendWsOutcome::Closed
+                } else if hit_bp {
+                    if close_on_bp {
+                        close_h2_stream = Some((conn_id, stream_id));
+                        SendWsOutcome::Closed
+                    } else {
+                        SendWsOutcome::Backpressured
+                    }
+                } else {
+                    SendWsOutcome::Sent
+                }
             }
-            return false;
+        } else if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+            if close_on_bp {
+                server.close_conn(socket_id);
+            }
+            SendWsOutcome::Closed
+        } else {
+            let UvHttpShared {
+                ref mut conn_meta,
+                ref mut ws_shared_pool,
+                ref mut scratch_frame,
+                ..
+            } = *st;
+            let Some(ws) = conn_meta
+                .get_mut(socket_id)
+                .filter(|s| s.ws_sendable())
+                .and_then(|s| s.ws.as_deref_mut())
+            else {
+                return SendWsOutcome::Closed;
+            };
+            let shared_comp = ws
+                .conn
+                .deflate_server_window_bits()
+                .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
+            scratch_frame.clear();
+            ws.conn
+                .encode_server_message(opcode, bytes, shared_comp, scratch_frame);
+            let res = server.write_to_conn(socket_id, scratch_frame, false);
+            match res {
+                WriteResult::Written => SendWsOutcome::Sent,
+                WriteResult::Backpressured => {
+                    if close_on_bp {
+                        server.close_conn(socket_id);
+                        SendWsOutcome::Closed
+                    } else {
+                        SendWsOutcome::Backpressured
+                    }
+                }
+                WriteResult::Closed => SendWsOutcome::Closed,
+            }
         }
-        let UvHttpShared {
-            ref mut conn_meta,
-            ref mut ws_shared_pool,
-            ref mut scratch_frame,
-            ..
-        } = *st;
-        let Some(slot) = conn_meta.get_mut(conn_id) else {
-            return false;
-        };
-        let mut encoded = Vec::new();
-        let Some((_, ws)) = slot.h2_ws.get_mut(&stream_id) else {
-            return false;
-        };
-        let shared_comp = ws
-            .conn
-            .deflate_server_window_bits()
-            .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
-        ws.conn
-            .encode_server_message(opcode, bytes, shared_comp, &mut encoded);
-        let Some(h2) = slot.h2.as_deref_mut() else {
-            return false;
-        };
-        scratch_frame.clear();
-        h2.write_stream_data(stream_id, &encoded, false, scratch_frame);
-        let res = server.write_to_conn(conn_id, scratch_frame, false);
-        return res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp);
-    }
-
-    if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
-        if close_on_bp {
-            server.close_conn(socket_id);
-        }
-        return false;
-    }
-
-    let UvHttpShared {
-        ref mut conn_meta,
-        ref mut ws_shared_pool,
-        ref mut scratch_frame,
-        ..
-    } = *st;
-    let Some(ws) = conn_meta
-        .get_mut(socket_id)
-        .filter(|s| s.ws_sendable())
-        .and_then(|s| s.ws.as_deref_mut())
-    else {
-        return false;
     };
-    let shared_comp = ws
-        .conn
-        .deflate_server_window_bits()
-        .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
-    scratch_frame.clear();
-    ws.conn
-        .encode_server_message(opcode, bytes, shared_comp, scratch_frame);
-    let res = server.write_to_conn(socket_id, scratch_frame, false);
-    res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp)
+    if let Some((conn_id, stream_id)) = close_h2_stream {
+        close_h2_ws_stream_on_bp(server, shared, conn_id, stream_id, socket_id);
+    }
+    outcome
 }
 
 #[cfg(unix)]
@@ -4602,16 +4968,17 @@ fn publish_ws_topic(
     let mut delivered = 0u32;
     let mut plain_frame: Option<Vec<u8>> = None;
     for socket_id in targets {
-        let mut st = shared.borrow_mut();
+        let st = shared.borrow_mut();
         let max_bp = st.ws_max_backpressure;
         let close_on_bp = st.ws_close_on_backpressure_limit;
         if socket_id >= H2_WS_ID_BIT {
             drop(st);
-            if send_ws_frame(server, shared, socket_id, opcode, bytes) {
+            if send_ws_frame(server, shared, socket_id, opcode, bytes) != SendWsOutcome::Closed {
                 delivered += 1;
             }
             continue;
         }
+        let mut st = st;
         if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
             if close_on_bp {
                 server.close_conn(socket_id);
@@ -4646,7 +5013,9 @@ fn publish_ws_topic(
             buf.as_slice()
         };
         let res = server.write_to_conn(socket_id, frame_slice, false);
-        if res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp) {
+        if res == WriteResult::Backpressured && close_on_bp {
+            server.close_conn(socket_id);
+        } else if res != WriteResult::Closed {
             delivered += 1;
         }
     }
@@ -4837,13 +5206,13 @@ pub fn create_uv_server(
 
     enum BoundListener {
         Tcp(std::net::TcpListener, u16),
-        Unix(std::os::unix::net::UnixListener),
+        Unix(BoundUnixSocket),
     }
 
     let bound = if let Some(ref path) = unix_path {
-        let listener = bind_unix_listener(path, sock_cfg)
+        let socket = bind_unix_listener(path, sock_cfg)
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
-        BoundListener::Unix(listener)
+        BoundListener::Unix(socket)
     } else {
         let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
@@ -4929,6 +5298,7 @@ pub fn create_uv_server(
         pending: PendingSlab::with_capacity(256),
         conn_meta: ConnMetaTable::with_capacity(256),
         placeholder_seq: 0,
+        h1_stream_seq: 0,
         scratch_frame: Vec::with_capacity(4096),
     }));
 
@@ -4942,9 +5312,9 @@ pub fn create_uv_server(
             BoundListener::Tcp(listener, _) => {
                 UvServer::start_with_tls(uv_loop.cast(), listener, sock_cfg, tls_store, callbacks)
             }
-            BoundListener::Unix(listener) => UvServer::start_unix_with_tls(
+            BoundListener::Unix(bound_unix) => UvServer::start_unix_with_tls(
                 uv_loop.cast(),
-                listener,
+                bound_unix,
                 sock_cfg,
                 tls_store,
                 callbacks,

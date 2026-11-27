@@ -281,27 +281,43 @@ impl H2Conn {
                 .count()
     }
 
-    /// Cancel expired uploads. An incomplete HPACK block requires closing the connection.
-    pub fn expire_requests(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+    /// Cancel expired uploads and return `(close_conn, expired_stream_ids)`.
+    /// An incomplete HPACK block requires closing the connection.
+    pub fn drain_expired_streams(&mut self, now: Instant, out: &mut Vec<u8>) -> (bool, Vec<u32>) {
         let Some(timeout) = self.cfg.request_timeout else {
-            return false;
+            return (false, Vec::new());
         };
         if self
             .continuation
             .as_ref()
             .is_some_and(|cont| now.saturating_duration_since(cont.started) >= timeout)
         {
-            return true;
+            return (true, Vec::new());
         }
-        self.active_streams.retain(|&id, stream| {
-            if now.saturating_duration_since(stream.started) < timeout {
-                return true;
-            }
-            self.early_credit.remove(&id);
-            write_rst_stream(id, ERR_CANCEL, out);
-            false
-        });
-        false
+        let expired: Vec<u32> = self
+            .active_streams
+            .iter()
+            .filter(|(_, stream)| {
+                !stream.is_ws_connect && now.saturating_duration_since(stream.started) >= timeout
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for &id in &expired {
+            self.reset_stream(id, ERR_CANCEL, out);
+        }
+        (false, expired)
+    }
+
+    /// Cancel expired uploads. An incomplete HPACK block requires closing the connection.
+    pub fn expire_requests(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+        self.drain_expired_streams(now, out).0
+    }
+
+    /// Queued outbound HTTP/2 DATA bytes waiting on flow control for `stream_id`.
+    pub fn stream_queued_bytes(&self, stream_id: u32) -> usize {
+        self.out_streams
+            .get(&stream_id)
+            .map_or(0, OutStream::backlog)
     }
 
     fn request_expired(&self, started: Instant) -> bool {
@@ -396,6 +412,20 @@ impl H2Conn {
     fn fault(&mut self, stream_id: u32, error_code: u32, out: &mut Vec<u8>) {
         self.reset_stream(stream_id, error_code, out);
         let _ = self.count_reset();
+    }
+
+    fn reset_and_emit(
+        &mut self,
+        stream_id: u32,
+        error_code: u32,
+        notify: bool,
+        out: &mut Vec<u8>,
+        res: &mut H2FeedResult,
+    ) {
+        self.fault(stream_id, error_code, out);
+        if notify {
+            res.events.push(H2Event::StreamReset(stream_id));
+        }
     }
 
     fn queued_response_bytes(&self) -> usize {
@@ -864,7 +894,13 @@ impl H2Conn {
                         if st.streaming || st.is_ws_connect {
                             let next_len = st.received_len.saturating_add(data.len() as u64);
                             if !st.is_ws_connect && st.declared_cl.is_some_and(|cl| next_len > cl) {
-                                self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                                self.reset_and_emit(
+                                    stream_id,
+                                    ERR_PROTOCOL_ERROR,
+                                    true,
+                                    write_buf,
+                                    &mut res,
+                                );
                                 if !end_stream {
                                     self.drain_stream(stream_id, false);
                                 }
@@ -904,16 +940,36 @@ impl H2Conn {
                         continue;
                     }
                     if let Some((chunk, is_end)) = streamed_chunk {
-                        let invalid_short = if remove_stream {
-                            self.active_streams.remove(&stream_id).is_some_and(|st| {
-                                !st.is_ws_connect
-                                    && st.declared_cl.is_some_and(|cl| cl != st.received_len)
-                            })
+                        let (invalid_short, expired, notify_reset) = if remove_stream {
+                            self.paused_recv_streams.remove(&stream_id);
+                            self.active_streams.remove(&stream_id).map_or(
+                                (false, false, false),
+                                |st| {
+                                    let short = !st.is_ws_connect
+                                        && st.declared_cl.is_some_and(|cl| cl != st.received_len);
+                                    let exp = !st.is_ws_connect && self.request_expired(st.started);
+                                    (short, exp, st.streaming || st.is_ws_connect)
+                                },
+                            )
                         } else {
-                            false
+                            (false, false, false)
                         };
                         if invalid_short {
-                            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_PROTOCOL_ERROR,
+                                notify_reset,
+                                write_buf,
+                                &mut res,
+                            );
+                        } else if expired {
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_CANCEL,
+                                notify_reset,
+                                write_buf,
+                                &mut res,
+                            );
                         } else {
                             res.events.push(H2Event::StreamData {
                                 stream_id,
@@ -1000,20 +1056,30 @@ impl H2Conn {
 
         // Check if this is trailing headers on an already-open stream.
         if let Some(st) = self.active_streams.get_mut(&stream_id) {
-            if st.headers_done && end_stream {
+            if st.headers_done && end_stream && !st.is_ws_connect {
                 // Trailers are ordinary fields: a pseudo-header, a malformed name or value, or a
                 // connection-specific field fails this stream (the table above is already in step).
+                let notify = st.streaming;
                 if decoded
                     .iter()
                     .any(|(name, val)| name.starts_with(':') || invalid_field(name, val))
                 {
-                    self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    self.reset_and_emit(stream_id, ERR_PROTOCOL_ERROR, notify, write_buf, res);
                     return Ok(());
                 }
+                self.paused_recv_streams.remove(&stream_id);
                 if let Some(st) = self.active_streams.remove(&stream_id) {
                     if st.streaming {
                         if st.declared_cl.is_some_and(|cl| cl != st.received_len) {
-                            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_PROTOCOL_ERROR,
+                                true,
+                                write_buf,
+                                res,
+                            );
+                        } else if self.request_expired(st.started) {
+                            self.reset_and_emit(stream_id, ERR_CANCEL, true, write_buf, res);
                         } else {
                             res.events.push(H2Event::StreamData {
                                 stream_id,
@@ -1029,7 +1095,8 @@ impl H2Conn {
                 }
                 return Ok(());
             }
-            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+            let notify = st.streaming || st.is_ws_connect;
+            self.reset_and_emit(stream_id, ERR_PROTOCOL_ERROR, notify, write_buf, res);
             return Ok(());
         }
 
@@ -1040,9 +1107,21 @@ impl H2Conn {
         if stream_id <= self.last_stream_id {
             return Err(ERR_PROTOCOL_ERROR);
         }
-        if (self.active_streams.len() + self.active_response_streams()) as u32
-            >= self.cfg.max_concurrent_streams
-        {
+        let open_streams = self.active_streams.len()
+            + self
+                .open_response_streams
+                .keys()
+                .filter(|id| !self.active_streams.contains_key(id))
+                .count()
+            + self
+                .out_streams
+                .keys()
+                .filter(|id| {
+                    !self.active_streams.contains_key(id)
+                        && !self.open_response_streams.contains_key(id)
+                })
+                .count();
+        if open_streams as u32 >= self.cfg.max_concurrent_streams {
             self.fault(stream_id, ERR_REFUSED_STREAM, write_buf);
             return Ok(());
         }
@@ -1051,6 +1130,7 @@ impl H2Conn {
         let mut method: Option<String> = None;
         let mut raw_path: Option<String> = None;
         let mut authority: Option<String> = None;
+        let mut has_pseudo_authority = false;
         let mut protocol: Option<String> = None;
         let mut seen_regular = false;
         let mut seen_scheme = false;
@@ -1093,10 +1173,11 @@ impl H2Conn {
                         raw_path = Some(val);
                     }
                     ":authority" => {
-                        if authority.is_some() {
+                        if has_pseudo_authority {
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             return Ok(());
                         }
+                        has_pseudo_authority = true;
                         authority = Some(val);
                     }
                     ":scheme" => {
@@ -1171,7 +1252,7 @@ impl H2Conn {
         if protocol.is_some()
             && !(is_ws_connect
                 && method == "CONNECT"
-                && authority.is_some()
+                && has_pseudo_authority
                 && !end_stream
                 && declared_cl.is_none())
         {

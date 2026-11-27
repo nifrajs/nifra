@@ -135,6 +135,7 @@ struct EpollState {
     clock: LoopClock,
     epfd: RawFd,
     listener_fd: RawFd,
+    unix_guard: Option<crate::UnixSocketGuard>,
     epoll_handle: *mut c_void,
     check_handle: *mut c_void,
     check_armed: bool,
@@ -240,6 +241,7 @@ impl EpollServer {
         uv_loop: *mut c_void,
         listener: OwnedFd,
         is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
@@ -303,6 +305,7 @@ impl EpollServer {
             clock: LoopClock::new(initial_uv_ms),
             epfd,
             listener_fd: owned_listener_fd,
+            unix_guard,
             epoll_handle,
             check_handle,
             check_armed: false,
@@ -555,7 +558,6 @@ impl EpollServer {
         if conn.app_read_paused == paused {
             return true;
         }
-        conn.app_read_paused = paused;
         let events = (if conn.writable_armed {
             libc::EPOLLOUT as u32
         } else {
@@ -565,15 +567,22 @@ impl EpollServer {
         } else {
             libc::EPOLLIN as u32
         });
-        unsafe {
+        let applied = unsafe {
             if events == 0 {
                 if epfd >= 0 {
                     libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, conn.fd, std::ptr::null_mut());
+                    true
+                } else {
+                    false
                 }
             } else {
-                let _ = epoll_ctl_mod(epfd, conn.fd, conn_id, events);
+                epoll_ctl_mod(epfd, conn.fd, conn_id, events)
             }
+        };
+        if !applied {
+            return false;
         }
+        conn.app_read_paused = paused;
         true
     }
 
@@ -583,6 +592,9 @@ impl EpollServer {
             let lfd = st.listener_fd;
             st.listener_fd = -1;
             unsafe { epoll_ctl_del_and_close(st.epfd, lfd) };
+        }
+        if let Some(mut guard) = st.unix_guard.take() {
+            guard.cleanup_now();
         }
     }
 

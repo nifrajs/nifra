@@ -3223,6 +3223,7 @@ function createStaticResolver(
   pathname: string,
   getHeader: (name: string) => string | null,
   buildRequest: () => Request,
+  authority?: string,
 ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined {
   if (typeof staticOption !== "function") {
     throw new TypeError(
@@ -3242,16 +3243,21 @@ function createStaticResolver(
       return { kind: "response", response: answer }
     }
   }
-  return (method, pathname, getHeader) => {
+  return (method, pathname, getHeader, _buildRequest, authority) => {
     if (method !== "GET" && method !== "HEAD") return undefined
     const headers: IncomingHttpHeaders = {}
     for (const h of ["if-none-match", "if-modified-since", "range", "if-range"]) {
       const v = getHeader(h)
       if (v !== null) headers[h] = v
     }
-    return serveMounts(states, 0, staticPathOf(pathname), () => getHeader("host") ?? "", method, {
-      headers,
-    })
+    return serveMounts(
+      states,
+      0,
+      staticPathOf(pathname),
+      () => authority ?? getHeader("host") ?? "",
+      method,
+      { headers },
+    )
   }
 }
 

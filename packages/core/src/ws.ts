@@ -31,6 +31,45 @@ import {
 import { createBunWsHandlers } from "./server/ws-bun.ts"
 import type { WsRuntime } from "./server/ws-hook.ts"
 
+const INSTALL_NATIVE_PUBLISH = Symbol.for("@nifrajs/core/install-native-publish")
+
+type NativePublishFn = (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void
+
+function attachNativePublishInstaller(
+  app: object,
+  eligible: () => boolean,
+  set: (publish: NativePublishFn | undefined) => void,
+): void {
+  const publishers: NativePublishFn[] = []
+  const install = (publish: NativePublishFn, remove = false): boolean => {
+    if (remove) {
+      const idx = publishers.indexOf(publish)
+      if (idx >= 0) publishers.splice(idx, 1)
+      set(
+        publishers.length === 0
+          ? undefined
+          : publishers.length === 1
+            ? publishers[0]
+            : (topic, data) => {
+                for (const fn of publishers) fn(topic, data)
+              },
+      )
+      return false
+    }
+    if (!eligible()) return false
+    publishers.push(publish)
+    set(
+      publishers.length === 1
+        ? publish
+        : (topic, data) => {
+            for (const fn of publishers) fn(topic, data)
+          },
+    )
+    return true
+  }
+  Object.defineProperty(app, INSTALL_NATIVE_PUBLISH, { value: install, configurable: true })
+}
+
 const WS_RUNTIME: WsRuntime = {
   wrapHandler: wrapWebSocketMessageValidation,
   upgradeStep: handshakeUpgradeStep,
@@ -39,6 +78,7 @@ const WS_RUNTIME: WsRuntime = {
   bunHandlers: createBunWsHandlers,
   attach: attachWebSocket,
   sender: webSocketSender,
+  pub: attachNativePublishInstaller,
 }
 
 /** The install seam a server exposes so the `websocket()` plugin can hand it the runtime. */

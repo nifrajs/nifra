@@ -2,20 +2,20 @@
 
 import assert from "node:assert/strict"
 import { randomBytes, X509Certificate } from "node:crypto"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises"
 import { request as httpRequest } from "node:http"
 import { connect as http2Connect } from "node:http2"
+import { createConnection } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
-import { connect as tlsConnect } from "node:tls"
+import { type ConnectionOptions, connect as tlsConnect } from "node:tls"
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { WebSocket as WsClient } from "ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import { serve, serveStatic } from "../src/index.ts"
-import { raw } from "./support.ts"
 
 const fingerprintOf = (pem: string): string => new X509Certificate(pem).fingerprint256
 
@@ -25,20 +25,18 @@ function tlsFingerprintForSni(
   trustedCa: string,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const sock = tlsConnect(
-      {
-        port,
-        host: "127.0.0.1",
-        ...(servername !== undefined ? { servername } : {}),
-        ca: trustedCa,
-        checkServerIdentity: () => undefined,
-      },
-      () => {
-        const fp = sock.getPeerCertificate().fingerprint256
-        sock.destroy()
-        resolve(fp)
-      },
-    )
+    const tlsOpts: ConnectionOptions = {
+      port,
+      host: "127.0.0.1",
+      ca: trustedCa,
+      checkServerIdentity: () => undefined,
+    }
+    if (servername !== undefined) tlsOpts.servername = servername
+    const sock = tlsConnect(tlsOpts, () => {
+      const fp = sock.getPeerCertificate().fingerprint256
+      sock.destroy()
+      resolve(fp)
+    })
     sock.on("error", reject)
   })
 }
@@ -189,6 +187,30 @@ test("Unix domain socket listener answers GET and POST over serve({ path })", as
       req.end("unix-payload")
     })
     assert.deepEqual(JSON.parse(postBody), { body: "unix-payload" })
+
+    await running.stop({ drainMs: 50 })
+    await assert.rejects(() => stat(sockPath))
+    // Re-binding the exact same socket path succeeds after stop() unlinked the owned file.
+    const rebound = await serve(
+      server().get("/hello", () => ({ rebound: true })),
+      {
+        path: sockPath,
+      },
+    )
+    try {
+      const rb = await new Promise<string>((resolve, reject) => {
+        const req = httpRequest({ socketPath: sockPath, path: "/hello", method: "GET" }, (res) => {
+          const chunks: Buffer[] = []
+          res.on("data", (c) => chunks.push(c))
+          res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+        })
+        req.on("error", reject)
+        req.end()
+      })
+      assert.deepEqual(JSON.parse(rb), { rebound: true })
+    } finally {
+      await rebound.stop({ drainMs: 50 })
+    }
   } finally {
     await running.stop({ drainMs: 50 })
     await rm(dir, { recursive: true, force: true })
@@ -208,6 +230,13 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
           headers: { "content-type": "text/plain", "content-encoding": "identity" },
         }),
     )
+    .get(
+      "/vary-origin",
+      () =>
+        new Response(JSON.stringify({ data: big }), {
+          headers: { "content-type": "application/json", vary: "Origin" },
+        }),
+    )
     .get("/img", () => new Response(big, { headers: { "content-type": "image/png" } }))
   const running = await serve(app, {
     port: 0,
@@ -215,7 +244,10 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
     compression: { minBytes: 512 },
   })
   try {
-    const reqEnc = (path: string, ae: string): Promise<{ ce: string | null; body: Buffer }> =>
+    const reqEnc = (
+      path: string,
+      ae: string,
+    ): Promise<{ ce: string | null; vary: string | null; body: Buffer }> =>
       new Promise((resolve, reject) => {
         const req = httpRequest(
           { port: running.port, host: "127.0.0.1", path, headers: { "accept-encoding": ae } },
@@ -228,6 +260,7 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
                   typeof res.headers["content-encoding"] === "string"
                     ? res.headers["content-encoding"]
                     : null,
+                vary: typeof res.headers.vary === "string" ? res.headers.vary : null,
                 body: Buffer.concat(chunks),
               }),
             )
@@ -239,6 +272,7 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
 
     const br = await reqEnc("/big", "gzip;q=0.5, br;q=0.9")
     assert.equal(br.ce, "br")
+    assert.match(br.vary ?? "", /accept-encoding/i)
     assert.deepEqual(JSON.parse(brotliDecompressSync(br.body).toString("utf8")), { data: big })
 
     const gz = await reqEnc("/big", "deflate;q=0.4, gzip;q=0.8")
@@ -248,6 +282,15 @@ test("native compression negotiates br/gzip/deflate by quality and respects minB
     const df = await reqEnc("/big", "deflate")
     assert.equal(df.ce, "deflate")
     assert.deepEqual(JSON.parse(inflateSync(df.body).toString("utf8")), { data: big })
+
+    const idResp = await reqEnc("/big", "identity")
+    assert.equal(idResp.ce, null)
+    assert.match(idResp.vary ?? "", /accept-encoding/i)
+
+    const varyOrigin = await reqEnc("/vary-origin", "gzip")
+    assert.equal(varyOrigin.ce, "gzip")
+    assert.match(varyOrigin.vary ?? "", /origin/i)
+    assert.match(varyOrigin.vary ?? "", /accept-encoding/i)
 
     assert.equal((await reqEnc("/small", "br, gzip")).ce, null)
     assert.equal((await reqEnc("/pre", "br, gzip")).ce, "identity")
@@ -288,21 +331,28 @@ test("static and fastResponse parity with @nifrajs/node", async () => {
 })
 
 test("streaming HTTP/1.1 and HTTP/2 request bodies deliver chunks before upload finishes", async () => {
-  const app = server().post("/stream", async (c) => {
-    const stream = c.req.body
-    assert.ok(stream !== null)
-    const reader = stream.getReader()
-    const first = await reader.read()
-    assert.equal(first.done, false)
-    const firstText = new TextDecoder().decode(first.value)
-    const rest: Uint8Array[] = []
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) break
-      rest.push(next.value)
-    }
-    return { first: firstText, rest: Buffer.concat(rest).toString("utf8") }
+  let releaseSecondChunk: (() => void) | undefined
+  let firstChunkArrived = new Promise<void>((resolve) => {
+    releaseSecondChunk = resolve
   })
+  const app = server()
+    .post("/stream", async (c) => {
+      const stream = c.req.body
+      assert.ok(stream !== null)
+      const reader = stream.getReader()
+      const first = await reader.read()
+      assert.equal(first.done, false)
+      const firstText = new TextDecoder().decode(first.value)
+      releaseSecondChunk?.()
+      const rest: Uint8Array[] = []
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) break
+        rest.push(next.value)
+      }
+      return { first: firstText, rest: Buffer.concat(rest).toString("utf8") }
+    })
+    .post("/json-stream", async (c) => ({ parsed: await c.req.json() }))
   const running = await serve(app, {
     port: 0,
     hostname: "127.0.0.1",
@@ -310,15 +360,28 @@ test("streaming HTTP/1.1 and HTTP/2 request bodies deliver chunks before upload 
     engine: { streamRequestBodies: true },
   })
   try {
-    // HTTP/1.1 chunked upload pausing between chunk 1 and chunk 2
-    const h1 = await raw(
-      running.port,
-      "POST /stream HTTP/1.1\r\nHost: x\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n6\r\n-world\r\n0\r\n\r\n",
-    )
-    assert.match(h1, /"first":"hello"/)
-    assert.match(h1, /"rest":"-world"/)
+    // HTTP/1.1 chunked upload pausing between chunk 1 arrival in handler and chunk 2
+    const h1Body = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+        sock.write(
+          "POST /stream HTTP/1.1\r\nHost: x\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n",
+        )
+        void firstChunkArrived.then(() => {
+          sock.write("6\r\n-world\r\n0\r\n\r\n")
+        })
+      })
+      const chunks: Buffer[] = []
+      sock.on("data", (c) => chunks.push(c))
+      sock.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      sock.on("error", reject)
+    })
+    assert.match(h1Body, /"first":"hello"/)
+    assert.match(h1Body, /"rest":"-world"/)
 
-    // HTTP/2 streaming upload
+    // Reset barrier for HTTP/2 streaming upload
+    firstChunkArrived = new Promise<void>((resolve) => {
+      releaseSecondChunk = resolve
+    })
     const h2 = http2Connect(`http://127.0.0.1:${running.port}`)
     const h2Body = await new Promise<string>((resolve, reject) => {
       const req = h2.request({ ":method": "POST", ":path": "/stream" })
@@ -327,10 +390,60 @@ test("streaming HTTP/1.1 and HTTP/2 request bodies deliver chunks before upload 
       req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
       req.on("error", reject)
       req.write("part1-")
-      setTimeout(() => req.end("part2"), 20)
+      void firstChunkArrived.then(() => req.end("part2"))
     })
     h2.close()
     assert.deepEqual(JSON.parse(h2Body), { first: "part1-", rest: "part2" })
+
+    const jsonRes = await fetch(`http://127.0.0.1:${running.port}/json-stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ streamed: true }),
+    })
+    assert.equal(jsonRes.status, 200)
+    assert.deepEqual(await jsonRes.json(), { parsed: { streamed: true } })
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("route deflate: false overrides global wsDeflate: true", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/no-deflate", {
+      deflate: false,
+      message(ws, data) {
+        ws.send(data)
+      },
+    })
+    .ws("/with-deflate", {
+      message(ws, data) {
+        ws.send(data)
+      },
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", wsDeflate: true })
+  try {
+    const offClient = new WsClient(`ws://127.0.0.1:${running.port}/no-deflate`, {
+      perMessageDeflate: true,
+    })
+    let offExt = ""
+    offClient.on("upgrade", (res) => {
+      offExt = String(res.headers["sec-websocket-extensions"] ?? "")
+    })
+    await new Promise<void>((r) => offClient.once("open", () => r()))
+    assert.equal(offExt, "")
+    offClient.close()
+
+    const onClient = new WsClient(`ws://127.0.0.1:${running.port}/with-deflate`, {
+      perMessageDeflate: true,
+    })
+    let onExt = ""
+    onClient.on("upgrade", (res) => {
+      onExt = String(res.headers["sec-websocket-extensions"] ?? "")
+    })
+    await new Promise<void>((r) => onClient.once("open", () => r()))
+    assert.match(onExt, /permessage-deflate/)
+    onClient.close()
   } finally {
     await running.stop({ drainMs: 50 })
   }

@@ -191,6 +191,7 @@ impl TlsInput {
 pub struct TlsStore {
     config: ArcSwap<ServerConfig>,
     ticket_state: Mutex<TicketState>,
+    update_lock: Mutex<()>,
 }
 
 struct TicketState {
@@ -358,6 +359,7 @@ impl TlsStore {
                 shared_keys,
                 active_input: input.clone(),
             }),
+            update_lock: Mutex::new(()),
         })
     }
 
@@ -379,6 +381,11 @@ impl TlsStore {
     /// protocol bounds, cipher suites, or curves rotates an ephemeral ticketer so stale tickets
     /// cannot resume under loosened assumptions. Leaves the previous config intact on any error.
     pub fn reload_input(&self, input: &TlsInput) -> Result<(), TlsError> {
+        let _update = self.update_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.reload_input_locked(input)
+    }
+
+    fn reload_input_locked(&self, input: &TlsInput) -> Result<(), TlsError> {
         let mat = input.resolve_pem()?;
         let fp = policy_digest(input, &mat);
         let mut guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -426,16 +433,18 @@ impl TlsStore {
         key_pem: &[u8],
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<(), TlsError> {
+        let _update = self.update_lock.lock().unwrap_or_else(|e| e.into_inner());
         let next = {
             let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
             input_with_pem_override(&guard.active_input, cert_pem, key_pem, alpn_protocols)
         };
-        self.reload_input(&next)
+        self.reload_input_locked(&next)
     }
 
     /// Add or replace an SNI certificate entry and atomically reload the store (preserving tickets).
     pub fn add_server_name(&self, entry: SniCertInput) -> Result<(), TlsError> {
         let normalized = normalize_server_name(&entry.server_name)?;
+        let _update = self.update_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = {
             let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
             guard.active_input.clone()
@@ -447,12 +456,13 @@ impl TlsStore {
         let mut normalized_entry = entry;
         normalized_entry.server_name = normalized;
         next.sni_certs.push(normalized_entry);
-        self.reload_input(&next)
+        self.reload_input_locked(&next)
     }
 
     /// Remove an SNI certificate entry and atomically reload the store. Returns `true` if removed.
     pub fn remove_server_name(&self, server_name: &str) -> Result<bool, TlsError> {
         let normalized = normalize_server_name(server_name)?;
+        let _update = self.update_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = {
             let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
             guard.active_input.clone()
@@ -465,7 +475,7 @@ impl TlsStore {
         if next.sni_certs.len() == before {
             return Ok(false);
         }
-        self.reload_input(&next)?;
+        self.reload_input_locked(&next)?;
         Ok(true)
     }
 
@@ -477,15 +487,25 @@ impl TlsStore {
 }
 
 fn normalize_server_name(raw: &str) -> Result<String, TlsError> {
-    let trimmed = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    let trimmed = raw.trim();
+    let trimmed = trimmed
+        .strip_suffix('.')
+        .unwrap_or(trimmed)
+        .to_ascii_lowercase();
     if trimmed.is_empty() || trimmed.bytes().any(|b| b.is_ascii_control() || b == b' ') {
         return Err(TlsError::InvalidServerName(raw.to_owned()));
     }
-    if let Some(rest) = trimmed.strip_prefix("*.") {
+    let labels = if let Some(rest) = trimmed.strip_prefix("*.") {
         if rest.is_empty() || rest.contains('*') || !rest.contains('.') {
             return Err(TlsError::InvalidServerName(raw.to_owned()));
         }
+        rest
     } else if trimmed.contains('*') {
+        return Err(TlsError::InvalidServerName(raw.to_owned()));
+    } else {
+        trimmed.as_str()
+    };
+    if labels.split('.').any(str::is_empty) {
         return Err(TlsError::InvalidServerName(raw.to_owned()));
     }
     Ok(trimmed)
@@ -1272,6 +1292,22 @@ mod tests {
         ));
         assert!(matches!(
             normalize_server_name("*.*.example.com"),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name(".example.com"),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name("*..example.com"),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name("foo..bar"),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name("example.com.."),
             Err(TlsError::InvalidServerName(_))
         ));
     }

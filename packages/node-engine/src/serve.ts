@@ -142,6 +142,7 @@ interface RustCompressionOptions {
 }
 
 interface RustWsDeflateOptions {
+  enabled?: boolean
   serverNoContextTakeover?: boolean
   clientNoContextTakeover?: boolean
   serverMaxWindowBits?: number
@@ -842,7 +843,23 @@ class RustBatchSource {
   }
 
   release(): void {
+    const reqId = this.id
     this.id = -1
+    const state = this.streamState
+    if (state !== undefined && !state.ended) {
+      state.cancelled = true
+      state.ended = true
+      state.queue.length = 0
+      state.queuedBytes = 0
+      if (state.paused && reqId >= 0) {
+        state.paused = false
+        this.server.resumeRequestBody(reqId)
+      }
+      while (state.waiters.length > 0) {
+        const wake = state.waiters.shift()
+        wake?.(true)
+      }
+    }
   }
 
   abort(): void {
@@ -887,31 +904,22 @@ class RustBatchSource {
   }
 
   header(name: string): string | null {
-    if (name === "content-type" && this.contentType !== undefined) return this.contentType
-    if (name === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
-      if ((this.flags & FLAG_HAS_BODY) !== 0) {
-        if ((this.flags & FLAG_STREAM_BODY) !== 0 && this.bodyLen === MAX_NATIVE_LENGTH) {
-          return this.id >= 0 ? this.server.getHeader(this.id, "content-length") : null
-        }
-        return String(this.bodyLen)
-      }
-    }
-    if (name === "transfer-encoding") {
-      return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
-    }
-    const lower = name.toLowerCase()
+    const lower =
+      name === "content-type" || name === "content-length" || name === "transfer-encoding"
+        ? name
+        : name.toLowerCase()
+    if (lower === "content-type" && this.contentType !== undefined) return this.contentType
     if (lower === "transfer-encoding") {
       return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
     }
     if (lower === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
+      if ((this.flags & FLAG_STREAM_BODY) !== 0) {
+        return this.id >= 0 ? this.server.getHeader(this.id, "content-length") : null
+      }
       if ((this.flags & FLAG_HAS_BODY) !== 0) {
-        if ((this.flags & FLAG_STREAM_BODY) !== 0 && this.bodyLen === MAX_NATIVE_LENGTH) {
-          return this.id >= 0 ? this.server.getHeader(this.id, "content-length") : null
-        }
         return String(this.bodyLen)
       }
     }
-    if (lower === "content-type" && this.contentType !== undefined) return this.contentType
     if (this.id < 0) return null
     return this.server.getHeader(this.id, lower)
   }
@@ -1012,7 +1020,10 @@ class RustBatchSource {
             if (source.id >= 0) source.server.abortStream(source.id)
           },
         },
-        { highWaterMark: STREAM_BODY_HIGH_WATER },
+        {
+          highWaterMark: STREAM_BODY_HIGH_WATER,
+          size: (chunk) => chunk?.byteLength ?? 0,
+        },
       )
       return state.stream
     }
@@ -1050,7 +1061,8 @@ class RustBatchSource {
     return Promise.resolve(new Uint8Array(this.toBytes() ?? NO_BODY_BYTES))
   }
 
-  jsonNow(): { readonly value: unknown; readonly byteLength: number } {
+  jsonNow(): { readonly value: unknown; readonly byteLength: number } | undefined {
+    if (this.streamState !== undefined) return undefined
     if (this.bodyText !== null) {
       return { value: JSON.parse(this.bodyText), byteLength: this.bodyText.length }
     }
@@ -1064,7 +1076,8 @@ class RustBatchSource {
       return this.drainStreamBytes().then((bytes) => parseJsonBytes(bytes))
     }
     try {
-      return Promise.resolve(this.jsonNow().value)
+      const now = this.jsonNow()
+      return Promise.resolve(now === undefined ? undefined : now.value)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -1078,7 +1091,14 @@ class RustBatchSource {
       }))
     }
     try {
-      return Promise.resolve(this.jsonNow())
+      const now = this.jsonNow()
+      if (now === undefined) {
+        return this.drainStreamBytes().then((bytes) => ({
+          value: parseJsonBytes(bytes),
+          byteLength: bytes.byteLength,
+        }))
+      }
+      return Promise.resolve(now)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -1801,7 +1821,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
       let bodyText: string | null = null
       let bodyBytes: Uint8Array | null | undefined
-      if ((flags & FLAG_HAS_BODY) !== 0 && (flags & FLAG_LARGE_BODY) === 0) {
+      if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
         if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
           bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
         } else {
@@ -1843,20 +1863,32 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       )
 
       if (staticResolver !== undefined && (methodIdx === 0 || methodIdx === 5)) {
-        const staticAnswer = staticResolver(
-          method,
-          pathname,
-          (name) => source.header(name),
-          () => source.request,
-        )
+        let staticAnswer: NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
+        try {
+          staticAnswer = staticResolver(
+            method,
+            pathname,
+            (name) => source.header(name),
+            () => source.request,
+            authority,
+          )
+        } catch (err) {
+          inflight.set(reqId, source)
+          fail(source, err)
+          continue
+        }
         if (staticAnswer !== undefined) {
           if (staticAnswer instanceof Promise) {
             inflight.set(reqId, source)
             staticAnswer.then(
               (settled) => {
                 if (source.aborted || source.settled) return
-                if (settled === undefined) dispatchHttp(source, isHead)
-                else writeComplexOutcome(source, settled, isHead)
+                if (settled === undefined) {
+                  if (isWsHandshake) upgradeSocket(source)
+                  else dispatchHttp(source, isHead)
+                } else {
+                  writeComplexOutcome(source, settled, isHead)
+                }
               },
               (err: unknown) => fail(source, err),
             )
@@ -1950,10 +1982,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           openingWs = outcome
           let socketId: number
           try {
-            const deflateOverride =
+            const deflateOverride: RustWsDeflateOptions | null =
               outcome.handler.deflate === undefined
                 ? null
-                : (toRustWsDeflate(outcome.handler.deflate) ?? null)
+                : outcome.handler.deflate === false
+                  ? { enabled: false }
+                  : (toRustWsDeflate(outcome.handler.deflate) ?? null)
             socketId = uvServer.upgradeToWebSocket(source.requestId, deflateOverride)
           } finally {
             openingWs = undefined
@@ -2168,14 +2202,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       }),
     )
   }
+  type NativePublishFn = (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void
+  type InstallNativePublishFn = (publish: NativePublishFn, remove?: boolean) => boolean
   let nativePubsub = false
-  const installNative = (app as FetchHandler & Record<symbol, unknown>)[INSTALL_NATIVE_PUBLISH]
+  let installedNativePublish: NativePublishFn | undefined
+  const installNative = Reflect.get(app, INSTALL_NATIVE_PUBLISH)
   if (typeof installNative === "function") {
-    nativePubsub = (
-      installNative as (
-        publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void,
-      ) => boolean
-    ).call(app, (topic, data) => {
+    const publishNative: NativePublishFn = (topic, data) => {
       if (closed) return
       if (typeof data === "string") {
         uvServer.wsPublishText(topic, data, null)
@@ -2189,7 +2222,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           null,
         )
       }
-    })
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `INSTALL_NATIVE_PUBLISH` on `Server` returns `boolean` and accepts `(publish, remove?)`.
+    const installer = installNative as InstallNativePublishFn
+    nativePubsub = installer.call(app, publishNative, false)
+    if (nativePubsub) installedNativePublish = publishNative
   }
   const abortRequest = (reqId: number): void => {
     const source = inflight.get(reqId)
@@ -2304,6 +2341,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   }: NodeStopOptions): Promise<void> => {
     if (closed) return
     closed = true
+    if (installedNativePublish !== undefined && typeof installNative === "function") {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `INSTALL_NATIVE_PUBLISH` accepts `(publish, true)` to detach on stop.
+      ;(installNative as InstallNativePublishFn).call(app, installedNativePublish, true)
+      installedNativePublish = undefined
+    }
     if (signals !== undefined) {
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
@@ -2328,6 +2370,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     await lifecycle("stopped")
   }
 
+  const normalizeSniKey = (name: string): string => name.trim().replace(/\.$/, "").toLowerCase()
+
   const reloadTls = (tls: TlsOptions | undefined = currentTls): void => {
     if (closed) throw new Error("@nifrajs/node-engine: the server is not running")
     if (tls === undefined) {
@@ -2343,20 +2387,45 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       throw new Error("@nifrajs/node-engine: addServerName requires a server started with `tls`")
     }
     uvServer.addServerName(toRustTlsSni(entry))
+    const key = normalizeSniKey(entry.serverName)
+    const nextNames = (currentTls.serverNames ?? []).filter(
+      (existing) => normalizeSniKey(existing.serverName) !== key,
+    )
+    nextNames.push(entry)
+    currentTls = { ...currentTls, serverNames: nextNames }
   }
 
   const removeServerName = (serverName: string): boolean => {
     if (closed) throw new Error("@nifrajs/node-engine: the server is not running")
-    return uvServer.removeServerName(serverName)
+    const removed = uvServer.removeServerName(serverName)
+    if (removed && currentTls?.serverNames !== undefined) {
+      const key = normalizeSniKey(serverName)
+      currentTls = {
+        ...currentTls,
+        serverNames: currentTls.serverNames.filter(
+          (existing) => normalizeSniKey(existing.serverName) !== key,
+        ),
+      }
+    }
+    return removed
   }
 
-  return Promise.resolve({
+  const serverHandle: {
+    readonly port: number
+    path?: string
+    readonly stop: (options?: NodeStopOptions) => Promise<void>
+    readonly reloadTls: (tls?: TlsOptions) => void
+    readonly addServerName: (entry: TlsSniEntry) => void
+    readonly removeServerName: (serverName: string) => boolean
+    readonly [Symbol.asyncDispose]: () => Promise<void>
+  } = {
     port: uvServer.port,
-    ...(unixPath !== undefined ? { path: unixPath } : {}),
     stop,
     reloadTls,
     addServerName,
     removeServerName,
     [Symbol.asyncDispose]: () => stop(),
-  })
+  }
+  if (unixPath !== undefined) serverHandle.path = unixPath
+  return Promise.resolve(serverHandle)
 }

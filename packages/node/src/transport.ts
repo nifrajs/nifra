@@ -14,6 +14,7 @@ export type StaticRequestResolver = (
   pathname: string,
   getHeader: (name: string) => string | null,
   buildRequest: () => Request,
+  authority?: string,
 ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
 
 /** The Host and target options `serve()` accepts, resolved once at startup. */

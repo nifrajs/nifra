@@ -4727,7 +4727,7 @@ _No named exports (side-effect entrypoint)._
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
   How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
-- **StaticRequestResolver** _(type)_ - `type StaticRequestResolver = ( method: string, pathname: string, getHeader: (name: string) => string | null, buildRequest: () => Request, ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined`
+- **StaticRequestResolver** _(type)_ - `type StaticRequestResolver = ( method: string, pathname: string, getHeader: (name: string) => string | null, buildRequest: () => Request, authority?: string, ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined>…`
   Resolver built by {@link createStaticResolver} for sibling HTTP adapters supporting `static`.
 - **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void`
   Node's async-context bookkeeping flips on lazily; flipping it before listening keeps the tick loop monomorphic.

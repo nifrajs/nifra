@@ -10,7 +10,6 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::net::TcpListener as StdTcpListener;
 use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
-use std::os::unix::net::UnixListener as StdUnixListener;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -120,7 +119,15 @@ impl UvServer {
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
         listener.set_nonblocking(true)?;
-        Self::start_fd_with_tls(uv_loop, OwnedFd::from(listener), true, cfg, tls, callbacks)
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(listener),
+            true,
+            None,
+            cfg,
+            tls,
+            callbacks,
+        )
     }
 
     /// Start on a non-blocking Unix domain socket listener.
@@ -129,19 +136,28 @@ impl UvServer {
     /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
     pub unsafe fn start_unix_with_tls(
         uv_loop: *mut c_void,
-        listener: StdUnixListener,
+        bound: crate::BoundUnixSocket,
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
-        listener.set_nonblocking(true)?;
-        Self::start_fd_with_tls(uv_loop, OwnedFd::from(listener), false, cfg, tls, callbacks)
+        bound.listener.set_nonblocking(true)?;
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(bound.listener),
+            false,
+            Some(bound.guard),
+            cfg,
+            tls,
+            callbacks,
+        )
     }
 
     unsafe fn start_fd_with_tls(
         uv_loop: *mut c_void,
         listener: OwnedFd,
         is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
@@ -151,13 +167,13 @@ impl UvServer {
         {
             return Ok(Self {
                 backend: ServerBackend::Epoll(EpollServer::start_fd_with_tls(
-                    uv_loop, listener, is_tcp, cfg, tls, callbacks,
+                    uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
                 )?),
             });
         }
         Ok(Self {
             backend: ServerBackend::Uv(UvPollState::start_fd_with_tls(
-                uv_loop, listener, is_tcp, cfg, tls, callbacks,
+                uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
             )?),
         })
     }
@@ -355,6 +371,7 @@ struct UvPollState {
     tls: Option<Arc<TlsStore>>,
     clock: LoopClock,
     listener_handle: *mut c_void,
+    unix_guard: Option<crate::UnixSocketGuard>,
     check_handle: *mut c_void,
     timer_handle: *mut c_void,
     conns: ConnSlab<UvConn>,
@@ -378,6 +395,7 @@ impl UvPollState {
         uv_loop: *mut c_void,
         listener: OwnedFd,
         is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
@@ -403,6 +421,7 @@ impl UvPollState {
             tls,
             clock: LoopClock::new(initial_uv_ms),
             listener_handle: std::ptr::null_mut(),
+            unix_guard,
             check_handle: std::ptr::null_mut(),
             timer_handle: std::ptr::null_mut(),
             conns: ConnSlab::with_capacity(256),
@@ -686,6 +705,9 @@ impl UvPollState {
                     (uv.close)(h, on_listener_close);
                 }
             }
+        }
+        if let Some(mut guard) = st.unix_guard.take() {
+            guard.cleanup_now();
         }
     }
 

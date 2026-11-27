@@ -199,9 +199,33 @@ mod tests {
         assert!(!is_compressible_content_type(Some("video/mp4")));
 
         let repetitive = b"hello world ".repeat(128);
-        assert!(compress_bytes(CompressionEncoding::Brotli, &repetitive).is_some());
-        assert!(compress_bytes(CompressionEncoding::Gzip, &repetitive).is_some());
-        assert!(compress_bytes(CompressionEncoding::Deflate, &repetitive).is_some());
+        let brotli = compress_bytes(CompressionEncoding::Brotli, &repetitive).unwrap();
+        let mut br_out = Vec::new();
+        std::io::copy(
+            &mut brotli::Decompressor::new(brotli.as_slice(), 4096),
+            &mut br_out,
+        )
+        .unwrap();
+        assert_eq!(br_out, repetitive);
+
+        let gzip = compress_bytes(CompressionEncoding::Gzip, &repetitive).unwrap();
+        let mut gz_out = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(gzip.as_slice()),
+            &mut gz_out,
+        )
+        .unwrap();
+        assert_eq!(gz_out, repetitive);
+
+        let deflate = compress_bytes(CompressionEncoding::Deflate, &repetitive).unwrap();
+        let mut df_out = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::ZlibDecoder::new(deflate.as_slice()),
+            &mut df_out,
+        )
+        .unwrap();
+        assert_eq!(df_out, repetitive);
+
         assert!(compress_bytes(CompressionEncoding::Brotli, b"hi").is_none());
     }
 }

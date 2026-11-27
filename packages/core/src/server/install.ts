@@ -34,11 +34,6 @@ export const INSTALL_NOT_FOUND: unique symbol = Symbol.for("@nifrajs/core/instal
 /** @internal Install the WebSocket runtime on a server (called by the `websocket()` plugin). */
 export const INSTALL_WS: unique symbol = Symbol.for("@nifrajs/core/install-ws")
 
-/** @internal Install a runtime-native topic publisher on a server when no custom topic adapter or per-socket validation applies. */
-export const INSTALL_NATIVE_PUBLISH: unique symbol = Symbol.for(
-  "@nifrajs/core/install-native-publish",
-)
-
 /** @internal Read the installed WebSocket runtime when a server is composed into another server. */
 export const GET_WS_RUNTIME: unique symbol = Symbol.for("@nifrajs/core/get-ws-runtime")
 

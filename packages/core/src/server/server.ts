@@ -197,7 +197,6 @@ import {
   INSTALL_EFFECT_LEDGER,
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
-  INSTALL_NATIVE_PUBLISH,
   INSTALL_NODE_DIRECT,
   INSTALL_NOT_FOUND,
   INSTALL_RESPONSE_CONTRACT,
@@ -2742,9 +2741,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         `route WS ${path}: validateSend requires sendSchema`,
       )
     }
-    // A validated-send route makes broadcast bytes route-dependent (drop-on-invalid per socket), so the
-    // whole app forgoes native pub/sub and keeps the JS adapter loop that runs each send through the sender.
-    if (handler.validateSend === true) this.wsHasValidatedSend = true
+    // If native pub/sub was already attached before adding `validateSend`, clear it so broadcasts use the JS loop.
+    if (handler.validateSend === true) {
+      this.wsHasValidatedSend = true
+      this.nativePublish = undefined
+    }
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
@@ -3152,19 +3153,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_WS](runtime: WsRuntime): void {
     this.assertConfigurable("websocket()")
     this.wsRuntime = runtime
+    runtime.pub(
+      this,
+      () => this.nativePub(),
+      (p) => {
+        this.nativePublish = p
+      },
+    )
   }
 
-  /** @internal Symbol-keyed install seam for native WebSocket pub/sub transports. Returns `true` when accepted. */
-  [INSTALL_NATIVE_PUBLISH](
-    publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void,
-  ): boolean {
-    const eligible =
+  private nativePub(): boolean {
+    return (
       this.wsRoutes.length > 0 &&
       this.options.topicAdapter === undefined &&
       !this.mountsTakeUpgrades() &&
       !this.wsHasValidatedSend
-    this.nativePublish = eligible ? publish : undefined
-    return eligible
+    )
   }
 
   /**
@@ -7875,11 +7879,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // upgrades owns a different topic adapter, so force the per-connection JS dispatcher and carry
     // that adapter in the upgrade outcome instead of accidentally broadcasting child sockets through
     // the parent.
-    const nativePubsub =
-      this.wsRoutes.length > 0 &&
-      this.options.topicAdapter === undefined &&
-      !this.mountsTakeUpgrades() &&
-      !this.wsHasValidatedSend
+    const nativePubsub = this.nativePub()
     const wsHandlers = wsRuntime?.bunHandlers(
       this.topics ?? wsRuntime.createTopics(),
       nativePubsub,
@@ -8007,13 +8007,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
     // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
     // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.
-    this.nativePublish = undefined
-    if (nativePubsub && typeof running.publish === "function") {
-      const native = running.publish.bind(running)
-      this.nativePublish = (topic, data) => {
-        native(topic, data)
-      }
-    }
+    this.nativePublish =
+      nativePubsub && typeof running.publish === "function"
+        ? running.publish.bind(running)
+        : undefined
     this.sealed = true
     if (this.gracefulSignals) this.installSignalHandlers(this.gracefulSignals)
     return running
