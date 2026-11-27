@@ -86,6 +86,16 @@ jobs:
         run: cargo test --workspace --locked
         working-directory: native/nifra-engine
 
+      # The crate tests run a short pass; this one is long, with overflow checks on.
+      - name: Fuzz the parsers
+        if: matrix.leg == 'linux-epoll'
+        env:
+          NIFRA_FUZZ_CASES: "3000000"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+        run: cargo test --release --locked -p nifra-http -p nifra-ws --test fuzz
+        working-directory: native/nifra-engine
+
       # The fault-injection build panics on a marked request, to prove the panic stays contained.
       - name: Build the addons
         run: |
@@ -171,3 +181,38 @@ jobs:
               node --test --test-timeout=180000 packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs
             echo "::endgroup::"
           done
+
+  websocket-conformance:
+    name: engine (Autobahn)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+          bun run scripts/link-for-node.ts
+
+      - name: Build the addon
+        run: cargo build --release --locked -p nifra-napi
+        working-directory: native/nifra-engine
+
+      - name: Run the Autobahn fuzzing client
+        run: node packages/node-engine/conformance/autobahn.mjs
