@@ -198,6 +198,7 @@ impl UvServer {
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
+        let callbacks: Box<dyn UvCallbacks> = Box::new(crate::contain::Contained(callbacks));
         #[cfg(target_os = "linux")]
         {
             let transport = std::env::var_os("NIFRA_ENGINE_TRANSPORT");

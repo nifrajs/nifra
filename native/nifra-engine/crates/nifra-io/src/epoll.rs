@@ -1023,7 +1023,9 @@ unsafe fn handle_client_readable(
         }
     }
 
-    let (mut cb, mut read_buf, mut cleartext_write) = dispatch_state.unwrap();
+    let Some((mut cb, mut read_buf, mut cleartext_write)) = dispatch_state else {
+        return read_ended;
+    };
 
     let action = if let Some(ref mut handler) = cb {
         let input_slice = if direct_len > 0 {

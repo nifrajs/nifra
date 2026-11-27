@@ -37,5 +37,5 @@ socket2 = { version = "0.5", features = ["all"] }
 lto = "fat"
 codegen-units = 1
 opt-level = 3
-panic = "abort"
+# `panic` unwinds so that one connection's panic is caught instead of ending the process.
 strip = "symbols"

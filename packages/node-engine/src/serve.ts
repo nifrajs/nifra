@@ -1541,12 +1541,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       // ignore logger errors
     }
     if (!source.aborted && !source.settled) {
-      if (source.headWritten) {
-        // A clean end would tell the client (and any cache) the truncated body is whole.
-        uvServer.abortStream(source.requestId)
-      } else {
-        uvServer.respondPrepared(source.requestId, tpl500, INTERNAL_ERROR_BUF)
-        source.headWritten = true
+      // The engine throws when it fails here; this is the last handler, so it only reports.
+      try {
+        if (source.headWritten) {
+          // A clean end would tell the client (and any cache) the truncated body is whole.
+          uvServer.abortStream(source.requestId)
+        } else {
+          uvServer.respondPrepared(source.requestId, tpl500, INTERNAL_ERROR_BUF)
+          source.headWritten = true
+        }
+      } catch (engineError) {
+        report?.(engineError)
       }
     }
     finish(source)
@@ -1867,7 +1872,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
   const flush = (): void => {
     if (outCount === 0) return
-    uvServer.flushResponses(outCount)
+    // A throw here would reach no handler and end the process. The slots are dropped either way.
+    try {
+      uvServer.flushResponses(outCount)
+    } catch (error) {
+      report?.(error)
+    }
     outCount = 0
     outOff = 0
   }
@@ -1979,183 +1989,194 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
   }
 
-  const onBatch = (count: number): void => {
+  const dispatchBatched = (i: number): void => {
     const { inMeta, inData, inSlotU32s } = bufs
+    const b = i * inSlotU32s
+    const reqId = inMeta[b] ?? 0
+    const flags = inMeta[b + 1] ?? 0
 
-    for (let i = 0; i < count; i++) {
-      const b = i * inSlotU32s
-      const reqId = inMeta[b] ?? 0
-      const flags = inMeta[b + 1] ?? 0
-
-      let authority: string | undefined
-      if (policedHost) {
-        authority = resolveRequestHost(uvServer.getHeader(reqId, "host") ?? undefined, policy)
-        if (authority === undefined) {
-          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
-          continue
-        }
-      } else if (checkHost) {
-        // The engine's syntax check is the cheap early refusal; the authority is then normalised as
-        // a Host policy would, so `EXAMPLE.COM:080` builds the same URL under either option.
-        if ((flags & FLAG_HOST_VALID) === 0) {
-          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
-          continue
-        }
-        authority = resolveRequestHost(uvServer.getHeader(reqId, "host") ?? undefined, policy)
-        if (authority === undefined) {
-          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
-          continue
-        }
-      } else if ((flags & FLAG_HOST_VALID) === 0) {
-        // `validateHost` off leaves the Host unchecked, but the URL carries it: one holding a URL
-        // delimiter (or nothing, which swallows the first path segment) would give `req.url` a path
-        // the router never saw. The flag spares the plain forms this engine call.
-        const sent = uvServer.getHeader(reqId, "host")
-        if (sent === "") {
-          authority = "localhost"
-        } else if (sent !== null && URL_DELIMITER.test(sent)) {
-          queueSync(reqId, tpl400, BAD_REQUEST_BODY)
-          continue
-        }
+    let authority: string | undefined
+    if (policedHost) {
+      authority = resolveRequestHost(uvServer.getHeader(reqId, "host") ?? undefined, policy)
+      if (authority === undefined) {
+        queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+        return
       }
-
-      if ((flags & FLAG_OVER_MAX_BODY) !== 0) {
-        queueSync(reqId, tpl413, PAYLOAD_TOO_LARGE_BODY)
-        continue
+    } else if (checkHost) {
+      // The engine's syntax check is the cheap early refusal; the authority is then normalised as
+      // a Host policy would, so `EXAMPLE.COM:080` builds the same URL under either option.
+      if ((flags & FLAG_HOST_VALID) === 0) {
+        queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+        return
       }
-
-      const methodIdx = flags & METHOD_MASK
-      const method =
-        methodIdx < METHODS.length
-          ? (METHODS[methodIdx] ?? "GET")
-          : (uvServer.getMethod(reqId) ?? "GET")
-      const isHead = methodIdx === 5
-      const pathOff = inMeta[b + 2] ?? 0
-      const pathLen = inMeta[b + 3] ?? 0
-      const queryOff = inMeta[b + 4] ?? 0
-      const queryLen = inMeta[b + 5] ?? 0
-      const bodyOff = inMeta[b + 6] ?? 0
-      const bodyLen = inMeta[b + 7] ?? 0
-      const ctOff = inMeta[b + 8] ?? 0
-      const ctLen = inMeta[b + 9] ?? 0
-
-      const rawPath = inData.toString("latin1", pathOff, pathOff + pathLen)
-      const rawQuery =
-        queryLen === 0 ? "" : inData.toString("latin1", queryOff, queryOff + queryLen)
-      const asSent = queryLen === 0 ? rawPath : `${rawPath}?${rawQuery}`
-      const target = resolveRequestTarget(asSent, policy.normalizeTarget)
-      const queryStart =
-        target === asSent ? (queryLen === 0 ? -1 : rawPath.length) : target.indexOf("?")
-      const pathname = queryStart === -1 ? target : target.slice(0, queryStart)
-      const search = queryStart === -1 ? "" : target.slice(queryStart)
-
-      let bodyText: string | null = null
-      let bodyBytes: Uint8Array | null | undefined
-      if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
-        if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
-          bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
-        } else {
-          // `Buffer#slice` is a view of the batch, which the next batch overwrites: copy the bytes.
-          bodyBytes = new Uint8Array(bodyLen)
-          bodyBytes.set(inData.subarray(bodyOff, bodyOff + bodyLen))
-        }
-      } else if ((flags & FLAG_HAS_BODY) === 0) {
-        bodyBytes = null
+      authority = resolveRequestHost(uvServer.getHeader(reqId, "host") ?? undefined, policy)
+      if (authority === undefined) {
+        queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+        return
       }
-
-      // Carried in the batch, which the next one overwrites; a request with a body is where it is read.
-      let contentType: string | null | undefined
-      if ((flags & FLAG_HAS_BODY) !== 0) {
-        contentType =
-          (flags & FLAG_HAS_CT) === 0 ? null : inData.toString("latin1", ctOff, ctOff + ctLen)
+    } else if ((flags & FLAG_HOST_VALID) === 0) {
+      // `validateHost` off leaves the Host unchecked, but the URL carries it: one holding a URL
+      // delimiter (or nothing, which swallows the first path segment) would give `req.url` a path
+      // the router never saw. The flag spares the plain forms this engine call.
+      const sent = uvServer.getHeader(reqId, "host")
+      if (sent === "") {
+        authority = "localhost"
+      } else if (sent !== null && URL_DELIMITER.test(sent)) {
+        queueSync(reqId, tpl400, BAD_REQUEST_BODY)
+        return
       }
+    }
 
-      const isWsHandshake = checkUpgrade && methodIdx === 0 && (flags & FLAG_IS_WS_UPGRADE) !== 0
-      if (isWsHandshake && resolveWs === undefined) {
-        queueSync(reqId, tpl501, WEBSOCKET_REFUSAL)
-        continue
+    if ((flags & FLAG_OVER_MAX_BODY) !== 0) {
+      queueSync(reqId, tpl413, PAYLOAD_TOO_LARGE_BODY)
+      return
+    }
+
+    const methodIdx = flags & METHOD_MASK
+    const method =
+      methodIdx < METHODS.length
+        ? (METHODS[methodIdx] ?? "GET")
+        : (uvServer.getMethod(reqId) ?? "GET")
+    const isHead = methodIdx === 5
+    const pathOff = inMeta[b + 2] ?? 0
+    const pathLen = inMeta[b + 3] ?? 0
+    const queryOff = inMeta[b + 4] ?? 0
+    const queryLen = inMeta[b + 5] ?? 0
+    const bodyOff = inMeta[b + 6] ?? 0
+    const bodyLen = inMeta[b + 7] ?? 0
+    const ctOff = inMeta[b + 8] ?? 0
+    const ctLen = inMeta[b + 9] ?? 0
+
+    const rawPath = inData.toString("latin1", pathOff, pathOff + pathLen)
+    const rawQuery = queryLen === 0 ? "" : inData.toString("latin1", queryOff, queryOff + queryLen)
+    const asSent = queryLen === 0 ? rawPath : `${rawPath}?${rawQuery}`
+    const target = resolveRequestTarget(asSent, policy.normalizeTarget)
+    const queryStart =
+      target === asSent ? (queryLen === 0 ? -1 : rawPath.length) : target.indexOf("?")
+    const pathname = queryStart === -1 ? target : target.slice(0, queryStart)
+    const search = queryStart === -1 ? "" : target.slice(queryStart)
+
+    let bodyText: string | null = null
+    let bodyBytes: Uint8Array | null | undefined
+    if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
+      if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
+        bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
+      } else {
+        // `Buffer#slice` is a view of the batch, which the next batch overwrites: copy the bytes.
+        bodyBytes = new Uint8Array(bodyLen)
+        bodyBytes.set(inData.subarray(bodyOff, bodyOff + bodyLen))
       }
+    } else if ((flags & FLAG_HAS_BODY) === 0) {
+      bodyBytes = null
+    }
 
-      const source = new RustBatchSource(
-        uvServer,
-        reqId,
-        method,
-        pathname,
-        search,
-        target,
-        authority,
-        flags,
-        protocol,
-        bodyLen,
-        bodyText,
-        bodyBytes,
-        contentType,
-      )
+    // Carried in the batch, which the next one overwrites; a request with a body is where it is read.
+    let contentType: string | null | undefined
+    if ((flags & FLAG_HAS_BODY) !== 0) {
+      contentType =
+        (flags & FLAG_HAS_CT) === 0 ? null : inData.toString("latin1", ctOff, ctOff + ctLen)
+    }
 
-      if (staticResolver !== undefined && (methodIdx === 0 || methodIdx === 5)) {
-        let staticAnswer: NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
-        try {
-          staticAnswer = staticResolver(
-            method,
-            pathname,
-            (name) => source.header(name),
-            () => source.request,
-            authority,
-          )
-        } catch (err) {
-          inflight.set(reqId, source)
-          fail(source, err)
-          continue
-        }
-        if (staticAnswer !== undefined) {
-          if (staticAnswer instanceof Promise) {
-            inflight.set(reqId, source)
-            staticAnswer.then(
-              (settled) => {
-                if (source.aborted || source.settled) return
-                if (settled === undefined) {
-                  if (isWsHandshake) upgradeSocket(source)
-                  else dispatchHttp(source, isHead)
-                } else {
-                  writeComplexOutcome(source, settled, isHead)
-                }
-              },
-              (err: unknown) => fail(source, err),
-            )
-          } else {
-            settleOutcome(source, staticAnswer, isHead)
-          }
-          continue
-        }
-      }
+    const isWsHandshake = checkUpgrade && methodIdx === 0 && (flags & FLAG_IS_WS_UPGRADE) !== 0
+    if (isWsHandshake && resolveWs === undefined) {
+      queueSync(reqId, tpl501, WEBSOCKET_REFUSAL)
+      return
+    }
 
-      if (isWsHandshake) {
-        inflight.set(reqId, source)
-        upgradeSocket(source)
-        continue
-      }
+    const source = new RustBatchSource(
+      uvServer,
+      reqId,
+      method,
+      pathname,
+      search,
+      target,
+      authority,
+      flags,
+      protocol,
+      bodyLen,
+      bodyText,
+      bodyBytes,
+      contentType,
+    )
 
+    if (staticResolver !== undefined && (methodIdx === 0 || methodIdx === 5)) {
+      let staticAnswer: NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
       try {
-        const outcome = outcomeOf(source)
-
-        if (outcome instanceof Promise) {
+        staticAnswer = staticResolver(
+          method,
+          pathname,
+          (name) => source.header(name),
+          () => source.request,
+          authority,
+        )
+      } catch (err) {
+        inflight.set(reqId, source)
+        fail(source, err)
+        return
+      }
+      if (staticAnswer !== undefined) {
+        if (staticAnswer instanceof Promise) {
           inflight.set(reqId, source)
-          outcome.then(
-            (settled) => settleOutcome(source, settled, isHead),
+          staticAnswer.then(
+            (settled) => {
+              if (source.aborted || source.settled) return
+              if (settled === undefined) {
+                if (isWsHandshake) upgradeSocket(source)
+                else dispatchHttp(source, isHead)
+              } else {
+                writeComplexOutcome(source, settled, isHead)
+              }
+            },
             (err: unknown) => fail(source, err),
           )
-        } else if (queueOutcome(reqId, outcome, isHead)) {
-          source.settled = true
-          source.release()
         } else {
-          inflight.set(reqId, source)
-          writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
+          settleOutcome(source, staticAnswer, isHead)
         }
-      } catch (err) {
-        report?.(err)
-        queueSync(reqId, tpl500, INTERNAL_ERROR_BODY)
+        return
+      }
+    }
+
+    if (isWsHandshake) {
+      inflight.set(reqId, source)
+      upgradeSocket(source)
+      return
+    }
+
+    try {
+      const outcome = outcomeOf(source)
+
+      if (outcome instanceof Promise) {
+        inflight.set(reqId, source)
+        outcome.then(
+          (settled) => settleOutcome(source, settled, isHead),
+          (err: unknown) => fail(source, err),
+        )
+      } else if (queueOutcome(reqId, outcome, isHead)) {
         source.settled = true
         source.release()
+      } else {
+        inflight.set(reqId, source)
+        writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
+      }
+    } catch (err) {
+      report?.(err)
+      queueSync(reqId, tpl500, INTERNAL_ERROR_BODY)
+      source.settled = true
+      source.release()
+    }
+  }
+
+  const onBatch = (count: number): void => {
+    for (let i = 0; i < count; i++) {
+      try {
+        dispatchBatched(i)
+      } catch (error) {
+        // An exception out of this callback is uncaught and ends the process.
+        report?.(error)
+        const reqId = bufs.inMeta[i * bufs.inSlotU32s] ?? 0
+        const source = inflight.get(reqId)
+        if (source === undefined) queueSync(reqId, tpl500, INTERNAL_ERROR_BODY)
+        else fail(source, error)
       }
     }
 
@@ -2502,17 +2523,32 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     ]
     entry.safe(() => handler.close?.(entry.nifra, finalCode, finalReason))
   }
-  uvServer.setStreamCallbacks((reqId) => inflight.get(reqId)?.onWritable?.(), abortRequest)
+  /** The engine calls these with no JavaScript above them, so a throw would end the process. */
+  const guarded =
+    <A extends unknown[]>(run: (...args: A) => void) =>
+    (...args: A): void => {
+      try {
+        run(...args)
+      } catch (error) {
+        report?.(error)
+      }
+    }
+  uvServer.setStreamCallbacks(
+    guarded((reqId) => inflight.get(reqId)?.onWritable?.()),
+    guarded(abortRequest),
+  )
   if (streamRequestBodies === true) {
-    uvServer.setReqBodyCallback((reqId, chunk, isLast) => {
-      inflight.get(reqId)?.pushBodyChunk(chunk, isLast)
-    })
+    uvServer.setReqBodyCallback(
+      guarded((reqId, chunk, isLast) => {
+        inflight.get(reqId)?.pushBodyChunk(chunk, isLast)
+      }),
+    )
   }
   uvServer.setWsCallbacks(
-    (socketId) => {
+    guarded((socketId) => {
       if (openingWs !== undefined) openWs(socketId, openingWs)
-    },
-    (socketId, data) => {
+    }),
+    guarded((socketId, data) => {
       const entry = wsSockets.get(socketId)
       if (entry === undefined || entry.state !== WS_OPEN) return
       const { handler, maxPayloadBytes } = entry.upgrade
@@ -2522,14 +2558,14 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       }
       const payload: NifraWsData = typeof data === "string" ? data : new Uint8Array(data)
       entry.safe(() => handler.message?.(entry.nifra, payload))
-    },
-    finishSocket,
-    (socketId) => {
+    }),
+    guarded(finishSocket),
+    guarded((socketId) => {
       const entry = wsSockets.get(socketId)
       if (entry === undefined || entry.state !== WS_OPEN) return
       const { handler } = entry.upgrade
       entry.safe(() => handler.drain?.(entry.nifra))
-    },
+    }),
   )
   bufs = uvServer.getBatchBuffers()
   outMeta = bufs.outMeta

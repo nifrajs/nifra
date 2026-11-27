@@ -74,18 +74,33 @@ jobs:
           bun run build
           bun run --filter '@nifrajs/node-engine' build
 
+      # A panic site in code a peer can reach is a request that fails; keep them out.
+      - name: Refuse panicking calls
+        if: matrix.leg == 'linux-epoll'
+        run: >-
+          cargo clippy --workspace --lib --locked -- -A warnings -D clippy::unwrap_used
+          -D clippy::expect_used -D clippy::panic -D clippy::unreachable
+        working-directory: native/nifra-engine
+
       - name: Test the crates
         run: cargo test --workspace --locked
         working-directory: native/nifra-engine
 
-      - name: Build the addon
+      # The fault-injection build panics on a marked request, to prove the panic stays contained.
+      - name: Build the addons
         run: |
-          cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml
           case "$RUNNER_OS" in
             Linux) library=libnifra_napi.so ;;
             macOS) library=libnifra_napi.dylib ;;
             Windows) library=nifra_napi.dll ;;
           esac
+          build() {
+            cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml "$@"
+          }
+          build --features fault-injection
+          cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi_fault.node"
+          echo "NIFRA_ENGINE_FAULT_ADDON=$RUNNER_TEMP/nifra_napi_fault.node" >> "$GITHUB_ENV"
+          build
           cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi.node"
           echo "NIFRA_RUST_ENGINE_PATH=$RUNNER_TEMP/nifra_napi.node" >> "$GITHUB_ENV"
 
