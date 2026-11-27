@@ -9,10 +9,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { connect as tlsConnect } from "node:tls"
+import { fileURLToPath } from "node:url"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import { serveCluster } from "../src/cluster.ts"
 
-const FIXTURE = new URL("./fixtures/cluster-server.ts", import.meta.url).pathname
+const FIXTURE = fileURLToPath(new URL("./fixtures/cluster-server.ts", import.meta.url))
 
 interface Event {
   readonly event: string

@@ -104,7 +104,70 @@ jobs:
           cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi.node"
           echo "NIFRA_RUST_ENGINE_PATH=$RUNNER_TEMP/nifra_napi.node" >> "$GITHUB_ENV"
 
+      # One file at a time under a process deadline: an engine that blocks the event loop outlasts
+      # Node's own test timeout, and this names the file that did.
       - name: Test the engine on Node
         run: |
           bun run scripts/link-for-node.ts
-          node --test --test-timeout=120000 packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs
+          limit=timeout
+          command -v timeout >/dev/null || limit=gtimeout
+          command -v "$limit" >/dev/null || limit=""
+          failed=""
+          for file in packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs; do
+            echo "::group::$file"
+            ${limit:+$limit -k 10 240} node --test --test-timeout=120000 "$file" || failed="$failed $file"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+  # Memory errors in the engine's `unsafe` code that no assertion would see.
+  address-sanitizer:
+    name: engine (address sanitizer)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+
+      # RUSTC_BOOTSTRAP lets the stable toolchain take the unstable sanitizer flag.
+      - name: Build the addon with AddressSanitizer
+        env:
+          CC: clang
+          RUSTC_BOOTSTRAP: "1"
+          RUSTFLAGS: "-Zsanitizer=address -Clinker=clang"
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_STRIP: none
+        run: cargo build --release --locked -p nifra-napi --target x86_64-unknown-linux-gnu
+        working-directory: native/nifra-engine
+
+      - name: Test the engine under AddressSanitizer
+        run: |
+          bun run scripts/link-for-node.ts
+          addon="$PWD/native/nifra-engine/target/x86_64-unknown-linux-gnu/release/libnifra_napi.so"
+          cp "$addon" "$RUNNER_TEMP/nifra_napi.node"
+          for transport in epoll uring uv; do
+            echo "::group::$transport"
+            LD_PRELOAD="$(gcc -print-file-name=libasan.so)" ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 \
+              NIFRA_ENGINE_TRANSPORT="$transport" NIFRA_RUST_ENGINE_PATH="$RUNNER_TEMP/nifra_napi.node" \
+              node --test --test-timeout=180000 packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs
+            echo "::endgroup::"
+          done
