@@ -1337,7 +1337,7 @@ async function serveWithNodeFallback(
   }
   const unsupported = (op: string): never => {
     throw new Error(
-      `@nifrajs/node-engine: \`${op}()\` is unavailable while running on \`@nifrajs/node\` fallback`,
+      `@nifrajs/node-engine: \`${op}()\` is not supported while running on \`@nifrajs/node\` fallback`,
     )
   }
   const nodeOpts: { -readonly [K in keyof NodeServeOpts]: NodeServeOpts[K] } = {
