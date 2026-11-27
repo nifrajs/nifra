@@ -20,19 +20,8 @@ const MAX_SCAN_LENGTH = 8192
  * Field-name fragments whose values are replaced with `[REDACTED]` (case-insensitive
  * substring match). Key-name redaction is the default + always on.
  */
-const SENSITIVE_KEY_PARTS: ReadonlyArray<string> = [
-  "authorization",
-  "cookie",
-  "password",
-  "passwd",
-  "secret",
-  "token",
-  "apikey",
-  "api_key",
-  "api-key",
-  "credential",
-  "ssn",
-]
+const SENSITIVE_KEY_PATTERN =
+  /authorization|cookie|password|passwd|secret|token|apikey|api_key|api-key|credential|ssn/
 
 /**
  * Tunes redaction. Key-name redaction always runs.
@@ -70,16 +59,13 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 interface RedactConfig {
-  readonly keyPattern: RegExp
+  readonly extraKeyParts: readonly string[] | undefined
   readonly maxScanLength: number
   readonly minScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
 }
 
-const escapeKeyPart = (part: string): string => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-// Match the lowercased keys rather than using /i, which folds some Unicode characters differently.
-const DEFAULT_KEY_PATTERN = new RegExp(SENSITIVE_KEY_PARTS.map(escapeKeyPart).join("|"))
 // Shortest possible match in `commonSecretPatterns` is a minimal email (`a@b.cd`, 6 chars).
 const COMMON_SECRET_MIN_LENGTH = 6
 const KNOWN_SECRET_PATTERNS = new Set(commonSecretPatterns)
@@ -94,18 +80,9 @@ function buildConfig(
   defaultPatterns: ReadonlyArray<RegExp> = [],
   maxScanLength = Infinity,
 ): RedactConfig {
-  const extra = options?.keyParts
-  const keyPattern =
-    extra === undefined || extra.length === 0
-      ? DEFAULT_KEY_PATTERN
-      : new RegExp(
-          [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())]
-            .map(escapeKeyPart)
-            .join("|"),
-        )
   const rawPatterns = options?.valuePatterns ?? defaultPatterns
   return {
-    keyPattern,
+    extraKeyParts: options?.keyParts?.map((part) => part.toLowerCase()),
     maxScanLength,
     minScanLength:
       rawPatterns === commonSecretPatterns &&
@@ -115,6 +92,15 @@ function buildConfig(
     valuePatterns: rawPatterns.map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
+}
+
+function isSensitiveKey(key: string, config: RedactConfig): boolean {
+  // Lowercasing preserves the original Unicode matching. Custom fragments stay literal.
+  const lower = key.toLowerCase()
+  return (
+    SENSITIVE_KEY_PATTERN.test(lower) ||
+    config.extraKeyParts?.some((part) => lower.includes(part)) === true
+  )
 }
 
 function redactString(value: string, config: RedactConfig): string {
@@ -136,17 +122,17 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   const out: Record<string, unknown> = Object.create(null)
   // An Error's own name and message are not enumerable.
   if (value instanceof Error) {
-    out.name = config.keyPattern.test("name")
+    out.name = isSensitiveKey("name", config)
       ? config.placeholder
       : redactValue(value.name, seen, config)
-    out.message = config.keyPattern.test("message")
+    out.message = isSensitiveKey("message", config)
       ? config.placeholder
       : redactValue(value.message, seen, config)
   }
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue
     // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    out[key] = config.keyPattern.test(key.toLowerCase())
+    out[key] = isSensitiveKey(key, config)
       ? config.placeholder
       : redactValue(Reflect.get(value, key), seen, config)
   }

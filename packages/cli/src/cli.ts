@@ -362,6 +362,7 @@ Verify       check, review, assure, doctor, fix, smoke
 Contracts    routes, types, schemas, openapi, contracts
 Agents       mcp, docs-mcp, learn, context, runtime
              nifra init-agents configures editor and agent discovery
+             nifra init-agents --sync-mcp refreshes MCP registrations
 
 Run nifra <command> --help for command options or nifra help --all for the full catalog.
 
