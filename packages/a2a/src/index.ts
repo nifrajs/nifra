@@ -60,6 +60,7 @@ export const A2A_PROTOCOL_VERSION = "1.0"
 export const AGENT_CARD_WELL_KNOWN_PATH = "/.well-known/agent-card.json"
 
 const DEFAULT_PATH = "/a2a"
+const FRAME_ENCODER = new TextEncoder()
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -371,7 +372,6 @@ function streamingResponse(
       stream.complete()
     },
     async start(controller) {
-      const encoder = new TextEncoder()
       let emittedBytes = 0
       const send = (payload: unknown): void => {
         const remainingBytes = maxOutputBytes - emittedBytes
@@ -380,7 +380,7 @@ function streamingResponse(
         const serialized = boundedJsonText(payload, jsonBudget)
         if (serialized === undefined)
           throw new TypeError("A2A SSE payload has no JSON representation")
-        const frame = encoder.encode(`data: ${serialized.text}\n\n`)
+        const frame = FRAME_ENCODER.encode(`data: ${serialized.text}\n\n`)
         if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
           throw new JsonByteLimitError()
         emittedBytes += frame.byteLength

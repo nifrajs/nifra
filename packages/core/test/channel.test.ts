@@ -58,6 +58,20 @@ describe("typed channel seam", () => {
     expect(subscription.closeReason).toBe("backpressure")
   })
 
+  test("compacting a subscriber queue preserves order and its usable capacity", async () => {
+    const channel = defineChannel<"events", number>("events")
+    const hub = memoryChannelHub({ maxQueue: 128 })
+    const subscription = hub.subscribe(channel)
+    for (let value = 0; value < 128; value++) hub.publish(channel, value)
+    for (let value = 0; value < 80; value++)
+      expect((await subscription.next()).value?.data).toBe(value)
+    for (let value = 128; value < 208; value++) hub.publish(channel, value)
+    expect(subscription.closed).toBe(false)
+    for (let value = 80; value < 208; value++)
+      expect((await subscription.next()).value?.data).toBe(value)
+    subscription.close()
+  })
+
   test("adapts the subscription to a cancellable stream", async () => {
     const channel = defineChannel<"stream", number>("stream")
     const hub = memoryChannelHub()

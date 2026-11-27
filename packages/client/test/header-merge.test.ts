@@ -37,6 +37,18 @@ describe("header names merge in any letter case", () => {
     expect(sent[0]?.authorization).toBe("Bearer fresh")
   })
 
+  test("an onRequest override removes every spelling of the previous header", async () => {
+    const { api, sent } = recorder({
+      headers: { authorization: "Bearer stale" },
+      onRequest: ({ headers }) => {
+        headers.Authorization = "Bearer temporary"
+        return { AUTHORIZATION: "Bearer fresh" }
+      },
+    })
+    await api.me.get()
+    expect(sent[0]?.authorization).toBe("Bearer fresh")
+  })
+
   test("an encoded body carries the codec's content type alone", async () => {
     const { api, sent } = recorder()
     await api.items.post({ a: 1 }, { headers: { "Content-Type": "text/plain" } })

@@ -58,6 +58,7 @@ import {
 import { asRecord } from "./internal/record.ts"
 
 const DEFAULT_PATH = "/agent"
+const FRAME_ENCODER = new TextEncoder()
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -161,14 +162,12 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const resume = parseAgentResume(body.resume)
   let log = options.evidenceLog
   if (log !== undefined && options.evidenceOwner !== undefined) {
-    let owner: string
     try {
-      owner = await options.evidenceOwner(c)
+      log = scopeAgentEvidenceLog(log, await options.evidenceOwner(c))
     } catch (err) {
       if (err instanceof Response) return err
       return jsonResponse(403, { error: "forbidden" })
     }
-    log = scopeAgentEvidenceLog(log, owner)
   }
   const wantsSse = (c.req.headers.get("accept") ?? "").includes("text/event-stream")
 
@@ -177,6 +176,8 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   if (wantsSse && log !== undefined && lastEventId !== null) {
     if (!LAST_EVENT_ID_PATTERN.test(lastEventId))
       return jsonResponse(400, { error: "invalid_last_event_id" })
+    // The application can reject a request in ports(), including a reconnect.
+    await options.ports(c)
     const replay = await log.replay(turnId, Number(lastEventId))
     if (replay === undefined) return jsonResponse(409, { error: "replay_unavailable" })
     return sseReplayResponse(turnId, replay, maxOutputBytes)
@@ -346,7 +347,6 @@ function sseSender(
   controller: ReadableStreamDefaultController<Uint8Array>,
   maxOutputBytes: number,
 ): SseSend {
-  const encoder = new TextEncoder()
   let emittedBytes = 0
   return (event, data, id) => {
     const head = id === undefined ? "" : `id: ${id}\n`
@@ -362,7 +362,7 @@ function sseSender(
         throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
       throw error
     }
-    const frame = encoder.encode(`${prefix}${serialized?.text ?? "undefined"}\n\n`)
+    const frame = FRAME_ENCODER.encode(`${prefix}${serialized?.text ?? "undefined"}\n\n`)
     if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
       throw new SseOutputLimitError("mountAgent SSE output limit exceeded")
     emittedBytes += frame.byteLength

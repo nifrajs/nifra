@@ -80,6 +80,14 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["my-app", "--deploy", "vercel"])).toThrow("--deploy is now --target")
     expect(() => parseArgs(["my-app", "-d", "vercel"])).toThrow("--deploy is now --target")
   })
+
+  test("rejects mistyped options, missing values, and extra directories", () => {
+    expect(() => parseArgs(["app", "--dockr"])).toThrow("--dockr")
+    expect(() => parseArgs(["app", "--template", "--docker"])).toThrow("--template")
+    expect(() => parseArgs(["app", "--template="])).toThrow("--template needs a value")
+    expect(() => parseArgs(["app", "other"])).toThrow("Expected one project directory")
+    expect(parseArgs(["--template=site", "app"])).toEqual({ target: "app", template: "site" })
+  })
 })
 
 describe("scaffold - templates", () => {
@@ -421,6 +429,12 @@ describe("run (argv → code + message)", () => {
   test("no target → usage, code 1", async () => {
     const { code, message } = await run([])
     expect(code).toBe(1)
+    expect(message).toContain("usage:")
+  })
+
+  test("--help prints usage successfully", async () => {
+    const { code, message } = await run(["--help"])
+    expect(code).toBe(0)
     expect(message).toContain("usage:")
   })
 

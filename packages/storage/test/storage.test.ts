@@ -143,12 +143,24 @@ test("FileStorage bounds buffered reads before consuming oversized objects", asy
   const dir = await mkdtemp(join(tmpdir(), "nifra-storage-limit-"))
   tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
   const storage = new FileStorage(dir, { maxReadBytes: 3 })
+  await storage.put("empty", "")
   await storage.put("fits", "abc")
   await storage.put("large", "abcd")
+  expect((await new FileStorage(dir, { maxReadBytes: 0 }).get("empty"))?.body.byteLength).toBe(0)
   expect((await storage.get("fits"))?.body.byteLength).toBe(3)
   await expect(storage.get("large")).rejects.toThrow(RangeError)
   expect(() => new FileStorage(dir, { maxReadBytes: -1 })).toThrow(RangeError)
   expect(() => new FileStorage(dir, { maxReadBytes: NaN })).toThrow(RangeError)
+})
+
+test("FileStorage applies a separate buffered read limit to metadata", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nifra-storage-metadata-limit-"))
+  tmpDirs.push(dir, `${dir}.nifra-metadata`, `${dir}.nifra-state`)
+  const storage = new FileStorage(dir, { maxReadBytes: 1, maxMetadataBytes: 16 })
+  await storage.put("plain", "a")
+  await storage.put("annotated", "a", { contentType: "text/plain" })
+  expect((await storage.get("plain"))?.body.byteLength).toBe(1)
+  await expect(storage.get("annotated")).rejects.toThrow("metadata exceeds its read limit")
 })
 
 const tmpDirs: string[] = []

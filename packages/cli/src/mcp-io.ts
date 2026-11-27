@@ -5,6 +5,7 @@
  * these limits and stream readers so an untrusted local endpoint or child process cannot exhaust MCP.
  */
 
+import { Buffer } from "node:buffer"
 import { isRecord } from "./internal/record.ts"
 
 export const CHILD_TIMEOUT_MS = 30_000
@@ -12,6 +13,7 @@ export const CHILD_TIMEOUT_MS = 30_000
 export const CHILD_OUTPUT_MAX_BYTES = 1_048_576
 /** Maximum serialized request sent to a project subprocess or warm worker. */
 export const CHILD_INPUT_MAX_BYTES = 4 * 1024 * 1024
+const UTF8_DECODER = new TextDecoder()
 
 /** Local dev-tool reads are intentionally bounded: MCP runs in an agent process and must not hang on or
  * buffer an unrelated loopback service just because a caller supplied its port. */
@@ -207,7 +209,7 @@ export async function readBoundedResponse(
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return new TextDecoder().decode(bytes)
+  return UTF8_DECODER.decode(bytes)
 }
 
 export const notNifraResponse = (service: string): string =>
@@ -242,7 +244,7 @@ function decodeLine(chunks: readonly Uint8Array[], totalBytes: number): string {
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return new TextDecoder().decode(bytes)
+  return UTF8_DECODER.decode(bytes)
 }
 
 /**
@@ -301,7 +303,7 @@ export function serializeBoundedJson(
   } catch {
     return undefined
   }
-  if (text === undefined || new TextEncoder().encode(text).byteLength > maxBytes) return undefined
+  if (text === undefined || Buffer.byteLength(text, "utf8") > maxBytes) return undefined
   return text
 }
 

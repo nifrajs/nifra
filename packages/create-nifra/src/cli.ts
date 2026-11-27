@@ -14,6 +14,7 @@
  */
 import { realpathSync } from "node:fs"
 import { pathToFileURL } from "node:url"
+import { parseArgs as parseNodeArgs } from "node:util"
 import { AUTH_CHOICES, AUTH_PRESETS } from "./auth.ts"
 import { DB_CHOICES, DB_PRESETS, type Orm } from "./db.ts"
 import { type ScaffoldResult, scaffold, type TemplateName } from "./scaffold/project.ts"
@@ -48,10 +49,12 @@ interface ParsedArgs {
   readonly deployTarget?: string
   readonly docker?: boolean
   readonly ci?: string
+  readonly shell?: string
   readonly db?: string
   readonly auth?: string
   readonly force?: boolean
   readonly link?: string
+  readonly help?: boolean
 }
 
 /** The first migration, in the scripts each ORM's preset writes: only Drizzle has a generate step,
@@ -70,34 +73,46 @@ const MIGRATION_STEPS: Readonly<Record<Orm, readonly string[]>> = {
  * `--framework`/`--target`/`--docker`/`--ci` all default the template to `site`. Throws on the retired
  * `--deploy`. */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
-  if (argv.includes("--deploy") || argv.includes("-d")) {
+  const endOfOptions = argv.indexOf("--")
+  const options = endOfOptions === -1 ? argv : argv.slice(0, endOfOptions)
+  if (options.some((arg) => arg === "-d" || arg === "--deploy" || arg.startsWith("--deploy="))) {
     throw new Error("--deploy is now --target (bun | node | deno | cloudflare | vercel)")
   }
-  const rest = [...argv]
-  const take = (...flags: string[]): string | undefined => {
-    const i = rest.findIndex((a) => flags.includes(a))
-    if (i === -1) return undefined
-    const value = rest[i + 1]
-    rest.splice(i, 2)
-    return value
+  const { values, positionals } = parseNodeArgs({
+    args: [...argv],
+    allowPositionals: true,
+    options: {
+      template: { type: "string", short: "t" },
+      framework: { type: "string", short: "f" },
+      target: { type: "string" },
+      docker: { type: "boolean" },
+      ci: { type: "string", short: "c" },
+      shell: { type: "string" },
+      db: { type: "string" },
+      auth: { type: "string" },
+      link: { type: "string" },
+      force: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  })
+  if (positionals.length > 1) throw new Error("Expected one project directory")
+  for (const [option, value] of Object.entries(values)) {
+    if (value === "") throw new Error(`--${option} needs a value`)
   }
-  const hasFlag = (...flags: string[]): boolean => {
-    const i = rest.findIndex((a) => flags.includes(a))
-    if (i === -1) return false
-    rest.splice(i, 1)
-    return true
-  }
-  const templateFlag = take("--template", "-t")
-  const framework = take("--framework", "-f")
-  const deployTarget = take("--target")
-  const docker = hasFlag("--docker")
-  const ci = take("--ci", "-c")
-  const shell = take("--shell")
-  const db = take("--db")
-  const auth = take("--auth")
-  const link = take("--link")
-  const force = hasFlag("--force")
-  const target = rest.find((a) => !a.startsWith("-"))
+  const [target] = positionals
+  const {
+    template: templateFlag,
+    target: deployTarget,
+    framework,
+    docker,
+    ci,
+    shell,
+    db,
+    auth,
+    link,
+    force,
+    help,
+  } = values
   // `--framework`/`--target`/`--docker`/`--ci` imply the site template unless one was named explicitly.
   const template = (templateFlag ??
     (framework !== undefined ||
@@ -119,6 +134,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     ...(auth !== undefined ? { auth } : {}),
     ...(link !== undefined ? { link } : {}),
     ...(force ? { force } : {}),
+    ...(help ? { help } : {}),
   }
 }
 
@@ -136,6 +152,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     return { code: 1, message: `✗ ${err instanceof Error ? err.message : String(err)}` }
   }
   const { target, force } = parsed
+  if (parsed.help) return { code: 0, message: USAGE }
   if (target === undefined) return { code: 1, message: USAGE }
 
   let result: ScaffoldResult

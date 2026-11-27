@@ -145,7 +145,7 @@ async function workspaceMatches(
   const queue: { readonly path: string; readonly depth: number }[] = [
     { path: prefix.join("/"), depth: prefix.length },
   ]
-  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+  for (const next of queue) {
     if (budget.directories <= 0) break
     budget.directories -= 1
     const absolute = join(dir, next.path)

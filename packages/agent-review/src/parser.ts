@@ -33,6 +33,7 @@ export const REVIEW_MAX_REF_BYTES = 256
 export const REVIEW_MAX_ID_BYTES = 128
 export const REVIEW_MAX_CODE_BYTES = 64
 
+const UTF8_ENCODER = new TextEncoder()
 const HEX64 = /^[0-9a-f]{64}$/
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
@@ -173,7 +174,7 @@ class ParseGuard {
   }
 
   chargeString(value: string, maxBytes: number, code: ReviewParserErrorCode, path: string): void {
-    const bytes = new TextEncoder().encode(value).byteLength
+    const bytes = UTF8_ENCODER.encode(value).byteLength
     if (bytes === 0 || bytes > maxBytes) fail(code, path)
     if (value.includes("\u0000") || value.includes("\\")) fail(code, path)
     this.chargedBytes += bytes + 2
@@ -897,7 +898,7 @@ function parseObjectReport(value: unknown, guard: ParseGuard): ReviewReport {
 export async function parseReviewReport(input: unknown): Promise<ReviewReport> {
   let value = input
   if (typeof input === "string") {
-    const bytes = new TextEncoder().encode(input).byteLength
+    const bytes = UTF8_ENCODER.encode(input).byteLength
     if (bytes > REVIEW_MAX_BYTES) fail("oversized", "$")
     try {
       value = JSON.parse(input) as unknown
@@ -907,7 +908,7 @@ export async function parseReviewReport(input: unknown): Promise<ReviewReport> {
   }
 
   const report = parseObjectReport(value, new ParseGuard())
-  const canonicalBytes = new TextEncoder().encode(canonicalizeReviewReport(report)).byteLength
+  const canonicalBytes = UTF8_ENCODER.encode(canonicalizeReviewReport(report)).byteLength
   if (canonicalBytes > REVIEW_MAX_BYTES) fail("oversized", "$")
   const expectedDigest = await digestReviewReport(report)
   if (report.digest !== expectedDigest) fail("derived-field-mismatch", "$.digest")

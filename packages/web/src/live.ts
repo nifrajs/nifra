@@ -14,6 +14,8 @@
  * whole app: every hook, middleware, gate and loader sees the target path, exactly as a navigation.
  * Changes reach open pages over one WebSocket per tab, as opaque tags of the keys they watch.
  */
+
+import { Fifo } from "@nifrajs/core/internal/fifo"
 import {
   carryRequestLocals,
   isSameOriginForm,
@@ -351,7 +353,7 @@ export function live(options: LiveOptions): Live {
 
   // Bus events wait here until the core exists, then apply in seq order: their tags are derived
   // first (async), then each is recorded and fanned out in one synchronous step.
-  const queue: Queued[] = []
+  const queue = new Fifo<Queued>()
   let draining = false
   let core: Core | undefined
   /** The last bus seq this process applied: a load reads it before any loader runs. */

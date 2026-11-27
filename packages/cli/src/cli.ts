@@ -13,24 +13,14 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  type CssLoadingMode,
-  createWebApp,
-  DEFAULT_DEV_PORT,
-  type RenderAdapter,
-} from "@nifrajs/web"
+import type { CssLoadingMode, RenderAdapter } from "@nifrajs/web"
 import { formatBuildLog } from "@nifrajs/web/diagnostic"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { DEFAULT_DEV_PORT } from "@nifrajs/web/internal/runtime-contract"
 import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
-import {
-  bindCommandArgv,
-  type CommandSpec,
-  commandUsage,
-  findCommandSpec,
-  renderCommandCatalogHelp,
-} from "./command-catalog.ts"
+import type { CommandSpec } from "./command-catalog.ts"
 import { applyEnvFiles, forgetAutoLoadedEnv, REFLECT_ENV, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { PROJECT_COMMANDS, runThroughLocalCli } from "./local-cli.ts"
@@ -363,9 +353,21 @@ Env: \`--env-file <path>\` works on EVERY command and may be repeated (later fil
 reflect your app import it, so an app that validates its environment at module scope needs that
 environment present - without it the app aborts before nifra runs a single check. A variable already
 set in the process environment is never overwritten by a file.
-  e.g. \`nifra check --env-file .env.local\`
+  e.g. \`nifra check --env-file .env.local\``
 
-${renderCommandCatalogHelp()}`
+const SHORT_HELP = `nifra - develop, build, and verify a nifra app
+
+Develop      dev, build, start, scaffold, target, db
+Verify       check, review, assure, doctor, fix, smoke
+Contracts    routes, types, schemas, openapi, contracts
+Agents       mcp, docs-mcp, learn, context, runtime
+
+Run nifra <command> --help for command options or nifra help --all for the full catalog.`
+
+async function fullHelp(): Promise<string> {
+  const { renderCommandCatalogHelp } = await import("./command-catalog.ts")
+  return `${HELP}\n\n${renderCommandCatalogHelp()}`
+}
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const CLI_VERSION = "5.17.0"
@@ -420,21 +422,19 @@ export function formatCliError(err: unknown): string {
 
 /** A failed command's message on stderr and, for a `--json` caller parsing stdout, as JSON there. */
 /** One catalog command's usage: its lines from {@link HELP} when it has them, else the catalog's. */
-export function commandHelp<Input, Output>(spec: CommandSpec<Input, Output>): string {
+function commandHelp<Input, Output>(spec: CommandSpec<Input, Output>, usage: string): string {
   const name = spec.name.replace(/^db-/, "db ")
   const lines: string[] = []
   let inside = false
   for (const line of HELP.split("\n")) {
     if (line.startsWith(`  nifra ${name} `) || line === `  nifra ${name}`) inside = true
     else if (!inside || !/^ {3,}\S/.test(line)) {
-      // The first block is the hand-written one; the catalog's one-line summary repeats it below.
       if (lines.length > 0) break
       continue
     }
     lines.push(line)
   }
   if (lines.length > 0) return ["Usage:", ...lines].join("\n")
-  const usage = commandUsage(spec)
   return `Usage:\n  nifra ${name}${usage === "" ? "" : ` ${usage}`}  ${spec.summary}`
 }
 
@@ -527,7 +527,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       // present. Keep a second, authenticated copy of the user vector in the child's environment so
       // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
       // is still the proof boundary; these arguments are only a transport, never authorization.
-      const childCliArgv = [...cliArgv()]
+      const childCliArgv = [...(await cliArgv())]
       const child = Bun.spawn(
         [
           process.execPath,
@@ -631,6 +631,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     // scope; it has to defer to first render, which happens after this point. `@nifrajs/web-svelte`
     // loads its `Chain.svelte` that way for exactly this reason, and says so at the import.
     const { createDevServer } = await import("@nifrajs/web/dev")
+    const { createWebApp } = await import("@nifrajs/web")
     const { framework: fw, routesDir, outDir, backend } = app
     const server = await createDevServer({
       routesDir,
@@ -696,6 +697,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   // Both attempts add a compiler. The fix removes one instead: `createViteDevServer` publishes its
   // `ssrLoadModule` via `setSsrModuleLoader`, and the adapter loads `Chain.svelte` AND `svelte/server`
   // through it - one toolchain, one runtime, context intact across the whole tree.
+  const { createWebApp } = await import("@nifrajs/web")
   const server = await createViteDevServer({
     root: cwd,
     routesDir,
@@ -1129,6 +1131,7 @@ async function buildPrerenderApp(
   app: LoadedApp,
 ): Promise<(client: BuiltManifest) => { fetch(req: Request): Response | Promise<Response> }> {
   const { plugin } = await import("bun")
+  const { createWebApp } = await import("@nifrajs/web")
   const { framework: fw, routesDir, backend } = app
   for (const p of asBunPlugins(app.resolvedPlugins.serverPlugins)) plugin(p)
   return (client) =>
@@ -1446,7 +1449,7 @@ function rejectUnknownManualFlags(
 }
 
 async function main(): Promise<void> {
-  const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
+  const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(await cliArgv())
   const helpCommand = rawArgv[0]
   if (
     helpCommand !== undefined &&
@@ -1475,7 +1478,7 @@ async function main(): Promise<void> {
           "the verified dev configuration. Re-run `nifra dev`.",
       )
     }
-    console.log(HELP)
+    console.log(argv.includes("--all") ? await fullHelp() : SHORT_HELP)
     return
   }
   if (command === "--version" || command === "-v") {
@@ -1491,7 +1494,7 @@ async function main(): Promise<void> {
     const exitCode = await runThroughLocalCli({
       cwd: process.cwd(),
       version: CLI_VERSION,
-      args: cliArgv(),
+      args: await cliArgv(),
     })
     if (exitCode !== undefined) {
       process.exitCode = exitCode
@@ -1600,6 +1603,7 @@ async function main(): Promise<void> {
   // `nifra db <sub>` is the catalog's `db-<sub>` command, projected to MCP as `nifra_db_<sub>`.
   const dbSub =
     command === "db" && argv[1] !== undefined && !argv[1].startsWith("-") ? argv[1] : undefined
+  const { findCommandSpec, commandUsage, bindCommandArgv } = await import("./command-catalog.ts")
   if (command === "db" && (dbSub === undefined || findCommandSpec(`db-${dbSub}`) === undefined)) {
     throw new Error("[nifra] usage: nifra db schema|query|role|audit - see `nifra help`")
   }
@@ -1607,7 +1611,7 @@ async function main(): Promise<void> {
   if (catalogSpec?.transports.includes("cli")) {
     const commandArgs = argv.slice(dbSub === undefined ? 1 : 2)
     if (commandArgs.includes("--help") || commandArgs.includes("-h")) {
-      console.log(commandHelp(catalogSpec))
+      console.log(commandHelp(catalogSpec, commandUsage(catalogSpec)))
       return
     }
     const markReflecting = installReflectionExitHint()
@@ -1620,7 +1624,9 @@ async function main(): Promise<void> {
         input = bindCommandArgv(catalogSpec, commandArgs)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        throw new Error(`[nifra] ${message}\n\n${commandHelp(catalogSpec)}`)
+        throw new Error(
+          `[nifra] ${message}\n\n${commandHelp(catalogSpec, commandUsage(catalogSpec))}`,
+        )
       }
       markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
@@ -1727,7 +1733,7 @@ async function main(): Promise<void> {
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
   if (command === "upgrade") {
     if (argv.includes("--help") || argv.includes("-h")) {
-      console.log(HELP)
+      console.log(manualHelp(command))
       return
     }
     const { parseUpgradeArgs, runUpgrade } = await import("./upgrade.ts")
@@ -1748,12 +1754,12 @@ async function main(): Promise<void> {
   // `doctor`, dispatch before the eager `loadApp` so it runs on an API-only / not-yet-built project.
   if (command !== "dev" && command !== "build" && command !== "start") {
     console.error(`[nifra] unknown command: ${command}\n`)
-    console.error(HELP)
+    console.error(SHORT_HELP)
     process.exitCode = 1
     return
   }
   if (argv.includes("--help") || argv.includes("-h")) {
-    console.log(HELP)
+    console.log(manualHelp(command))
     return
   }
   const flags = parseFlags(argv.slice(1))
@@ -1868,8 +1874,8 @@ function isMainModule(): boolean {
  * sees test-file paths and runner flags, not an exact Nifra command, while a direct CLI invocation
  * has one of the manual or catalogued command names below.
  */
-function isCliCommandToken(value: string): boolean {
-  return (
+async function isCliCommandToken(value: string): Promise<boolean> {
+  if (
     value === "dev" ||
     value === "build" ||
     value === "start" ||
@@ -1880,18 +1886,21 @@ function isCliCommandToken(value: string): boolean {
     value === "--help" ||
     value === "-h" ||
     value === "--version" ||
-    value === "-v" ||
-    findCommandSpec(value) !== undefined
+    value === "-v"
   )
+    return true
+  if (!/^[a-z][a-z0-9-]*$/.test(value)) return false
+  const { findCommandSpec } = await import("./command-catalog.ts")
+  return findCommandSpec(value) !== undefined
 }
 
-function findCliCommand(values: readonly string[]): number {
+async function findCliCommand(values: readonly string[]): Promise<number> {
   // Most Bun/Node argv vectors reserve index 0 for the runtime and index 1 for the script. Bun 1.4
   // on Windows can omit the script for a directly spawned TS entry, leaving the command at index 0.
   // Accept that one exact-token shape while keeping arbitrary imported-module argv inert.
   for (const [index, value] of values.entries()) {
     if (values[index - 1] === "--env-file" && !value.startsWith("-")) continue
-    if (isCliCommandToken(value)) return index
+    if (await isCliCommandToken(value)) return index
   }
   return -1
 }
@@ -1930,11 +1939,11 @@ export function commandArgv(values: readonly string[], commandIndex: number): re
   return [...envFiles, ...command.slice(0, end), ...others, ...command.slice(end)]
 }
 
-function cliArgv(): readonly string[] {
-  const reexec = reexecCliArgv()
+async function cliArgv(): Promise<readonly string[]> {
+  const reexec = await reexecCliArgv()
   if (reexec !== undefined) return reexec
   for (const values of [Bun.argv, process.argv]) {
-    const commandIndex = findCliCommand(values)
+    const commandIndex = await findCliCommand(values)
     if (commandIndex >= 0) return commandArgv(values, commandIndex)
   }
   return Bun.argv.slice(2)
@@ -1946,7 +1955,7 @@ function cliArgv(): readonly string[] {
  * first item must be a real Nifra command, and malformed/oversized data is ignored so an inherited
  * environment can never turn an imported CLI module into an arbitrary command runner.
  */
-function reexecCliArgv(): readonly string[] | undefined {
+async function reexecCliArgv(): Promise<readonly string[] | undefined> {
   if (!isBunDevReexecChild()) return undefined
   const encoded = process.env.NIFRA_BUN_DEV_ARGS
   if (encoded === undefined || encoded.length > 64 * 1024) return undefined
@@ -1973,11 +1982,11 @@ function reexecCliArgv(): readonly string[] | undefined {
   }
   const command = parsed[at]
   if (typeof command !== "string") return undefined
-  return isCliCommandToken(command) ? (parsed as string[]) : undefined
+  return (await isCliCommandToken(command)) ? (parsed as string[]) : undefined
 }
 
-function hasCliCommandToken(): boolean {
-  return findCliCommand(Bun.argv) >= 0 || findCliCommand(process.argv) >= 0
+async function hasCliCommandToken(): Promise<boolean> {
+  return (await findCliCommand(Bun.argv)) >= 0 || (await findCliCommand(process.argv)) >= 0
 }
 
 /**
@@ -2000,7 +2009,7 @@ function isBunDevReexecChild(): boolean {
 
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
 // exported `parseFlags`.
-if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
+if (isMainModule() || isBunDevReexecChild() || (await hasCliCommandToken())) {
   // Keep the entry module alive until the async CLI has completed. Bun 1.4 on Windows can otherwise
   // terminate a process created by Bun.spawn while its first dynamic import is pending, leaving an
   // exit-0 child with no output. Imported test modules never enter this branch, so the CLI's top-level
@@ -2008,7 +2017,7 @@ if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
   try {
     await main()
   } catch (err) {
-    reportFailure(err, cliArgv())
+    reportFailure(err, await cliArgv())
     process.exitCode = 1
   }
 }

@@ -51,6 +51,42 @@ interface Data extends Record<string, unknown> {
   role: "admin" | "user"
 }
 
+test("a store can batch session reads without skipping revocation checks", async () => {
+  const backing = new MemorySessionStore()
+  const batches: string[][] = []
+  const store: SessionStore = {
+    get: async () => {
+      throw new Error("expected batch read")
+    },
+    getMany: (ids) => {
+      batches.push([...ids])
+      return Promise.all(ids.map((id) => backing.get(id)))
+    },
+    set: backing.set.bind(backing),
+    delete: backing.delete.bind(backing),
+    replace: backing.replace.bind(backing),
+    rotate: backing.rotate.bind(backing),
+  }
+  const sessions = createSessions<Data>({ secret: SECRET, store })
+  const initial = ctx()
+  const session = await sessions.get(initial.context)
+  session.set("userId", "user")
+  await sessions.commit(initial.context, session)
+  const originalCookie = lastCookie(initial.setCalls)
+  const original = ctx({ nifra_session: originalCookie })
+  const loaded = await sessions.get(original.context)
+  expect(loaded.get("userId")).toBe("user")
+  await sessions.commit(original.context, loaded)
+  expect(batches.map((batch) => batch.length)).toEqual([3, 3, 2])
+
+  sessions.regenerate(loaded)
+  await sessions.commit(original.context, loaded)
+  const rotated = ctx({ nifra_session: lastCookie(original.setCalls) })
+  expect((await sessions.get(rotated.context)).get("userId")).toBe("user")
+  await sessions.destroy(rotated.context, loaded)
+  expect((await sessions.get(rotated.context)).isEmpty).toBe(true)
+})
+
 test("a short secret is rejected", () => {
   expect(() => createSessions({ secret: "tooshort" })).toThrow(/at least 32 bytes/)
 })

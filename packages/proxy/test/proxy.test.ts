@@ -68,6 +68,20 @@ describe("createProxy()", () => {
     expect(seen?.path).toBe("/other/thing")
   })
 
+  test("keeps encoded path and query bytes while dropping fragments and an empty query", async () => {
+    const targets: URL[] = []
+    const proxy = createProxy({
+      upstream: ORIGIN,
+      transport: async (target) => {
+        targets.push(target)
+        return { status: 200, statusText: "OK", headers: new Headers(), body: null }
+      },
+    })
+    await proxy(new Request("https://edge.test/a%2Fb?q=%2B&x=#ignored"))
+    await proxy(new Request("https://edge.test/a?"))
+    expect(targets.map((url) => url.href)).toEqual([`${ORIGIN}/a%2Fb?q=%2B&x=`, `${ORIGIN}/a`])
+  })
+
   // The prefix is a path segment, not a string prefix. Matching it as a substring rewrote sibling
   // routes that merely start with the same characters - `/apidocs` was forwarded as `docs`.
   test("stripPrefix matches whole segments, not a leading substring", async () => {

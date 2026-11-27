@@ -851,9 +851,11 @@ const WARM_RUN_SOURCE = /\.(?:[cm]?[jt]sx?|json)$/
 const WARM_RUN_SKIPPED_DIR = /^(?:\..*|node_modules|dist(?:-[a-z0-9]+)?|build|coverage)$/
 const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
 const MAX_WARM_PENDING = 64
+const WARM_RUN_STAT_CONCURRENCY = 32
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
+  const pending = [{ path: "", directory: true }]
   const walk = async (dir: string): Promise<void> => {
     let entries: Dirent[]
     try {
@@ -861,27 +863,34 @@ async function warmRunFingerprint(cwd: string): Promise<string> {
     } catch {
       return
     }
-    const tasks: Promise<void>[] = []
     for (const entry of entries) {
       const rel = dir === "" ? entry.name : `${dir}/${entry.name}`
-      if (entry.isDirectory()) {
-        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) tasks.push(walk(rel))
-        continue
-      }
-      if (entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)) continue
-      tasks.push(
-        stat(resolve(cwd, rel))
-          .then((s) => {
-            if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
-          })
-          .catch(() => {
-            // A file can disappear while an agent is editing. The next call will rescan the settled tree.
-          }),
+      const directory = entry.isDirectory()
+      if (
+        directory
+          ? WARM_RUN_SKIPPED_DIR.test(entry.name)
+          : entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)
       )
+        continue
+      pending.push({ path: rel, directory })
     }
-    await Promise.all(tasks)
   }
-  await walk("")
+  // Share a bound across the whole tree so a wide workspace cannot enqueue every stat at once.
+  for (let start = 0; start < pending.length; ) {
+    const batch = pending.slice(start, start + WARM_RUN_STAT_CONCURRENCY)
+    start += batch.length
+    await Promise.all(
+      batch.map(async ({ path, directory }) => {
+        if (directory) return walk(path)
+        try {
+          const info = await stat(resolve(cwd, path))
+          if (info.isFile()) parts.push(`${path}:${info.mtimeMs}:${info.size}`)
+        } catch {
+          // A file can disappear while an agent is editing. The next call scans the settled tree.
+        }
+      }),
+    )
+  }
   const extra = await Promise.all(
     WARM_RUN_EXTRA_FILES.map(async (rel) => `${rel}:${await fileFingerprint(resolve(cwd, rel))}`),
   )

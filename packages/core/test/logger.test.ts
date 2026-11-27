@@ -72,6 +72,23 @@ describe("redactLogFields", () => {
     expect(out).toEqual({ sessionId: "***", user: "ada" })
   })
 
+  test("key fragments preserve Unicode lowercase matching and treat punctuation literally", () => {
+    const apiKey = "api\u212Aey"
+    const fields = { [apiKey]: "private", "session.id": "private", sessionXid: "visible" }
+    expect(redactLogFields(fields, { keyParts: ["Session.ID"] })).toEqual({
+      [apiKey]: "[REDACTED]",
+      "session.id": "[REDACTED]",
+      sessionXid: "visible",
+    })
+  })
+
+  test("short caller-supplied value patterns still run", () => {
+    expect(redactLogFields({ detail: "AB" }, { valuePatterns: [/AB/] }).detail).toBe("[REDACTED]")
+    expect(
+      redactLogFields({ detail: "a@b.cd" }, { valuePatterns: commonSecretPatterns }).detail,
+    ).toBe("[REDACTED]")
+  })
+
   test("a non-global pattern still scrubs every occurrence (normalized to global)", () => {
     const out = redactLogFields(
       { msg: "x=1 x=2 x=3" },

@@ -368,10 +368,11 @@ async function pump(
     })
     return ok
   }
-  const queue = pending.slice()
+  let nextBuffered = 0
   for (;;) {
-    let chunk = queue.shift()
-    if (chunk === undefined) {
+    let chunk = pending[nextBuffered]
+    if (chunk !== undefined) nextBuffered++
+    else {
       const next = await reader.read()
       if (source.aborted) return
       if (next.done) break

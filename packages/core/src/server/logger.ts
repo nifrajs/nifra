@@ -78,9 +78,11 @@ interface RedactConfig {
 }
 
 const escapeKeyPart = (part: string): string => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-const DEFAULT_KEY_PATTERN = new RegExp(SENSITIVE_KEY_PARTS.map(escapeKeyPart).join("|"), "i")
+// Match the lowercased keys rather than using /i, which folds some Unicode characters differently.
+const DEFAULT_KEY_PATTERN = new RegExp(SENSITIVE_KEY_PARTS.map(escapeKeyPart).join("|"))
 // Shortest possible match in `commonSecretPatterns` is a minimal email (`a@b.cd`, 6 chars).
 const COMMON_SECRET_MIN_LENGTH = 6
+const KNOWN_SECRET_PATTERNS = new Set(commonSecretPatterns)
 
 // `String.replace` with a global regex replaces every match and is stateless across calls; a
 // non-global pattern would only scrub the first occurrence, so normalize to global once up front.
@@ -96,12 +98,20 @@ function buildConfig(
   const keyPattern =
     extra === undefined || extra.length === 0
       ? DEFAULT_KEY_PATTERN
-      : new RegExp([...SENSITIVE_KEY_PARTS, ...extra].map(escapeKeyPart).join("|"), "i")
+      : new RegExp(
+          [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())]
+            .map(escapeKeyPart)
+            .join("|"),
+        )
   const rawPatterns = options?.valuePatterns ?? defaultPatterns
   return {
     keyPattern,
     maxScanLength,
-    minScanLength: rawPatterns === commonSecretPatterns ? COMMON_SECRET_MIN_LENGTH : 0,
+    minScanLength:
+      rawPatterns === commonSecretPatterns &&
+      rawPatterns.every((pattern) => KNOWN_SECRET_PATTERNS.has(pattern))
+        ? COMMON_SECRET_MIN_LENGTH
+        : 0,
     valuePatterns: rawPatterns.map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
@@ -136,9 +146,9 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue
     // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    out[key] = config.keyPattern.test(key)
+    out[key] = config.keyPattern.test(key.toLowerCase())
       ? config.placeholder
-      : redactValue((value as Record<string, unknown>)[key], seen, config)
+      : redactValue(Reflect.get(value, key), seen, config)
   }
   return out
 }

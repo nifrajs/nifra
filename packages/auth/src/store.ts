@@ -27,6 +27,9 @@ export interface SessionStore {
   readonly consistency?: "strong" | "eventual"
   /** The record for `id`, or `undefined` on a miss. */
   get(id: string): Promise<SessionRecord | undefined>
+  /** Read records with the same consistency as `get`, in one batch. Return one entry per key in input
+   * order, including `undefined` for each miss. */
+  getMany?(ids: readonly string[]): Promise<readonly (SessionRecord | undefined)[]>
   /** Store (or overwrite) the record for `id`. */
   set(id: string, record: SessionRecord): Promise<void>
   /** Drop `id` (logout / regeneration). A no-op if absent. */

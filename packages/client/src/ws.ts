@@ -6,6 +6,7 @@
  * read them off `raw`). Sends before the socket opens are queued, so the handle never throws.
  */
 
+import { Fifo } from "@nifrajs/core/internal/fifo"
 import { formatStandardIssues } from "@nifrajs/core/schema"
 import {
   createTransportCodecRegistry,
@@ -113,7 +114,7 @@ export function openWebSocket(
   }
   const schema = callOptions?.validateReceive
   const validationStopped = new AbortController()
-  const validationQueue: { frame: unknown }[] = []
+  const validationQueue = new Fifo<{ frame: unknown }>()
   let validating = false
   let received: Promise<void> | undefined
   const reportReceiveError = (error: unknown): void => {
@@ -157,7 +158,7 @@ export function openWebSocket(
       ? deliver
       : (frame: unknown): void => {
           if (validationQueue.length + (validating ? 1 : 0) >= maxPending) {
-            validationQueue.length = 0
+            validationQueue.clear()
             validationStopped.abort()
             socket.close(4008, "receive queue full")
             reportReceiveError(new Error("websocket_validation_queue_full"))
@@ -220,8 +221,8 @@ export function openWebSocket(
     },
     onMessage,
     messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<unknown> {
-      const buffered: unknown[] = []
-      const pending: Array<(result: IteratorResult<unknown>) => void> = []
+      const buffered = new Fifo<unknown>()
+      const pending = new Fifo<(result: IteratorResult<unknown>) => void>()
       let done = false
       const signal = options?.signal
 
@@ -244,11 +245,12 @@ export function openWebSocket(
         socket.removeEventListener("error", closed)
         signal?.removeEventListener("abort", discard)
         validationStopped.signal.removeEventListener("abort", discard)
-        for (const resolve of pending) resolve({ value: undefined, done: true })
-        pending.length = 0
+        for (let resolve = pending.shift(); resolve !== undefined; resolve = pending.shift()) {
+          resolve({ value: undefined, done: true })
+        }
       }
       const discard = (): void => {
-        buffered.length = 0
+        buffered.clear()
         end()
       }
       // A frame still in `validateReceive` arrived before the close, so it is delivered first.

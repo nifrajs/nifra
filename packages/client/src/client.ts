@@ -597,18 +597,17 @@ function assignHeaders(
   source: Record<string, string> | undefined,
 ): Record<string, string> {
   if (source === undefined) return target
-  const existing = new Map<string, string>()
-  for (const key in target) {
-    if (Object.hasOwn(target, key)) existing.set(key.toLowerCase(), key)
-  }
-  for (const name in source) {
-    if (!Object.hasOwn(source, name)) continue
+  const replacements = new Map<string, [string, string]>()
+  for (const [name, value] of Object.entries(source)) {
     const lower = name.toLowerCase()
-    const prior = existing.get(lower)
-    if (prior !== undefined && prior !== name) delete target[prior]
-    target[name] = source[name] as string
-    existing.set(lower, name)
+    replacements.delete(lower)
+    replacements.set(lower, [name, value])
   }
+  if (replacements.size === 0) return target
+  for (const key in target) {
+    if (Object.hasOwn(target, key) && replacements.has(key.toLowerCase())) delete target[key]
+  }
+  for (const [name, value] of replacements.values()) target[name] = value
   return target
 }
 

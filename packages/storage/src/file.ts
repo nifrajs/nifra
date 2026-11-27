@@ -9,7 +9,7 @@
  * is the owner's alone.
  */
 import { createHash } from "node:crypto"
-import { constants, type Dirent } from "node:fs"
+import { type BigIntStats, constants, type Dirent } from "node:fs"
 import {
   type FileHandle,
   lstat,
@@ -75,10 +75,41 @@ interface FileIdentity {
   readonly sha256?: string
 }
 
+interface OpenedPath {
+  readonly handle: FileHandle
+  readonly info: BigIntStats
+}
+
 const identityOf = async (handle: FileHandle): Promise<FileIdentity> => {
   const { dev, ino } = await handle.stat({ bigint: true })
   return { dev: String(dev), ino: String(ino) }
 }
+
+/** A put replaces the file atomically. Refuse growth of the opened inode without buffering it. */
+async function readSnapshot(
+  handle: FileHandle,
+  fileSize: bigint,
+  maxReadBytes: number,
+  kind: "object" | "metadata",
+): Promise<Uint8Array> {
+  if (fileSize < 0n || fileSize > BigInt(maxReadBytes)) {
+    throw new RangeError(`FileStorage ${kind} exceeds its read limit`)
+  }
+  const size = Number(fileSize)
+  const bytes = new Uint8Array(size)
+  let length = 0
+  while (length < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length)
+    if (bytesRead === 0) return bytes.slice(0, length)
+    length += bytesRead
+  }
+  const probe = new Uint8Array(1)
+  if ((await handle.read(probe, 0, 1, size)).bytesRead === 0) return bytes
+  if (size === maxReadBytes) throw new RangeError(`FileStorage ${kind} exceeds its read limit`)
+  throw new StorageKeyError(`FileStorage ${kind} grew during the read`)
+}
+
+const METADATA_UTF8 = new TextDecoder("utf-8", { ignoreBOM: true })
 
 const sha256 = (data: Uint8Array | string): string =>
   createHash("sha256").update(data).digest("base64")
@@ -131,6 +162,7 @@ export async function renameOver(
 
 export class FileStorage implements StorageAdapter {
   private readonly maxReadBytes: number
+  private readonly maxMetadataBytes: number
   private root = ""
   private metadataRoot = ""
   private legacyMetadataRoot = ""
@@ -144,10 +176,17 @@ export class FileStorage implements StorageAdapter {
     | Promise<{ readonly path: string; readonly dev: number; readonly ino: number }>
     | undefined
 
-  constructor(root: string, options: { readonly maxReadBytes?: number } = {}) {
+  constructor(
+    root: string,
+    options: { readonly maxReadBytes?: number; readonly maxMetadataBytes?: number } = {},
+  ) {
     this.maxReadBytes = options.maxReadBytes ?? 16 * 1024 * 1024
     if (!Number.isSafeInteger(this.maxReadBytes) || this.maxReadBytes < 0) {
       throw new RangeError("FileStorage maxReadBytes must be a non-negative safe integer")
+    }
+    this.maxMetadataBytes = options.maxMetadataBytes ?? 16 * 1024 * 1024
+    if (!Number.isSafeInteger(this.maxMetadataBytes) || this.maxMetadataBytes < 0) {
+      throw new RangeError("FileStorage maxMetadataBytes must be a non-negative safe integer")
     }
     this.placeRoot(resolve(root))
   }
@@ -317,11 +356,16 @@ export class FileStorage implements StorageAdapter {
   }
 
   /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */
-  private async assertNoSymlinkPath(base: string, path: string, key: string): Promise<void> {
+  private async assertNoSymlinkPath(
+    base: string,
+    path: string,
+    key: string,
+  ): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+    let baseInfo: Awaited<ReturnType<typeof lstat>>
     try {
-      const info = await lstat(base)
-      if (info.isSymbolicLink()) throw this.symlinkError(key)
-      this.assertTrustedDirectory(info, key, base)
+      baseInfo = await lstat(base)
+      if (baseInfo.isSymbolicLink()) throw this.symlinkError(key)
+      this.assertTrustedDirectory(baseInfo, key, base)
     } catch (error) {
       if (error instanceof StorageKeyError) throw error
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return
@@ -341,13 +385,14 @@ export class FileStorage implements StorageAdapter {
         throw error
       }
     }
+    return baseInfo
   }
 
   /** {@link openContained} for an object: a directory under the root is a key prefix, not an object. */
-  private async openObject(base: string, path: string, key: string): Promise<FileHandle | null> {
-    const handle = await this.openContained(base, path, key)
-    if (handle === null || (await handle.stat()).isFile()) return handle
-    await handle.close()
+  private async openObject(base: string, path: string, key: string): Promise<OpenedPath | null> {
+    const opened = await this.openContained(base, path, key)
+    if (opened === null || opened.info.isFile()) return opened
+    await opened.handle.close()
     return null
   }
 
@@ -356,19 +401,13 @@ export class FileStorage implements StorageAdapter {
    * still reachable through a symlink-free path below the same root inode. Reads use the descriptor,
    * not the pathname checked earlier, closing their check/open race.
    */
-  private async openContained(base: string, path: string, key: string): Promise<FileHandle | null> {
-    await this.assertNoSymlinkPath(base, path, key)
-    let baseBefore: Awaited<ReturnType<typeof lstat>>
-    try {
-      baseBefore = await lstat(base)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
-      throw error
-    }
+  private async openContained(base: string, path: string, key: string): Promise<OpenedPath | null> {
+    const baseBefore = await this.assertNoSymlinkPath(base, path, key)
+    if (baseBefore === undefined) return null
 
     let handle: FileHandle
     try {
-      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if (code === "ENOENT") return null
@@ -377,8 +416,8 @@ export class FileStorage implements StorageAdapter {
     }
 
     try {
-      await this.assertOpenedContained(base, path, key, handle, baseBefore)
-      return handle
+      const info = await this.assertOpenedContained(base, path, key, handle, baseBefore)
+      return { handle, info }
     } catch (error) {
       await handle.close()
       throw error
@@ -391,12 +430,12 @@ export class FileStorage implements StorageAdapter {
     key: string,
     handle: FileHandle,
     baseBefore: Awaited<ReturnType<typeof lstat>>,
-  ): Promise<void> {
+  ): Promise<BigIntStats> {
     await this.assertNoSymlinkPath(base, path, key)
     try {
       const [opened, current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
-        handle.stat(),
-        lstat(path),
+        handle.stat({ bigint: true }),
+        lstat(path, { bigint: true }),
         lstat(base),
         realpath(base),
         realParentPath(path),
@@ -406,6 +445,7 @@ export class FileStorage implements StorageAdapter {
         current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino
       const escaped = resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
       if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+      return opened
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") throw this.symlinkError(key)
       throw error
@@ -575,24 +615,19 @@ export class FileStorage implements StorageAdapter {
     })
   }
 
-  /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */
+  /** Objects and their metadata each have a 16 MiB buffered-read limit by default.
+   * Oversized reads throw a RangeError. */
   async get(key: string): Promise<StorageObject | null> {
     await this.pinRoot(key)
     const path = this.pathFor(key)
-    const bodyHandle = await this.openObject(this.root, path, key)
-    if (bodyHandle === null) return null
+    const opened = await this.openObject(this.root, path, key)
+    if (opened === null) return null
+    const { handle: bodyHandle, info } = opened
     let body: Uint8Array
     let identity: FileIdentity
     try {
-      const info = await bodyHandle.stat({ bigint: true })
-      if (info.size < 0n || info.size > BigInt(this.maxReadBytes)) {
-        throw new RangeError("FileStorage object exceeds maxReadBytes")
-      }
       identity = { dev: String(info.dev), ino: String(info.ino) }
-      body = new Uint8Array(await bodyHandle.readFile())
-      if (body.byteLength > this.maxReadBytes) {
-        throw new RangeError("FileStorage object exceeds maxReadBytes")
-      }
+      body = await readSnapshot(bodyHandle, info.size, this.maxReadBytes, "object")
     } finally {
       await bodyHandle.close()
     }
@@ -637,10 +672,12 @@ export class FileStorage implements StorageAdapter {
     key: string,
   ): Promise<StoredMetadata | undefined> {
     try {
-      const handle = await this.openObject(base, path, key)
-      if (handle === null) return undefined
+      const opened = await this.openObject(base, path, key)
+      if (opened === null) return undefined
+      const { handle, info } = opened
       try {
-        return JSON.parse(await handle.readFile({ encoding: "utf8" })) as StoredMetadata
+        const bytes = await readSnapshot(handle, info.size, this.maxMetadataBytes, "metadata")
+        return JSON.parse(METADATA_UTF8.decode(bytes)) as StoredMetadata
       } finally {
         await handle.close()
       }
@@ -662,19 +699,17 @@ export class FileStorage implements StorageAdapter {
   async exists(key: string): Promise<boolean> {
     await this.pinRoot(key)
     const path = this.pathFor(key)
-    const handle = await this.openObject(this.root, path, key)
-    if (handle === null) return false
-    try {
-      return true
-    } finally {
-      await handle.close()
-    }
+    const opened = await this.openObject(this.root, path, key)
+    if (opened === null) return false
+    await opened.handle.close()
+    return true
   }
 
   /** Revalidate an opened inode immediately before unlinking its pathname. */
   private async removeContained(base: string, path: string, key: string): Promise<void> {
-    const handle = await this.openObject(base, path, key)
-    if (handle === null) return
+    const opened = await this.openObject(base, path, key)
+    if (opened === null) return
+    const { handle } = opened
     try {
       await this.assertTrustedAncestorChain(base, key)
       const baseBefore = await lstat(base)
@@ -684,8 +719,9 @@ export class FileStorage implements StorageAdapter {
         // Anchor the final lookup to an opened, validated parent so replacing an intermediate directory
         // cannot redirect deletion outside the storage root.
         const parentPath = dirname(path)
-        const parentHandle = await this.openContained(base, parentPath, key)
-        if (parentHandle === null) throw this.symlinkError(key)
+        const parent = await this.openContained(base, parentPath, key)
+        if (parent === null) throw this.symlinkError(key)
+        const { handle: parentHandle } = parent
         try {
           const anchoredPath = join("/proc/self/fd", String(parentHandle.fd), basename(path))
           const [opened, current] = await Promise.all([handle.stat(), lstat(anchoredPath)])
@@ -810,8 +846,9 @@ export class FileStorage implements StorageAdapter {
         await this.pinRoot(key)
         return entries
       }
-      const handle = await this.openContained(this.root, dir, key)
-      if (handle === null) return []
+      const opened = await this.openContained(this.root, dir, key)
+      if (opened === null) return []
+      const { handle } = opened
       try {
         const path = process.platform === "linux" ? `/proc/self/fd/${handle.fd}` : dir
         const entries = await readdir(path, { withFileTypes: true })
