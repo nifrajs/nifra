@@ -1,6 +1,7 @@
 //! Sans-I/O `rustls` + `aws-lc-rs` TLS termination with lock-free hot certificate reload
 //! and session-ticket preservation across reloads.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,8 @@ use rustls::crypto::{aws_lc_rs as tls_aws_lc_rs, CryptoProvider, SupportedKxGrou
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
 use rustls::server::danger::ClientCertVerifier;
-use rustls::server::{ProducesTickets, WebPkiClientVerifier};
+use rustls::server::{ClientHello, ProducesTickets, ResolvesServerCert, WebPkiClientVerifier};
+use rustls::sign::CertifiedKey;
 use rustls::version::{TLS12, TLS13};
 use rustls::{RootCertStore, SupportedCipherSuite, SupportedProtocolVersion};
 pub use rustls::{ServerConfig, ServerConnection};
@@ -24,6 +26,7 @@ pub enum TlsError {
     Io(io::Error),
     InvalidCertChain,
     InvalidPrivateKey,
+    InvalidServerName(String),
     InvalidTicketKeys,
     InvalidCaCerts,
     InvalidCrl,
@@ -60,12 +63,23 @@ impl std::fmt::Display for TlsError {
             Self::InvalidProtocolVersion(v) => write!(f, "unsupported TLS protocol version: {v}"),
             Self::InvalidCipherSuite(c) => write!(f, "unsupported TLS cipher suite: {c}"),
             Self::InvalidEcdhCurve(c) => write!(f, "unsupported ECDH/KEM curve: {c}"),
+            Self::InvalidServerName(s) => write!(f, "invalid SNI server name: {s}"),
             Self::Rustls(err) => write!(f, "rustls error: {err}"),
         }
     }
 }
 
 impl std::error::Error for TlsError {}
+
+/// SNI virtual-host certificate & private key pair (exact hostname or `*.domain` wildcard).
+#[derive(Debug, Clone, Default)]
+pub struct SniCertInput {
+    pub server_name: String,
+    pub cert_pem: Option<Vec<u8>>,
+    pub key_pem: Option<Vec<u8>>,
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
+}
 
 /// TLS configuration material accepted by `TlsStore` (inline PEM or file paths, plus mTLS & policy).
 #[derive(Debug, Clone, Default)]
@@ -86,6 +100,8 @@ pub struct TlsInput {
     pub ciphersuites: Option<String>,
     pub ecdh_curve: Option<String>,
     pub alpn_protocols: Vec<Vec<u8>>,
+    /// Optional SNI certificates matched against the TLS ClientHello `server_name` extension.
+    pub sni_certs: Vec<SniCertInput>,
     /// Optional shared session ticket key material for cross-worker TLS session resumption in cluster
     /// mode: one or more 48-byte entries (`16B key_name || 32B AES-256-GCM key`), newest first. The
     /// first entry seals new tickets; every entry opens them, so a key can be rotated in ahead of the
@@ -93,25 +109,47 @@ pub struct TlsInput {
     pub ticket_keys: Option<Vec<u8>>,
 }
 
+struct ResolvedSniMaterial {
+    server_name: String,
+    cert: Vec<u8>,
+    key: Vec<u8>,
+}
+
 struct ResolvedMaterial {
     cert: Vec<u8>,
     key: Vec<u8>,
     ca: Option<Vec<u8>>,
     crl: Option<Vec<u8>>,
+    sni: Vec<ResolvedSniMaterial>,
+}
+
+fn read_cert_key(
+    cert_pem: &Option<Vec<u8>>,
+    cert_file: &Option<String>,
+    key_pem: &Option<Vec<u8>>,
+    key_file: &Option<String>,
+) -> Result<(Vec<u8>, Vec<u8>), TlsError> {
+    let cert = match (cert_pem, cert_file) {
+        (Some(bytes), _) => bytes.clone(),
+        (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
+        (None, None) => return Err(TlsError::MissingMaterial),
+    };
+    let key = match (key_pem, key_file) {
+        (Some(bytes), _) => bytes.clone(),
+        (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
+        (None, None) => return Err(TlsError::MissingMaterial),
+    };
+    Ok((cert, key))
 }
 
 impl TlsInput {
     fn resolve_pem(&self) -> Result<ResolvedMaterial, TlsError> {
-        let cert = match (&self.cert_pem, &self.cert_file) {
-            (Some(bytes), _) => bytes.clone(),
-            (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
-            (None, None) => return Err(TlsError::MissingMaterial),
-        };
-        let key = match (&self.key_pem, &self.key_file) {
-            (Some(bytes), _) => bytes.clone(),
-            (None, Some(path)) => fs::read(path).map_err(TlsError::Io)?,
-            (None, None) => return Err(TlsError::MissingMaterial),
-        };
+        let (cert, key) = read_cert_key(
+            &self.cert_pem,
+            &self.cert_file,
+            &self.key_pem,
+            &self.key_file,
+        )?;
         let ca = match (&self.ca_pem, &self.ca_file) {
             (Some(bytes), _) => Some(bytes.clone()),
             (None, Some(path)) => Some(fs::read(path).map_err(TlsError::Io)?),
@@ -122,7 +160,28 @@ impl TlsInput {
             (None, Some(path)) => Some(fs::read(path).map_err(TlsError::Io)?),
             (None, None) => None,
         };
-        Ok(ResolvedMaterial { cert, key, ca, crl })
+        let mut sni = Vec::with_capacity(self.sni_certs.len());
+        for entry in &self.sni_certs {
+            let normalized = normalize_server_name(&entry.server_name)?;
+            let (sc, sk) = read_cert_key(
+                &entry.cert_pem,
+                &entry.cert_file,
+                &entry.key_pem,
+                &entry.key_file,
+            )?;
+            sni.push(ResolvedSniMaterial {
+                server_name: normalized,
+                cert: sc,
+                key: sk,
+            });
+        }
+        Ok(ResolvedMaterial {
+            cert,
+            key,
+            ca,
+            crl,
+            sni,
+        })
     }
 }
 
@@ -374,10 +433,91 @@ impl TlsStore {
         self.reload_input(&next)
     }
 
+    /// Add or replace an SNI certificate entry and atomically reload the store (preserving tickets).
+    pub fn add_server_name(&self, entry: SniCertInput) -> Result<(), TlsError> {
+        let normalized = normalize_server_name(&entry.server_name)?;
+        let mut next = {
+            let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
+            guard.active_input.clone()
+        };
+        next.sni_certs.retain(|existing| {
+            normalize_server_name(&existing.server_name).ok().as_deref()
+                != Some(normalized.as_str())
+        });
+        let mut normalized_entry = entry;
+        normalized_entry.server_name = normalized;
+        next.sni_certs.push(normalized_entry);
+        self.reload_input(&next)
+    }
+
+    /// Remove an SNI certificate entry and atomically reload the store. Returns `true` if removed.
+    pub fn remove_server_name(&self, server_name: &str) -> Result<bool, TlsError> {
+        let normalized = normalize_server_name(server_name)?;
+        let mut next = {
+            let guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
+            guard.active_input.clone()
+        };
+        let before = next.sni_certs.len();
+        next.sni_certs.retain(|existing| {
+            normalize_server_name(&existing.server_name).ok().as_deref()
+                != Some(normalized.as_str())
+        });
+        if next.sni_certs.len() == before {
+            return Ok(false);
+        }
+        self.reload_input(&next)?;
+        Ok(true)
+    }
+
     /// Create a sans-I/O `ServerConnection` for a newly accepted socket.
     pub fn new_connection(&self) -> Result<ServerConnection, TlsError> {
         let cfg = self.config.load_full();
         ServerConnection::new(cfg).map_err(TlsError::Rustls)
+    }
+}
+
+fn normalize_server_name(raw: &str) -> Result<String, TlsError> {
+    let trimmed = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    if trimmed.is_empty() || trimmed.bytes().any(|b| b.is_ascii_control() || b == b' ') {
+        return Err(TlsError::InvalidServerName(raw.to_owned()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("*.") {
+        if rest.is_empty() || rest.contains('*') || !rest.contains('.') {
+            return Err(TlsError::InvalidServerName(raw.to_owned()));
+        }
+    } else if trimmed.contains('*') {
+        return Err(TlsError::InvalidServerName(raw.to_owned()));
+    }
+    Ok(trimmed)
+}
+
+#[derive(Debug)]
+struct SniCertResolver {
+    default: Arc<CertifiedKey>,
+    exact: HashMap<String, Arc<CertifiedKey>>,
+    wildcards: HashMap<String, Arc<CertifiedKey>>,
+}
+
+impl SniCertResolver {
+    fn resolve_for_name(&self, server_name: Option<&str>) -> Arc<CertifiedKey> {
+        if let Some(name) = server_name {
+            let clean = name.trim_end_matches('.').to_ascii_lowercase();
+            if let Some(cert) = self.exact.get(&clean) {
+                return Arc::clone(cert);
+            }
+            if let Some((_, suffix)) = clean.split_once('.') {
+                if let Some(cert) = self.wildcards.get(suffix) {
+                    return Arc::clone(cert);
+                }
+            }
+        }
+        Arc::clone(&self.default)
+    }
+}
+
+impl ResolvesServerCert for SniCertResolver {
+    fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        Some(self.resolve_for_name(client_hello.server_name()))
     }
 }
 
@@ -725,16 +865,38 @@ fn build_config(
         &provider,
     )?;
 
-    let wants_verifier = ServerConfig::builder_with_provider(provider)
+    let wants_verifier = ServerConfig::builder_with_provider(Arc::clone(&provider))
         .with_protocol_versions(&versions)
         .map_err(TlsError::Rustls)?;
     let wants_cert = match client_verifier {
         Some(verifier) => wants_verifier.with_client_cert_verifier(verifier),
         None => wants_verifier.with_no_client_auth(),
     };
-    let mut cfg = wants_cert
-        .with_single_cert(certs, key)
-        .map_err(TlsError::Rustls)?;
+    let mut cfg = if mat.sni.is_empty() {
+        wants_cert
+            .with_single_cert(certs, key)
+            .map_err(TlsError::Rustls)?
+    } else {
+        let default =
+            Arc::new(CertifiedKey::from_der(certs, key, &provider).map_err(TlsError::Rustls)?);
+        let mut exact = HashMap::new();
+        let mut wildcards = HashMap::new();
+        for entry in &mat.sni {
+            let sc = parse_cert_pem(&entry.cert, || TlsError::InvalidCertChain)?;
+            let sk = parse_private_key(&entry.key)?;
+            let ck = Arc::new(CertifiedKey::from_der(sc, sk, &provider).map_err(TlsError::Rustls)?);
+            if let Some(suffix) = entry.server_name.strip_prefix("*.") {
+                wildcards.insert(suffix.to_owned(), ck);
+            } else {
+                exact.insert(entry.server_name.clone(), ck);
+            }
+        }
+        wants_cert.with_cert_resolver(Arc::new(SniCertResolver {
+            default,
+            exact,
+            wildcards,
+        }))
+    };
     cfg.alpn_protocols = input.alpn_protocols.clone();
     cfg.ticketer = ticketer;
     Ok(cfg)
@@ -1087,6 +1249,30 @@ mod tests {
         assert!(matches!(
             TlsStore::from_pem(valid_cert_block, b"not a key", vec![]),
             Err(TlsError::InvalidPrivateKey)
+        ));
+    }
+
+    #[test]
+    fn sni_server_name_normalization_matches_exact_and_single_label_wildcard() {
+        assert_eq!(
+            normalize_server_name("Example.COM.").unwrap(),
+            "example.com"
+        );
+        assert_eq!(
+            normalize_server_name("*.Example.com").unwrap(),
+            "*.example.com"
+        );
+        assert!(matches!(
+            normalize_server_name(""),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name("*.localhost"),
+            Err(TlsError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            normalize_server_name("*.*.example.com"),
+            Err(TlsError::InvalidServerName(_))
         ));
     }
 }

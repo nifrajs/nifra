@@ -21,8 +21,10 @@ use nifra_http::{
     awaits_continue, collect_headers_in_head, parse_http1, parse_http1_resume,
     write_block_response, write_buffered_response, write_chunk, write_chunk_terminator,
     write_close_delimited_head, write_stream_head, BatchPacker, ChunkResume, FastRoutes,
-    ParseLimits, ParseStatus, PreparedTemplates,
+    H1BodyDecoder, ParseLimits, ParseStatus, ParsedStreamHead, PreparedTemplates,
 };
+#[cfg(unix)]
+use nifra_io::bind_unix_listener;
 #[cfg(unix)]
 use nifra_io::conn_slot;
 use nifra_io::{bind_tcp_listener, detect_transport, run_mio_loop, ConnAction, SocketConfig};
@@ -30,12 +32,12 @@ use nifra_io::{bind_tcp_listener, detect_transport, run_mio_loop, ConnAction, So
 #[cfg(unix)]
 use nifra_io::uv::{UvCallbacks, UvServer, WriteResult};
 #[cfg(unix)]
-use nifra_tls::{TlsInput, TlsStore};
+use nifra_tls::{SniCertInput, TlsInput, TlsStore};
 #[cfg(unix)]
 use nifra_ws::{
     compute_accept_key, negotiate_permessage_deflate, validate_upgrade_headers, write_close_frame,
-    write_upgrade_response_with_extensions, SharedCompressorPool, WsConfig, WsConn,
-    WsDeflateConfig, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
+    write_server_frame, write_upgrade_response_with_extensions, SharedCompressorPool, WsConfig,
+    WsConn, WsDeflateConfig, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
 };
 
 const DEFAULT_IN_SLOTS: usize = 256;
@@ -300,11 +302,64 @@ unsafe fn call_js_ws_close(
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
 
+#[cfg(unix)]
+unsafe fn call_js_req_body(
+    raw_env: sys::napi_env,
+    cb_ref: sys::napi_ref,
+    req_id: u32,
+    chunk: &[u8],
+    end: bool,
+) {
+    if cb_ref.is_null() {
+        return;
+    }
+    let mut scope = std::ptr::null_mut();
+    if sys::napi_open_handle_scope(raw_env, &mut scope) != sys::Status::napi_ok {
+        return;
+    }
+    let mut cb = std::ptr::null_mut();
+    let mut undef = std::ptr::null_mut();
+    let mut arg0 = std::ptr::null_mut();
+    let mut arg1 = std::ptr::null_mut();
+    let mut arg2 = std::ptr::null_mut();
+    let ok_buf = if chunk.is_empty() {
+        sys::napi_get_null(raw_env, &mut arg1) == sys::Status::napi_ok
+    } else {
+        let mut ptr = std::ptr::null_mut();
+        if sys::napi_create_buffer_copy(
+            raw_env,
+            chunk.len(),
+            chunk.as_ptr().cast(),
+            &mut ptr,
+            &mut arg1,
+        ) == sys::Status::napi_ok
+        {
+            true
+        } else {
+            false
+        }
+    };
+    if ok_buf
+        && sys::napi_get_reference_value(raw_env, cb_ref, &mut cb) == sys::Status::napi_ok
+        && sys::napi_get_undefined(raw_env, &mut undef) == sys::Status::napi_ok
+        && sys::napi_create_uint32(raw_env, req_id, &mut arg0) == sys::Status::napi_ok
+        && sys::napi_get_boolean(raw_env, end, &mut arg2) == sys::Status::napi_ok
+    {
+        let args = [arg0, arg1, arg2];
+        call_js(raw_env, undef, cb, &args);
+    }
+    let _ = sys::napi_close_handle_scope(raw_env, scope);
+}
+
 #[napi(object)]
 pub struct EngineCapabilities {
     pub http2: bool,
     pub tls_reload: bool,
+    pub tls_sni: bool,
     pub websocket: bool,
+    pub ws_pubsub: bool,
+    pub ws_backpressure: bool,
+    pub ws_over_http2: bool,
     pub static_routes: bool,
     pub param_routes: bool,
     pub batched_ring: bool,
@@ -314,6 +369,9 @@ pub struct EngineCapabilities {
     pub tls_policy: bool,
     pub mtls: bool,
     pub ws_per_message_deflate: bool,
+    pub streaming_request_bodies: bool,
+    pub response_compression: bool,
+    pub unix_socket: bool,
     pub response_limits: bool,
     pub idle_spares_draining_response: bool,
     pub env_cleanup_hook: bool,
@@ -340,7 +398,11 @@ pub fn probe() -> ProbeResult {
         capabilities: EngineCapabilities {
             http2: cfg!(unix),
             tls_reload: true,
+            tls_sni: true,
             websocket: cfg!(unix),
+            ws_pubsub: cfg!(unix),
+            ws_backpressure: cfg!(unix),
+            ws_over_http2: cfg!(unix),
             static_routes: true,
             param_routes: true,
             batched_ring: true,
@@ -350,11 +412,23 @@ pub fn probe() -> ProbeResult {
             tls_policy: true,
             mtls: true,
             ws_per_message_deflate: cfg!(unix),
+            streaming_request_bodies: cfg!(unix),
+            response_compression: true,
+            unix_socket: cfg!(unix),
             response_limits: true,
             idle_spares_draining_response: cfg!(unix),
             env_cleanup_hook: cfg!(unix),
         },
     }
+}
+
+#[napi(object)]
+pub struct TlsSniEntry {
+    pub server_name: String,
+    pub cert: Option<String>,
+    pub key: Option<String>,
+    pub cert_file_name: Option<String>,
+    pub key_file_name: Option<String>,
 }
 
 #[napi(object)]
@@ -374,7 +448,19 @@ pub struct TlsOptions {
     pub ciphers: Option<String>,
     pub ciphersuites: Option<String>,
     pub ecdh_curve: Option<String>,
+    pub server_names: Option<Vec<TlsSniEntry>>,
     pub ticket_keys: Option<Buffer>,
+}
+
+#[cfg(unix)]
+fn to_sni_input(entry: &TlsSniEntry) -> SniCertInput {
+    SniCertInput {
+        server_name: entry.server_name.clone(),
+        cert_pem: entry.cert.as_ref().map(|s| s.as_bytes().to_vec()),
+        key_pem: entry.key.as_ref().map(|s| s.as_bytes().to_vec()),
+        cert_file: entry.cert_file_name.clone(),
+        key_file: entry.key_file_name.clone(),
+    }
 }
 
 #[cfg(unix)]
@@ -402,6 +488,11 @@ fn to_tls_input(opts: &TlsOptions, http2_enabled: bool) -> TlsInput {
         ciphersuites: opts.ciphersuites.clone(),
         ecdh_curve: opts.ecdh_curve.clone(),
         alpn_protocols,
+        sni_certs: opts
+            .server_names
+            .as_ref()
+            .map(|entries| entries.iter().map(to_sni_input).collect())
+            .unwrap_or_default(),
         ticket_keys: opts.ticket_keys.as_ref().map(|b| b.as_ref().to_vec()),
     }
 }
@@ -416,6 +507,15 @@ pub struct WsDeflateOptions {
     pub max_decompressed_size: Option<u32>,
     pub level: Option<u32>,
     pub shared_compressor: Option<bool>,
+}
+
+#[napi(object)]
+pub struct CompressionOptions {
+    pub enabled: Option<bool>,
+    pub brotli: Option<bool>,
+    pub gzip: Option<bool>,
+    pub deflate: Option<bool>,
+    pub min_bytes: Option<u32>,
 }
 
 #[napi(object)]
@@ -435,9 +535,14 @@ pub struct UvServerOptions {
     pub headers_timeout_ms: Option<u32>,
     pub ws_max_message_size: Option<u32>,
     pub ws_max_lifetime_ms: Option<u32>,
+    pub ws_max_backpressure: Option<u32>,
+    pub ws_close_on_backpressure_limit: Option<bool>,
     pub ws_deflate: Option<WsDeflateOptions>,
     pub http2: Option<bool>,
     pub http2_max_concurrent_streams: Option<u32>,
+    pub stream_request_bodies: Option<bool>,
+    pub compression: Option<CompressionOptions>,
+    pub unix_path: Option<String>,
     pub reuse_port: Option<bool>,
     pub tls: Option<TlsOptions>,
 }
@@ -652,6 +757,12 @@ struct H1Order {
 /// O(1) direct-indexed per-connection metadata indexed by `nifra_io::conn_slot(conn_id)`.
 /// Keeps non-pipelined HTTP/1.1 keep-alive requests completely free of heap allocations and hashing.
 #[cfg(unix)]
+struct H1StreamBody {
+    req_id: u32,
+    decoder: H1BodyDecoder,
+}
+
+#[cfg(unix)]
 #[derive(Default)]
 struct ConnMetaSlot {
     gen_id: u32,
@@ -659,8 +770,10 @@ struct ConnMetaSlot {
     h1_head: u32,
     h1_overflow: Option<Box<H1Order>>,
     chunk_resume: Option<Box<ChunkResume>>,
+    h1_body_stream: Option<H1StreamBody>,
     ws: Option<Box<WsConnState>>,
     h2: Option<Box<H2Conn>>,
+    h2_ws: HashMap<u32, (u32, Box<WsConnState>)>,
     /// A terminal parse error is queued behind earlier answers: whatever the peer sends next is dropped.
     refuse_input: bool,
     /// The request being received was already looked at for `Expect: 100-continue`.
@@ -676,8 +789,10 @@ impl ConnMetaSlot {
         self.h1_head = 0;
         self.h1_overflow = None;
         self.chunk_resume = None;
+        self.h1_body_stream = None;
         self.ws = None;
         self.h2 = None;
+        self.h2_ws.clear();
         self.refuse_input = false;
         self.continue_checked = false;
     }
@@ -785,18 +900,25 @@ impl ConnMetaTable {
         }
     }
 
-    fn clear_conn(&mut self, conn_id: u32) -> Option<Box<WsConnState>> {
-        let slot = self.slots.get_mut(conn_slot(conn_id))?;
+    fn clear_conn(
+        &mut self,
+        conn_id: u32,
+    ) -> (Option<Box<WsConnState>>, Vec<(u32, Box<WsConnState>)>) {
+        let Some(slot) = self.slots.get_mut(conn_slot(conn_id)) else {
+            return (None, Vec::new());
+        };
         if slot.gen_id != conn_id {
-            return None;
+            return (None, Vec::new());
         }
         slot.gen_id = 0;
         slot.pending_head = 0;
         slot.h1_head = 0;
         slot.h1_overflow = None;
         slot.chunk_resume = None;
+        slot.h1_body_stream = None;
         slot.h2 = None;
-        slot.ws.take()
+        let h2_ws: Vec<(u32, Box<WsConnState>)> = slot.h2_ws.drain().map(|(_, v)| v).collect();
+        (slot.ws.take(), h2_ws)
     }
 
     fn clear_all(&mut self) {
@@ -1159,6 +1281,32 @@ mod pending_tests {
 }
 
 #[cfg(unix)]
+const H2_WS_ID_BIT: u32 = 1 << 30;
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct CompressionCfg {
+    enabled: bool,
+    brotli: bool,
+    gzip: bool,
+    deflate: bool,
+    min_bytes: usize,
+}
+
+#[cfg(unix)]
+impl Default for CompressionCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            brotli: true,
+            gzip: true,
+            deflate: true,
+            min_bytes: 1024,
+        }
+    }
+}
+
+#[cfg(unix)]
 struct WsConnState {
     conn: WsConn,
     /// A Ping from the idle sweep that nothing has been heard since.
@@ -1166,6 +1314,7 @@ struct WsConnState {
     raw_head: Box<[u8]>,
     query: String,
     close_emitted: bool,
+    topics: Vec<String>,
 }
 
 #[cfg(unix)]
@@ -1174,12 +1323,20 @@ struct UvHttpShared {
     on_batch_ref: sys::napi_ref,
     on_writable_ref: sys::napi_ref,
     on_aborted_ref: sys::napi_ref,
+    on_req_body_ref: sys::napi_ref,
     on_ws_open_ref: sys::napi_ref,
     on_ws_message_ref: sys::napi_ref,
     on_ws_close_ref: sys::napi_ref,
+    on_ws_drain_ref: sys::napi_ref,
     ws_max_message_size: usize,
+    ws_max_backpressure: usize,
+    ws_close_on_backpressure_limit: bool,
     ws_deflate_cfg: WsDeflateConfig,
     ws_shared_pool: Option<SharedCompressorPool>,
+    ws_topics: HashMap<String, Vec<u32>>,
+    h2_ws_map: HashMap<u32, (u32, u32)>,
+    h2_ws_seq: u32,
+    compression: CompressionCfg,
     http2_enabled: bool,
     h2_cfg: H2Config,
     routes: FastRoutes,
@@ -1341,6 +1498,110 @@ fn invoke_on_batch_unlocked(shared: &Rc<RefCell<UvHttpShared>>) {
 }
 
 #[cfg(unix)]
+unsafe fn call_js_ws_drain(raw_env: sys::napi_env, cb_ref: sys::napi_ref, socket_id: u32) {
+    call_js_u32(raw_env, cb_ref, socket_id);
+}
+
+#[cfg(unix)]
+fn head_has_header_name(raw_head: &[u8], target: &str) -> bool {
+    collect_headers_in_head(raw_head)
+        .chunks_exact(2)
+        .any(|pair| pair[0] == target)
+}
+
+#[cfg(unix)]
+fn pending_accept_encoding(pending: &mut PendingReq, batch_heads: &[u8]) -> Option<String> {
+    if let Some(hdrs) = pending.h2_headers() {
+        return hdrs
+            .iter()
+            .find(|(name, _)| name == "accept-encoding")
+            .map(|(_, v)| v.clone());
+    }
+    let head = pending.parsed_head(batch_heads);
+    header_from_head(head, "accept-encoding")
+}
+
+#[cfg(unix)]
+fn unsubscribe_all_ws_topics(st: &mut UvHttpShared, socket_id: u32, topics: Vec<String>) {
+    for topic in topics {
+        if let Some(list) = st.ws_topics.get_mut(&topic) {
+            list.retain(|&id| id != socket_id);
+            if list.is_empty() {
+                st.ws_topics.remove(&topic);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn ws_conn_id_for_socket(st: &UvHttpShared, socket_id: u32) -> Option<u32> {
+    if socket_id >= H2_WS_ID_BIT {
+        st.h2_ws_map.get(&socket_id).map(|&(cid, _)| cid)
+    } else if st.conn_meta.get(socket_id).is_some_and(|s| s.ws.is_some()) {
+        Some(socket_id)
+    } else {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn deliver_h1_body_stream(
+    shared: &Rc<RefCell<UvHttpShared>>,
+    conn_id: u32,
+    buf: &[u8],
+) -> std::result::Result<(usize, bool), nifra_http::ParseError> {
+    let mut consumed = 0usize;
+    loop {
+        let step_out = {
+            let mut st = shared.borrow_mut();
+            let raw_env = st.raw_env;
+            let body_ref = st.on_req_body_ref;
+            let Some(stream) = st
+                .conn_meta
+                .get_mut(conn_id)
+                .and_then(|s| s.h1_body_stream.as_mut())
+            else {
+                return Ok((consumed, true));
+            };
+            let req_id = stream.req_id;
+            let step = stream.decoder.feed(&buf[consumed..])?;
+            consumed += step.consumed;
+            let chunk = if step.chunk.is_empty() {
+                None
+            } else {
+                Some(step.chunk.to_vec())
+            };
+            let done = step.done;
+            let advanced = step.consumed > 0;
+            if done {
+                if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                    slot.h1_body_stream = None;
+                }
+            }
+            (raw_env, body_ref, req_id, chunk, done, advanced)
+        };
+        let (raw_env, body_ref, req_id, chunk, done, advanced) = step_out;
+        if chunk.is_some() || done {
+            unsafe {
+                call_js_req_body(
+                    raw_env,
+                    body_ref,
+                    req_id,
+                    chunk.as_deref().unwrap_or(&[]),
+                    done,
+                );
+            }
+        }
+        if done {
+            return Ok((consumed, true));
+        }
+        if !advanced || consumed >= buf.len() {
+            return Ok((consumed, false));
+        }
+    }
+}
+
+#[cfg(unix)]
 struct HttpUvCallbacks {
     shared: Rc<RefCell<UvHttpShared>>,
 }
@@ -1387,6 +1648,21 @@ impl HttpUvCallbacks {
                         call_js_ws_message(raw_env, msg_ref, conn_id, event);
                     },
                     WsEvent::Close { code, reason } => unsafe {
+                        let topics = {
+                            let mut st = self.shared.borrow_mut();
+                            st.conn_meta
+                                .get_mut(conn_id)
+                                .and_then(|s| s.ws.as_deref_mut())
+                                .map(|w| std::mem::take(&mut w.topics))
+                                .unwrap_or_default()
+                        };
+                        if !topics.is_empty() {
+                            unsubscribe_all_ws_topics(
+                                &mut self.shared.borrow_mut(),
+                                conn_id,
+                                topics,
+                            );
+                        }
                         call_js_ws_close(raw_env, close_ref, conn_id, *code, reason);
                     },
                 }
@@ -1450,7 +1726,9 @@ impl HttpUvCallbacks {
             for event in feed.events {
                 match event {
                     H2Event::Request(req) => {
-                        let inline_body = req.body.len() <= nifra_http::abi::INLINE_BODY_MAX;
+                        let inline_body = !req.streaming_body
+                            && !req.is_ws_upgrade
+                            && req.body.len() <= nifra_http::abi::INLINE_BODY_MAX;
                         let ct_len = h2_content_type(&req).map_or(0, str::len);
                         let needed = req.path.len()
                             + req.query.len()
@@ -1459,8 +1737,9 @@ impl HttpUvCallbacks {
                         if !has_batch_room(&self.shared.borrow(), needed) {
                             invoke_on_batch_unlocked(&self.shared);
                         }
-                        let mut st = self.shared.borrow_mut();
+                        let is_streaming = req.streaming_body;
                         let stream_id = req.stream_id;
+                        let mut st = self.shared.borrow_mut();
                         if !pack_h2_into_shared(&mut st, conn_id, req) {
                             if let Some(conn) = st
                                 .conn_meta
@@ -1470,10 +1749,136 @@ impl HttpUvCallbacks {
                                 // INTERNAL_ERROR: this request did not fit the bridge's batch.
                                 conn.reset_stream(stream_id, 0x2, write_buf);
                             }
+                        } else if is_streaming {
+                            drop(st);
+                            invoke_on_batch_unlocked(&self.shared);
+                        }
+                    }
+                    H2Event::StreamData {
+                        stream_id,
+                        data,
+                        end_stream,
+                    } => {
+                        // Ensure any RequestHead already packed for this stream has reached JS first.
+                        if self.shared.borrow().batch_count > 0 {
+                            invoke_on_batch_unlocked(&self.shared);
+                        }
+                        let ws_feed = {
+                            let mut st = self.shared.borrow_mut();
+                            let UvHttpShared {
+                                ref mut conn_meta,
+                                raw_env,
+                                on_ws_message_ref,
+                                on_ws_close_ref,
+                                ..
+                            } = *st;
+                            if let Some(slot) = conn_meta.get_mut(conn_id) {
+                                if let Some((socket_id, ws)) = slot.h2_ws.get_mut(&stream_id) {
+                                    let socket_id = *socket_id;
+                                    ws.awaiting_pong.set(false);
+                                    let mut out_ws = Vec::new();
+                                    let ws_res = ws.conn.feed(&data, &mut out_ws);
+                                    if !out_ws.is_empty() {
+                                        if let Some(h2) = slot.h2.as_deref_mut() {
+                                            h2.write_stream_data(
+                                                stream_id,
+                                                &out_ws,
+                                                ws_res.close_after_write,
+                                                write_buf,
+                                            );
+                                        }
+                                    }
+                                    if ws_res
+                                        .events
+                                        .iter()
+                                        .any(|e| matches!(e, WsEvent::Close { .. }))
+                                    {
+                                        ws.close_emitted = true;
+                                    }
+                                    Some((
+                                        socket_id,
+                                        raw_env,
+                                        on_ws_message_ref,
+                                        on_ws_close_ref,
+                                        ws_res,
+                                        end_stream,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((socket_id, raw_env, msg_ref, close_ref, ws_res, stream_end)) =
+                            ws_feed
+                        {
+                            for ev in &ws_res.events {
+                                match ev {
+                                    WsEvent::Text(_) | WsEvent::Binary(_) => unsafe {
+                                        call_js_ws_message(raw_env, msg_ref, socket_id, ev);
+                                    },
+                                    WsEvent::Close { code, reason } => unsafe {
+                                        let mut st = self.shared.borrow_mut();
+                                        if let Some((_, mut removed)) = st
+                                            .conn_meta
+                                            .get_mut(conn_id)
+                                            .and_then(|s| s.h2_ws.remove(&stream_id))
+                                        {
+                                            st.h2_ws_map.remove(&socket_id);
+                                            let topics = std::mem::take(&mut removed.topics);
+                                            unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                                        }
+                                        drop(st);
+                                        call_js_ws_close(
+                                            raw_env, close_ref, socket_id, *code, reason,
+                                        );
+                                    },
+                                }
+                            }
+                            if stream_end && !ws_res.close_after_write {
+                                let ungraceful = {
+                                    let mut st = self.shared.borrow_mut();
+                                    if let Some((_, mut removed)) = st
+                                        .conn_meta
+                                        .get_mut(conn_id)
+                                        .and_then(|s| s.h2_ws.remove(&stream_id))
+                                    {
+                                        st.h2_ws_map.remove(&socket_id);
+                                        let topics = std::mem::take(&mut removed.topics);
+                                        unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                                        !removed.close_emitted
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if ungraceful {
+                                    unsafe {
+                                        call_js_ws_close(raw_env, close_ref, socket_id, 1006, "");
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Regular HTTP/2 streaming request body chunk.
+                        let target = {
+                            let st = self.shared.borrow();
+                            let req_id = st
+                                .pending
+                                .iter_connection(st.conn_meta.pending_head(conn_id))
+                                .find(|(_, p)| p.h2_stream_id() == Some(stream_id))
+                                .map(|(id, _)| id);
+                            req_id.map(|id| (id, st.raw_env, st.on_req_body_ref))
+                        };
+                        if let Some((req_id, raw_env, body_ref)) = target {
+                            unsafe {
+                                call_js_req_body(raw_env, body_ref, req_id, &data, end_stream)
+                            };
                         }
                     }
                     H2Event::StreamReset(stream_id) => {
-                        let aborted = {
+                        let (aborted, ws_closed) = {
                             let mut st = self.shared.borrow_mut();
                             let ids: Vec<u32> = st
                                 .pending
@@ -1492,18 +1897,36 @@ impl HttpUvCallbacks {
                                     aborted.push(id);
                                 }
                             }
-                            aborted
+                            let ws_closed = st
+                                .conn_meta
+                                .get_mut(conn_id)
+                                .and_then(|s| s.h2_ws.remove(&stream_id))
+                                .and_then(|(socket_id, mut ws)| {
+                                    st.h2_ws_map.remove(&socket_id);
+                                    let topics = std::mem::take(&mut ws.topics);
+                                    unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                                    (!ws.close_emitted).then_some((
+                                        socket_id,
+                                        st.raw_env,
+                                        st.on_ws_close_ref,
+                                    ))
+                                });
+                            (aborted, ws_closed)
                         };
                         notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
+                        if let Some((socket_id, raw_env, close_ref)) = ws_closed {
+                            unsafe { call_js_ws_close(raw_env, close_ref, socket_id, 1006, "") };
+                        }
                     }
                     H2Event::GoAway => {}
                 }
             }
             // Streams whose response backlog drained after a WINDOW_UPDATE may write again.
             for stream_id in feed.writable {
-                let ids: Vec<u32> = {
+                let (ids, drain_ws) = {
                     let st = self.shared.borrow();
-                    st.pending
+                    let ids: Vec<u32> = st
+                        .pending
                         .iter()
                         .filter(|(_, p)| {
                             p.conn_id == conn_id
@@ -1511,9 +1934,18 @@ impl HttpUvCallbacks {
                                 && p.streaming()
                         })
                         .map(|(id, _)| id)
-                        .collect()
+                        .collect();
+                    let drain_ws = st
+                        .conn_meta
+                        .get(conn_id)
+                        .and_then(|s| s.h2_ws.get(&stream_id))
+                        .map(|(socket_id, _)| (*socket_id, st.raw_env, st.on_ws_drain_ref));
+                    (ids, drain_ws)
                 };
                 notify_each(&self.shared, ids, |st| st.on_writable_ref);
+                if let Some((socket_id, raw_env, drain_ref)) = drain_ws {
+                    unsafe { call_js_ws_drain(raw_env, drain_ref, socket_id) };
+                }
             }
             return if feed.close_after_write {
                 ConnAction::CloseAfterWrite {
@@ -1527,6 +1959,36 @@ impl HttpUvCallbacks {
         }
 
         let mut consumed = 0usize;
+        if st
+            .conn_meta
+            .get(conn_id)
+            .is_some_and(|s| s.h1_body_stream.is_some())
+        {
+            drop(st);
+            match deliver_h1_body_stream(&self.shared, conn_id, read_buf) {
+                Ok((step_consumed, done)) => {
+                    consumed += step_consumed;
+                    if !done {
+                        return ConnAction::Continue { consumed };
+                    }
+                    st = self.shared.borrow_mut();
+                }
+                Err(_) => {
+                    let mut st = self.shared.borrow_mut();
+                    st.conn_meta.ensure(conn_id).h1_body_stream = None;
+                    let template = st.bad_req_tpl;
+                    return refuse_request(
+                        &mut st,
+                        conn_id,
+                        template,
+                        b"Bad Request",
+                        write_buf,
+                        read_buf.len(),
+                    );
+                }
+            }
+        }
+
         let mut close_after = false;
         let limits = st.limits;
         let mut resume = st
@@ -1547,15 +2009,22 @@ impl HttpUvCallbacks {
                     let req_head = &read_buf[consumed..consumed + req.head_len];
                     consumed += req.total_bytes;
 
-                    // 1) Try native fast-path routes (zero JS crossing). One that finds an earlier
-                    // request still unanswered waits behind it instead of jumping the queue.
+                    // 1) Try native fast-path routes (zero JS crossing). A POST with browser origin
+                    // metadata goes to the JS router so cross-site form checks run identically.
                     let mut parked = false;
                     let mut over_held = false;
-                    let fast_hit = if st.routes.is_empty()
-                        || req.method_idx != 0
-                        || req.is_ws_upgrade
-                        || req.over_max_body
-                    {
+                    let can_fast_get = !st.routes.is_empty()
+                        && req.method_idx == 0
+                        && !req.is_ws_upgrade
+                        && !req.over_max_body;
+                    let can_fast_post = !st.routes.is_empty()
+                        && req.method_idx == 1
+                        && !req.is_ws_upgrade
+                        && !req.over_max_body
+                        && req.body.is_empty()
+                        && !head_has_header_name(req_head, "origin")
+                        && !head_has_header_name(req_head, "sec-fetch-site");
+                    let fast_hit = if !can_fast_get && !can_fast_post {
                         false
                     } else if st
                         .conn_meta
@@ -1563,7 +2032,12 @@ impl HttpUvCallbacks {
                         .is_some_and(|s| s.has_h1_pending())
                     {
                         let mut frame = Vec::new();
-                        if st.routes.try_match_get(req.path, &mut frame) {
+                        let matched = if can_fast_get {
+                            st.routes.try_match_get(req.path, &mut frame)
+                        } else {
+                            st.routes.try_match_post(req.path, &mut frame)
+                        };
+                        if matched {
                             over_held =
                                 park_behind_pending(&mut st, conn_id, frame, req.keep_alive);
                             parked = true;
@@ -1571,8 +2045,10 @@ impl HttpUvCallbacks {
                         } else {
                             false
                         }
-                    } else {
+                    } else if can_fast_get {
                         st.routes.try_match_get(req.path, write_buf)
+                    } else {
+                        st.routes.try_match_post(req.path, write_buf)
                     };
                     if over_held {
                         return ConnAction::CloseNow;
@@ -1675,6 +2151,101 @@ impl HttpUvCallbacks {
                     if !req.keep_alive {
                         st.conn_meta.ensure(conn_id).refuse_input = true;
                         break;
+                    }
+                }
+                Ok(ParseStatus::StreamHead(head)) => {
+                    if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                        slot.continue_checked = false;
+                    }
+                    let req_head = &read_buf[consumed..consumed + head.head_len];
+                    consumed += head.head_len;
+
+                    if st
+                        .conn_meta
+                        .get(conn_id)
+                        .is_some_and(|s| s.h1_len() >= MAX_PIPELINED)
+                    {
+                        return ConnAction::CloseNow;
+                    }
+                    let needed = head.path.len()
+                        + head.query.len()
+                        + head.content_type.map_or(0, <[u8]>::len);
+                    if !has_batch_room(&st, needed) {
+                        drop(st);
+                        invoke_on_batch_unlocked(&self.shared);
+                        st = self.shared.borrow_mut();
+                    }
+                    let head_off = st.batch_heads.len() as u32;
+                    st.batch_heads.extend_from_slice(req_head);
+                    let raw_head = HeadStorage::BatchSlice {
+                        off: head_off,
+                        len: req_head.len() as u32,
+                    };
+                    let custom_method =
+                        (head.method_idx >= 7).then(|| Box::<str>::from(head.method));
+                    let cold = custom_method.map(|cm| {
+                        Box::new(PendingCold {
+                            custom_method: Some(cm),
+                            ..PendingCold::default()
+                        })
+                    });
+                    let mut pending = PendingReq::new(conn_id, head.keep_alive, raw_head, cold);
+                    if head.http10 {
+                        pending.flags |= PENDING_HTTP10;
+                    }
+                    let req_id = st.insert_pending(pending);
+                    let keep_alive = head.keep_alive;
+                    let is_chunked = head.is_chunked;
+                    let cl = head.content_length;
+                    if !pack_stream_head_into_shared(&mut st, req_id, &head) {
+                        st.remove_pending(req_id);
+                        st.batch_heads.truncate(head_off as usize);
+                        let template = st.headers_too_large_tpl;
+                        return refuse_request(
+                            &mut st,
+                            conn_id,
+                            template,
+                            b"Request Header Fields Too Large",
+                            write_buf,
+                            read_buf.len(),
+                        );
+                    }
+                    st.batch_req_ids.push(req_id);
+                    st.conn_meta.ensure(conn_id).push_h1(req_id);
+                    let decoder = if is_chunked {
+                        H1BodyDecoder::chunked()
+                    } else {
+                        H1BodyDecoder::fixed(cl.unwrap_or(0))
+                    };
+                    st.conn_meta.ensure(conn_id).h1_body_stream =
+                        Some(H1StreamBody { req_id, decoder });
+                    drop(st);
+                    invoke_on_batch_unlocked(&self.shared);
+                    match deliver_h1_body_stream(&self.shared, conn_id, &read_buf[consumed..]) {
+                        Ok((step_consumed, done)) => {
+                            consumed += step_consumed;
+                            st = self.shared.borrow_mut();
+                            if !done {
+                                break;
+                            }
+                            if !keep_alive {
+                                st.conn_meta.ensure(conn_id).refuse_input = true;
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            let mut st = self.shared.borrow_mut();
+                            st.conn_meta.ensure(conn_id).h1_body_stream = None;
+                            let template = st.bad_req_tpl;
+                            return refuse_request(
+                                &mut st,
+                                conn_id,
+                                template,
+                                b"Bad Request",
+                                write_buf,
+                                read_buf.len(),
+                            );
+                        }
                     }
                 }
                 Ok(ParseStatus::Incomplete) => {
@@ -1868,43 +2439,65 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 
     fn on_writable(&mut self, conn_id: u32) {
-        let mut req_ids: Vec<u32> = {
+        let (mut req_ids, ws_drain) = {
             let st = self.shared.borrow();
-            if st.on_writable_ref.is_null() {
-                return;
-            }
-            st.pending
-                .iter_connection(st.conn_meta.pending_head(conn_id))
-                .filter(|(_, p)| p.streaming())
-                .map(|(id, _)| id)
-                .collect()
+            let req_ids: Vec<u32> = if st.on_writable_ref.is_null() {
+                Vec::new()
+            } else {
+                st.pending
+                    .iter_connection(st.conn_meta.pending_head(conn_id))
+                    .filter(|(_, p)| p.streaming())
+                    .map(|(id, _)| id)
+                    .collect()
+            };
+            let ws_drain = if !st.on_ws_drain_ref.is_null()
+                && st.conn_meta.get(conn_id).is_some_and(|s| s.ws_sendable())
+            {
+                Some((st.raw_env, st.on_ws_drain_ref))
+            } else {
+                None
+            };
+            (req_ids, ws_drain)
         };
         req_ids.sort_unstable();
         notify_each(&self.shared, req_ids, |st| st.on_writable_ref);
+        if let Some((raw_env, drain_ref)) = ws_drain {
+            unsafe { call_js_ws_drain(raw_env, drain_ref, conn_id) };
+        }
     }
 
     fn on_disconnect(&mut self, conn_id: u32) {
-        let (aborted_ids, ws_close) = {
+        let (aborted_ids, ws_closes) = {
             let mut st = self.shared.borrow_mut();
             let ids = st.disconnect_pending(conn_id);
-            let ws_close = st.conn_meta.clear_conn(conn_id).and_then(|ws| {
-                if ws.close_emitted {
-                    None
-                } else {
+            let (ws_h1, ws_h2) = st.conn_meta.clear_conn(conn_id);
+            let mut closes = Vec::new();
+            if let Some(mut ws) = ws_h1 {
+                let topics = std::mem::take(&mut ws.topics);
+                unsubscribe_all_ws_topics(&mut st, conn_id, topics);
+                if !ws.close_emitted {
                     // No Close came back, whatever this side had sent (RFC 6455 section 7.1.5).
-                    Some((1006, String::new()))
+                    closes.push((conn_id, 1006u16, String::new()));
                 }
-            });
-            (ids, ws_close)
+            }
+            for (socket_id, mut ws) in ws_h2 {
+                st.h2_ws_map.remove(&socket_id);
+                let topics = std::mem::take(&mut ws.topics);
+                unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                if !ws.close_emitted {
+                    closes.push((socket_id, 1006u16, String::new()));
+                }
+            }
+            (ids, closes)
         };
         notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
-        if let Some((code, reason)) = ws_close {
+        for (socket_id, code, reason) in ws_closes {
             // Read after those calls: a handler may have stopped the server and dropped it.
             let (raw_env, ws_close_ref) = {
                 let st = self.shared.borrow();
                 (st.raw_env, st.on_ws_close_ref)
             };
-            unsafe { call_js_ws_close(raw_env, ws_close_ref, conn_id, code, &reason) };
+            unsafe { call_js_ws_close(raw_env, ws_close_ref, socket_id, code, &reason) };
         }
     }
 }
@@ -1949,6 +2542,7 @@ fn pack_into_shared(
     st.batch_data_pos += path_bytes.len();
 
     let query_off = st.batch_data_pos as u32;
+    let query_len = query_bytes.len() as u32;
     data[st.batch_data_pos..st.batch_data_pos + query_bytes.len()].copy_from_slice(query_bytes);
     st.batch_data_pos += query_bytes.len();
 
@@ -2002,7 +2596,7 @@ fn pack_into_shared(
     meta[slot_base + 2] = path_off;
     meta[slot_base + 3] = path_bytes.len() as u32;
     meta[slot_base + 4] = query_off;
-    meta[slot_base + 5] = query_bytes.len() as u32;
+    meta[slot_base + 5] = query_len;
     meta[slot_base + 6] = body_off;
     meta[slot_base + 7] = body_len;
     meta[slot_base + 8] = ct_off;
@@ -2052,6 +2646,7 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     st.batch_data_pos += path_bytes.len();
 
     let query_off = st.batch_data_pos as u32;
+    let query_len = query_bytes.len() as u32;
     data[st.batch_data_pos..st.batch_data_pos + query_bytes.len()].copy_from_slice(query_bytes);
     st.batch_data_pos += query_bytes.len();
 
@@ -2094,14 +2689,20 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     if content_type.is_some() {
         flags |= nifra_http::abi::FLAG_HAS_CT;
     }
+    if req.is_ws_upgrade {
+        flags |= nifra_http::abi::FLAG_IS_WS_UPGRADE;
+    }
+    if req.streaming_body {
+        flags |= nifra_http::abi::FLAG_HAS_BODY | nifra_http::abi::FLAG_STREAM_BODY;
+    }
 
     let cold = Box::new(PendingCold {
         parsed_head: OnceCell::new(),
         custom_method: (req.method_idx >= 7).then(|| req.method.into_boxed_str()),
         h2_stream_id: Some(req.stream_id),
         h2_headers: Some(req.headers),
-        query: None,
-        body: (!inline_body).then_some(req.body),
+        query: (req.is_ws_upgrade && !req.query.is_empty()).then(|| Box::<str>::from(req.query)),
+        body: (!inline_body && !req.streaming_body && !req.is_ws_upgrade).then_some(req.body),
     });
     let req_id = st.insert_pending(PendingReq::new(
         conn_id,
@@ -2115,7 +2716,7 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     meta[slot_base + 2] = path_off;
     meta[slot_base + 3] = path_bytes.len() as u32;
     meta[slot_base + 4] = query_off;
-    meta[slot_base + 5] = query_bytes.len() as u32;
+    meta[slot_base + 5] = query_len;
     meta[slot_base + 6] = body_off;
     meta[slot_base + 7] = body_len;
     meta[slot_base + 8] = ct_off;
@@ -2123,6 +2724,115 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
     st.batch_req_ids.push(req_id);
     st.batch_count += 1;
     true
+}
+
+#[cfg(unix)]
+fn pack_stream_head_into_shared(
+    st: &mut UvHttpShared,
+    req_id: u32,
+    head: &ParsedStreamHead<'_>,
+) -> bool {
+    let slot_base = st.batch_count * IN_SLOT_U32S;
+    let max_u32s = st.in_meta.len / 4;
+    if slot_base + IN_SLOT_U32S > max_u32s {
+        return false;
+    }
+    let path_bytes = head.path.as_bytes();
+    let query_bytes = head.query.as_bytes();
+    let ct_bytes = head.content_type.unwrap_or_default();
+    let needed = path_bytes.len() + query_bytes.len() + ct_bytes.len();
+    if st.batch_data_pos + needed > st.in_data.len {
+        return false;
+    }
+
+    let data = unsafe { st.in_data.as_bytes_mut() };
+    let meta = unsafe { st.in_meta.as_u32_mut() };
+
+    let path_off = st.batch_data_pos as u32;
+    data[st.batch_data_pos..st.batch_data_pos + path_bytes.len()].copy_from_slice(path_bytes);
+    st.batch_data_pos += path_bytes.len();
+
+    let query_off = st.batch_data_pos as u32;
+    let query_len = query_bytes.len() as u32;
+    data[st.batch_data_pos..st.batch_data_pos + query_bytes.len()].copy_from_slice(query_bytes);
+    st.batch_data_pos += query_bytes.len();
+
+    let ct_off = st.batch_data_pos as u32;
+    data[st.batch_data_pos..st.batch_data_pos + ct_bytes.len()].copy_from_slice(ct_bytes);
+    st.batch_data_pos += ct_bytes.len();
+
+    let mut flags = ((head.method_idx as u32) & nifra_http::abi::METHOD_MASK)
+        | nifra_http::abi::FLAG_HAS_BODY
+        | nifra_http::abi::FLAG_STREAM_BODY;
+    if head.is_ws_upgrade {
+        flags |= nifra_http::abi::FLAG_IS_WS_UPGRADE;
+    }
+    if head.host_valid {
+        flags |= nifra_http::abi::FLAG_HOST_VALID;
+    }
+    if head.is_json_ct {
+        flags |= nifra_http::abi::FLAG_CT_JSON;
+    }
+    if head.content_type.is_some() {
+        flags |= nifra_http::abi::FLAG_HAS_CT;
+    }
+    if head.is_chunked {
+        flags |= nifra_http::abi::FLAG_CHUNKED;
+    }
+
+    meta[slot_base] = req_id;
+    meta[slot_base + 1] = flags;
+    meta[slot_base + 2] = path_off;
+    meta[slot_base + 3] = path_bytes.len() as u32;
+    meta[slot_base + 4] = query_off;
+    meta[slot_base + 5] = query_len;
+    meta[slot_base + 6] = 0;
+    meta[slot_base + 7] = head.content_length.unwrap_or(0).min(u32::MAX as u64) as u32;
+    meta[slot_base + 8] = ct_off;
+    meta[slot_base + 9] = ct_bytes.len() as u32;
+
+    st.batch_count += 1;
+    true
+}
+
+#[cfg(unix)]
+fn maybe_compress_payload(
+    compression: CompressionCfg,
+    batch_heads: &[u8],
+    pending: &mut PendingReq,
+    status: u16,
+    pairs: &[(&str, &str)],
+    body: &[u8],
+) -> Option<(&'static str, Vec<u8>)> {
+    if !compression.enabled || status < 200 || status == 204 || status == 304 {
+        return None;
+    }
+    if body.is_empty() || body.len() < compression.min_bytes {
+        return None;
+    }
+    let mut has_ce = false;
+    let mut content_type: Option<&str> = None;
+    for &(k, v) in pairs {
+        if k.eq_ignore_ascii_case("content-encoding") {
+            has_ce = true;
+            break;
+        }
+        if content_type.is_none() && k.eq_ignore_ascii_case("content-type") {
+            content_type = Some(v);
+        }
+    }
+    if has_ce || !nifra_http::compress::is_compressible_content_type(content_type) {
+        return None;
+    }
+    let ae = pending_accept_encoding(pending, batch_heads);
+    let enc = nifra_http::compress::negotiate_encoding(
+        ae.as_deref(),
+        compression.brotli,
+        compression.gzip,
+        compression.deflate,
+    )?;
+    let compressed = nifra_http::compress::compress_bytes(enc, body)?;
+    Some((enc.header_value(), compressed))
 }
 
 /// Zero-hop HTTP/1.1 + HTTP/2 + WebSocket server running directly on Node.js's main `libuv` event loop.
@@ -2147,9 +2857,11 @@ fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, clo
         std::mem::replace(&mut st.on_batch_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_writable_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_aborted_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_req_body_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_ws_open_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_ws_message_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_ws_close_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_ws_drain_ref, std::ptr::null_mut()),
     ];
     for r in refs {
         if !r.is_null() {
@@ -2158,6 +2870,8 @@ fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, clo
             }
         }
     }
+    st.ws_topics.clear();
+    st.h2_ws_map.clear();
     st.pending.clear();
     st.conn_meta.clear_all();
 }
@@ -2235,6 +2949,82 @@ impl UvHttpServer {
             st.on_aborted_ref = r;
         }
         Ok(())
+    }
+
+    /// Register optional incremental request-body callback: `onReqBody(reqId, chunk, isLast)`.
+    #[napi]
+    pub fn set_req_body_callback(&self, env: Env, on_req_body: Option<JsFunction>) -> Result<()> {
+        let mut st = self.shared.borrow_mut();
+        if !st.on_req_body_ref.is_null() {
+            unsafe {
+                let _ = sys::napi_delete_reference(st.raw_env, st.on_req_body_ref);
+            }
+            st.on_req_body_ref = std::ptr::null_mut();
+        }
+        if let Some(cb) = on_req_body {
+            let mut r = std::ptr::null_mut();
+            let status = unsafe { sys::napi_create_reference(env.raw(), cb.raw(), 1, &mut r) };
+            if status != sys::Status::napi_ok {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "failed to ref onReqBody",
+                ));
+            }
+            st.on_req_body_ref = r;
+        }
+        Ok(())
+    }
+
+    /// Pause reading incoming request body bytes for `reqId` (HTTP/1.1 socket read or HTTP/2 `WINDOW_UPDATE`).
+    #[napi]
+    pub fn pause_request_body(&self, req_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(pending) = st.pending.get(req_id) else {
+            return false;
+        };
+        let conn_id = pending.conn_id;
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let UvHttpShared {
+                ref mut conn_meta,
+                ref mut scratch_frame,
+                ..
+            } = *st;
+            if let Some(h2) = conn_meta.get_mut(conn_id).and_then(|s| s.h2.as_deref_mut()) {
+                scratch_frame.clear();
+                h2.set_stream_recv_paused(stream_id, true, scratch_frame);
+                return true;
+            }
+            return false;
+        }
+        self.server.set_read_paused(conn_id, true)
+    }
+
+    /// Resume reading incoming request body bytes for `reqId`.
+    #[napi]
+    pub fn resume_request_body(&self, req_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(pending) = st.pending.get(req_id) else {
+            return false;
+        };
+        let conn_id = pending.conn_id;
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let UvHttpShared {
+                ref mut conn_meta,
+                ref mut scratch_frame,
+                ..
+            } = *st;
+            let Some(h2) = conn_meta.get_mut(conn_id).and_then(|s| s.h2.as_deref_mut()) else {
+                return false;
+            };
+            scratch_frame.clear();
+            h2.set_stream_recv_paused(stream_id, false, scratch_frame);
+            if !scratch_frame.is_empty() {
+                return self.server.write_to_conn(conn_id, scratch_frame, false)
+                    != WriteResult::Closed;
+            }
+            return true;
+        }
+        self.server.set_read_paused(conn_id, false)
     }
 
     /// Return zero-copy JS views (`Uint32Array` & `Buffer`) backed directly by Rust's ring slabs.
@@ -2364,6 +3154,24 @@ impl UvHttpServer {
     }
 
     #[napi]
+    pub fn set_static_post_route(
+        &self,
+        path: String,
+        status: u16,
+        flat_headers: Vec<String>,
+        body: Buffer,
+    ) {
+        let pairs: Vec<(&str, &str)> = flat_headers
+            .chunks_exact(2)
+            .map(|c| (c[0].as_str(), c[1].as_str()))
+            .collect();
+        self.shared
+            .borrow_mut()
+            .routes
+            .add_static_post(path, status, &pairs, body.as_ref());
+    }
+
+    #[napi]
     pub fn set_param_route(
         &self,
         prefix: String,
@@ -2412,6 +3220,7 @@ impl UvHttpServer {
         let n = (count as usize).min(meta.len() / OUT_SLOT_U32S);
         let (sec, date_text) = nifra_http::date::now_cached();
         let mut frame = std::mem::take(&mut st.scratch_frame);
+        let compression = st.compression;
         for i in 0..n {
             let base = i * OUT_SLOT_U32S;
             let req_id = meta[base];
@@ -2421,7 +3230,7 @@ impl UvHttpServer {
             // Non-zero: that many bytes of header lines precede the body, and the template field
             // carries the status instead.
             let block_len = meta[base + 4] as usize;
-            let Some(pending) = st.remove_pending(req_id) else {
+            let Some(mut pending) = st.remove_pending(req_id) else {
                 continue;
             };
             let split = body_off + block_len;
@@ -2433,6 +3242,35 @@ impl UvHttpServer {
             if block_len != 0 {
                 let block = &data[body_off..split];
                 let status = template_id as u16;
+                // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
+                let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
+                    .unwrap_or("")
+                    .split_terminator("\r\n")
+                    .filter_map(|line| line.split_once(": "))
+                    .collect();
+                let compressed = maybe_compress_payload(
+                    compression,
+                    &st.batch_heads,
+                    &mut pending,
+                    status,
+                    &pairs,
+                    body_slice,
+                );
+                let out_body = compressed
+                    .as_ref()
+                    .map_or(body_slice, |(_, b)| b.as_slice());
+                let mut pairs_with_ce: Vec<(&str, &str)> = Vec::new();
+                let out_pairs: &[(&str, &str)] = if let Some((enc_name, _)) = &compressed {
+                    pairs_with_ce.reserve(pairs.len() + 2);
+                    pairs_with_ce.extend_from_slice(&pairs);
+                    pairs_with_ce.push(("content-encoding", enc_name));
+                    if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
+                        pairs_with_ce.push(("vary", "accept-encoding"));
+                    }
+                    &pairs_with_ce
+                } else {
+                    &pairs
+                };
                 if let Some(stream_id) = pending.h2_stream_id() {
                     let Some(h2) = st
                         .conn_meta
@@ -2441,14 +3279,19 @@ impl UvHttpServer {
                     else {
                         continue;
                     };
-                    // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
-                    let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
-                        .unwrap_or("")
-                        .split_terminator("\r\n")
-                        .filter_map(|line| line.split_once(": "))
-                        .collect();
-                    h2.write_response(stream_id, status, &pairs, Some(body_slice), &mut frame);
+                    h2.write_response(stream_id, status, out_pairs, Some(out_body), &mut frame);
                     let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
+                } else if compressed.is_some() {
+                    write_buffered_response(&mut frame, status, out_pairs, Some(out_body));
+                    let _ = h1_send(
+                        &self.server,
+                        &mut st,
+                        pending.conn_id,
+                        req_id,
+                        &frame,
+                        true,
+                        pending.keep_alive(),
+                    );
                 } else {
                     write_block_response(&mut frame, status, block, body_slice);
                     let _ = h1_send(
@@ -2464,6 +3307,21 @@ impl UvHttpServer {
                 continue;
             }
             if let Some(stream_id) = pending.h2_stream_id() {
+                let compressed =
+                    st.template_meta
+                        .get(template_id as usize)
+                        .and_then(|(status, hdrs)| {
+                            with_tuple_header_pairs(hdrs, |pairs| {
+                                maybe_compress_payload(
+                                    compression,
+                                    &st.batch_heads,
+                                    &mut pending,
+                                    *status,
+                                    pairs,
+                                    body_slice,
+                                )
+                            })
+                        });
                 let UvHttpShared {
                     ref template_meta,
                     ref mut conn_meta,
@@ -2475,27 +3333,99 @@ impl UvHttpServer {
                         .get_mut(pending.conn_id)
                         .and_then(|s| s.h2.as_deref_mut()),
                 ) {
+                    let out_body = compressed
+                        .as_ref()
+                        .map_or(body_slice, |(_, b)| b.as_slice());
                     with_tuple_header_pairs(hdrs, |pairs| {
-                        h2.write_response(stream_id, *status, pairs, Some(body_slice), &mut frame);
+                        if let Some((enc_name, _)) = &compressed {
+                            let mut extended = Vec::with_capacity(pairs.len() + 2);
+                            extended.extend_from_slice(pairs);
+                            extended.push(("content-encoding", enc_name));
+                            if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
+                                extended.push(("vary", "accept-encoding"));
+                            }
+                            h2.write_response(
+                                stream_id,
+                                *status,
+                                &extended,
+                                Some(out_body),
+                                &mut frame,
+                            );
+                        } else {
+                            h2.write_response(
+                                stream_id,
+                                *status,
+                                pairs,
+                                Some(out_body),
+                                &mut frame,
+                            );
+                        }
                     });
                     let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
                 }
-            } else if st.templates.write_prepared_at(
-                template_id,
-                sec,
-                &date_text,
-                body_slice,
-                &mut frame,
-            ) {
-                let _ = h1_send(
-                    &self.server,
-                    &mut st,
-                    pending.conn_id,
-                    req_id,
-                    &frame,
-                    true,
-                    pending.keep_alive(),
-                );
+            } else {
+                let compressed = compression
+                    .enabled
+                    .then(|| {
+                        st.template_meta
+                            .get(template_id as usize)
+                            .and_then(|(status, hdrs)| {
+                                with_tuple_header_pairs(hdrs, |pairs| {
+                                    maybe_compress_payload(
+                                        compression,
+                                        &st.batch_heads,
+                                        &mut pending,
+                                        *status,
+                                        pairs,
+                                        body_slice,
+                                    )
+                                })
+                            })
+                    })
+                    .flatten();
+                if let Some((enc_name, comp_bytes)) = compressed {
+                    if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
+                        with_tuple_header_pairs(hdrs, |pairs| {
+                            let mut extended = Vec::with_capacity(pairs.len() + 2);
+                            extended.extend_from_slice(pairs);
+                            extended.push(("content-encoding", enc_name));
+                            if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
+                                extended.push(("vary", "accept-encoding"));
+                            }
+                            write_buffered_response(
+                                &mut frame,
+                                *status,
+                                &extended,
+                                Some(&comp_bytes),
+                            );
+                        });
+                        let _ = h1_send(
+                            &self.server,
+                            &mut st,
+                            pending.conn_id,
+                            req_id,
+                            &frame,
+                            true,
+                            pending.keep_alive(),
+                        );
+                    }
+                } else if st.templates.write_prepared_at(
+                    template_id,
+                    sec,
+                    &date_text,
+                    body_slice,
+                    &mut frame,
+                ) {
+                    let _ = h1_send(
+                        &self.server,
+                        &mut st,
+                        pending.conn_id,
+                        req_id,
+                        &frame,
+                        true,
+                        pending.keep_alive(),
+                    );
+                }
             }
         }
         st.scratch_frame = frame;
@@ -2561,10 +3491,29 @@ impl UvHttpServer {
         body: Option<Buffer>,
     ) -> bool {
         let mut st = self.shared.borrow_mut();
-        let Some(pending) = st.remove_pending(req_id) else {
+        let Some(mut pending) = st.remove_pending(req_id) else {
             return false;
         };
         let hdr_vec = flat_headers.unwrap_or_default();
+        let compression = st.compression;
+        let compressed = body.as_ref().and_then(|b| {
+            with_flat_header_pairs(&hdr_vec, |pairs| {
+                maybe_compress_payload(
+                    compression,
+                    &st.batch_heads,
+                    &mut pending,
+                    status,
+                    pairs,
+                    b.as_ref(),
+                )
+            })
+        });
+        let raw_body_ref = body.as_ref().map(|b| b.as_ref());
+        let out_body_ref = compressed
+            .as_ref()
+            .map(|(_, c)| c.as_slice())
+            .or(raw_body_ref);
+
         let mut frame = std::mem::take(&mut st.scratch_frame);
         frame.clear();
         if let Some(stream_id) = pending.h2_stream_id() {
@@ -2577,13 +3526,17 @@ impl UvHttpServer {
                 return false;
             };
             with_flat_header_pairs(&hdr_vec, |pairs| {
-                h2.write_response(
-                    stream_id,
-                    status,
-                    pairs,
-                    body.as_ref().map(|b| b.as_ref()),
-                    &mut frame,
-                );
+                if let Some((enc_name, _)) = &compressed {
+                    let mut extended = Vec::with_capacity(pairs.len() + 2);
+                    extended.extend_from_slice(pairs);
+                    extended.push(("content-encoding", enc_name));
+                    if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
+                        extended.push(("vary", "accept-encoding"));
+                    }
+                    h2.write_response(stream_id, status, &extended, out_body_ref, &mut frame);
+                } else {
+                    h2.write_response(stream_id, status, pairs, out_body_ref, &mut frame);
+                }
             });
             let sent =
                 self.server.write_to_conn(pending.conn_id, &frame, false) != WriteResult::Closed;
@@ -2591,7 +3544,17 @@ impl UvHttpServer {
             return sent;
         }
         with_flat_header_pairs(&hdr_vec, |pairs| {
-            write_buffered_response(&mut frame, status, pairs, body.as_ref().map(|b| b.as_ref()));
+            if let Some((enc_name, _)) = &compressed {
+                let mut extended = Vec::with_capacity(pairs.len() + 2);
+                extended.extend_from_slice(pairs);
+                extended.push(("content-encoding", enc_name));
+                if !pairs.iter().any(|&(k, _)| k.eq_ignore_ascii_case("vary")) {
+                    extended.push(("vary", "accept-encoding"));
+                }
+                write_buffered_response(&mut frame, status, &extended, out_body_ref);
+            } else {
+                write_buffered_response(&mut frame, status, pairs, out_body_ref);
+            }
         });
         let sent = h1_send(
             &self.server,
@@ -2613,8 +3576,17 @@ impl UvHttpServer {
         req_id: u32,
         status: u16,
         flat_headers: Option<Vec<String>>,
-        content_length: Option<u32>,
+        content_length: Option<f64>,
     ) -> bool {
+        let parsed_cl = match content_length {
+            Some(n) => {
+                if !n.is_finite() || n < 0.0 || n > 9_007_199_254_740_991.0 || n.fract() != 0.0 {
+                    return false;
+                }
+                Some(n as u64)
+            }
+            None => None,
+        };
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.pending.get_mut(req_id) else {
             return false;
@@ -2622,15 +3594,14 @@ impl UvHttpServer {
         let conn_id = pending.conn_id;
         let h2_stream_id = pending.h2_stream_id();
         let keep_alive = pending.keep_alive();
-        let close_delimited = h2_stream_id.is_none()
-            && content_length.is_none()
-            && (pending.flags & PENDING_HTTP10) != 0;
+        let close_delimited =
+            h2_stream_id.is_none() && parsed_cl.is_none() && (pending.flags & PENDING_HTTP10) != 0;
         if close_delimited {
             pending.close_delimits();
         }
         let keep_alive = keep_alive && !close_delimited;
         pending.set_streaming();
-        pending.set_chunked(content_length.is_none() && !close_delimited);
+        pending.set_chunked(parsed_cl.is_none() && !close_delimited);
 
         let hdr_vec = flat_headers.unwrap_or_default();
         let mut frame = std::mem::take(&mut st.scratch_frame);
@@ -2645,13 +3616,7 @@ impl UvHttpServer {
                 return false;
             };
             with_flat_header_pairs(&hdr_vec, |pairs| {
-                h2.write_stream_head(
-                    stream_id,
-                    status,
-                    pairs,
-                    content_length.map(|n| n as u64),
-                    &mut frame,
-                );
+                h2.write_stream_head(stream_id, status, pairs, parsed_cl, &mut frame);
             });
             let sent = self.server.write_to_conn(conn_id, &frame, false) != WriteResult::Closed;
             st.scratch_frame = frame;
@@ -2661,7 +3626,7 @@ impl UvHttpServer {
             if close_delimited {
                 write_close_delimited_head(&mut frame, status, pairs);
             } else {
-                write_stream_head(&mut frame, status, pairs, content_length.map(|n| n as u64));
+                write_stream_head(&mut frame, status, pairs, parsed_cl);
             }
         });
         let sent = h1_send(
@@ -2811,7 +3776,7 @@ impl UvHttpServer {
         self.server.close_conn(pending.conn_id)
     }
 
-    /// Register optional WebSocket callbacks: `onWsOpen(id)`, `onWsMessage(id, data)`, `onWsClose(id, code, reason)`.
+    /// Register optional WebSocket callbacks: `onWsOpen(id)`, `onWsMessage(id, data)`, `onWsClose(id, code, reason)`, `onWsDrain(id)`.
     #[napi]
     pub fn set_ws_callbacks(
         &self,
@@ -2819,6 +3784,7 @@ impl UvHttpServer {
         on_open: Option<JsFunction>,
         on_message: Option<JsFunction>,
         on_close: Option<JsFunction>,
+        on_drain: Option<JsFunction>,
     ) -> Result<()> {
         let mut st = self.shared.borrow_mut();
         let raw_env = st.raw_env;
@@ -2826,6 +3792,7 @@ impl UvHttpServer {
             std::mem::replace(&mut st.on_ws_open_ref, std::ptr::null_mut()),
             std::mem::replace(&mut st.on_ws_message_ref, std::ptr::null_mut()),
             std::mem::replace(&mut st.on_ws_close_ref, std::ptr::null_mut()),
+            std::mem::replace(&mut st.on_ws_drain_ref, std::ptr::null_mut()),
         ];
         for r in old_refs {
             if !r.is_null() {
@@ -2867,99 +3834,254 @@ impl UvHttpServer {
             }
             st.on_ws_close_ref = r;
         }
+        if let Some(cb) = on_drain {
+            let mut r = std::ptr::null_mut();
+            if unsafe { sys::napi_create_reference(env.raw(), cb.raw(), 1, &mut r) }
+                != sys::Status::napi_ok
+            {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "failed to ref onWsDrain",
+                ));
+            }
+            st.on_ws_drain_ref = r;
+        }
         Ok(())
     }
 
-    /// Upgrade an in-flight HTTP/1.1 request to RFC 6455 WebSocket.
+    /// Upgrade an in-flight HTTP/1.1 (`101`) or HTTP/2 Extended CONNECT (`200`, RFC 8441) request to WebSocket.
     /// Returns the positive socket id (firing `onWsOpen` synchronously), or `-1` if the handshake is invalid.
     #[napi]
-    pub fn upgrade_to_web_socket(&self, req_id: u32) -> i32 {
-        let (accept, negotiated_deflate) = {
+    pub fn upgrade_to_web_socket(
+        &self,
+        req_id: u32,
+        deflate_override: Option<WsDeflateOptions>,
+    ) -> i32 {
+        enum UpgradeKind {
+            H1 {
+                accept: String,
+                deflate: Option<nifra_ws::NegotiatedDeflate>,
+            },
+            H2 {
+                stream_id: u32,
+                deflate: Option<nifra_ws::NegotiatedDeflate>,
+            },
+        }
+
+        let upgrade_kind = {
             let mut st = self.shared.borrow_mut();
             let UvHttpShared {
                 ref mut pending,
                 ref batch_heads,
-                ws_deflate_cfg,
+                mut ws_deflate_cfg,
                 ..
             } = *st;
+            if let Some(ov) = deflate_override {
+                ws_deflate_cfg.enabled = true;
+                if let Some(v) = ov.server_no_context_takeover {
+                    ws_deflate_cfg.server_no_context_takeover = v;
+                }
+                if let Some(v) = ov.client_no_context_takeover {
+                    ws_deflate_cfg.client_no_context_takeover = v;
+                }
+                if let Some(v) = ov.server_max_window_bits {
+                    if !(9..=15).contains(&v) {
+                        return -1;
+                    }
+                    ws_deflate_cfg.server_max_window_bits = v as u8;
+                }
+                if let Some(v) = ov.client_max_window_bits {
+                    ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
+                }
+                if let Some(v) = ov.threshold {
+                    ws_deflate_cfg.threshold = v as usize;
+                }
+                if let Some(v) = ov.max_decompressed_size {
+                    ws_deflate_cfg.max_decompressed_size = v as usize;
+                }
+                if let Some(v) = ov.level {
+                    ws_deflate_cfg.level = (v as u8).clamp(1, 9);
+                }
+                if let Some(v) = ov.shared_compressor {
+                    ws_deflate_cfg.shared_compressor = v;
+                }
+            }
             let Some(pending) = pending.get_mut(req_id) else {
                 return -1;
             };
-            let head = pending.parsed_head(batch_heads);
-            let conn_hdr = header_from_head(head, "connection");
-            let upg_hdr = header_from_head(head, "upgrade");
-            let ver_hdr = header_from_head(head, "sec-websocket-version");
-            let key_hdr = header_from_head(head, "sec-websocket-key");
-            let Some(key) = validate_upgrade_headers(
-                conn_hdr.as_deref(),
-                upg_hdr.as_deref(),
-                ver_hdr.as_deref(),
-                key_hdr.as_deref(),
-            ) else {
-                return -1;
-            };
-            let ext_hdr = header_from_head(head, "sec-websocket-extensions");
-            let negotiated = negotiate_permessage_deflate(ext_hdr.as_deref(), ws_deflate_cfg);
-            (compute_accept_key(key), negotiated)
+            if let Some(stream_id) = pending.h2_stream_id() {
+                let ext_hdr = pending.h2_headers().and_then(|hdrs| {
+                    hdrs.iter()
+                        .find(|(k, _)| k == "sec-websocket-extensions")
+                        .map(|(_, v)| v.as_str())
+                });
+                let negotiated = negotiate_permessage_deflate(ext_hdr, ws_deflate_cfg);
+                UpgradeKind::H2 {
+                    stream_id,
+                    deflate: negotiated,
+                }
+            } else {
+                let head = pending.parsed_head(batch_heads);
+                let conn_hdr = header_from_head(head, "connection");
+                let upg_hdr = header_from_head(head, "upgrade");
+                let ver_hdr = header_from_head(head, "sec-websocket-version");
+                let key_hdr = header_from_head(head, "sec-websocket-key");
+                let Some(key) = validate_upgrade_headers(
+                    conn_hdr.as_deref(),
+                    upg_hdr.as_deref(),
+                    ver_hdr.as_deref(),
+                    key_hdr.as_deref(),
+                ) else {
+                    return -1;
+                };
+                let ext_hdr = header_from_head(head, "sec-websocket-extensions");
+                let negotiated = negotiate_permessage_deflate(ext_hdr.as_deref(), ws_deflate_cfg);
+                UpgradeKind::H1 {
+                    accept: compute_accept_key(key),
+                    deflate: negotiated,
+                }
+            }
         };
 
-        let (raw_env, open_ref, conn_id) = {
+        let (raw_env, open_ref, socket_id) = {
             let mut st = self.shared.borrow_mut();
-            // A response still owed to an earlier request would arrive inside the WebSocket stream
-            // once 101 is sent ahead of it: the upgrade is refused (answered in order by the caller).
-            let owed_earlier = st.pending.get(req_id).is_some_and(|p| {
-                st.conn_meta.get(p.conn_id).is_some_and(|slot| {
-                    (slot.h1_head != 0 && slot.h1_head != req_id)
-                        || slot
-                            .h1_overflow
-                            .as_ref()
-                            .is_some_and(|o| o.queue.iter().any(|&queued| queued != req_id))
-                })
-            });
-            if owed_earlier {
-                return -1;
+            match upgrade_kind {
+                UpgradeKind::H1 { accept, deflate } => {
+                    // A response still owed to an earlier request would arrive inside the WebSocket stream
+                    // once 101 is sent ahead of it: the upgrade is refused (answered in order by the caller).
+                    let owed_earlier = st.pending.get(req_id).is_some_and(|p| {
+                        st.conn_meta.get(p.conn_id).is_some_and(|slot| {
+                            (slot.h1_head != 0 && slot.h1_head != req_id)
+                                || slot
+                                    .h1_overflow
+                                    .as_ref()
+                                    .is_some_and(|o| o.queue.iter().any(|&queued| queued != req_id))
+                        })
+                    });
+                    if owed_earlier {
+                        return -1;
+                    }
+                    let Some(mut pending) = st.remove_pending(req_id) else {
+                        return -1;
+                    };
+                    let owned_head = pending.raw_head.into_owned(&st.batch_heads);
+                    if let Some(slot) = st.conn_meta.get_mut(pending.conn_id) {
+                        slot.h1_head = 0;
+                        slot.h1_overflow = None;
+                    }
+                    st.scratch_frame.clear();
+                    write_upgrade_response_with_extensions(
+                        &accept,
+                        deflate.as_ref().map(|n| n.header_value.as_str()),
+                        &mut st.scratch_frame,
+                    );
+                    if self
+                        .server
+                        .write_to_conn(pending.conn_id, &st.scratch_frame, false)
+                        == WriteResult::Closed
+                    {
+                        return -1;
+                    }
+                    if let Some(bits) = deflate.as_ref().and_then(|d| {
+                        (!d.server_no_context_takeover).then_some(d.server_max_window_bits)
+                    }) {
+                        if let Some(pool) = st.ws_shared_pool.as_mut() {
+                            let _ = pool.get_mut(bits);
+                        }
+                    }
+                    let max_msg = st.ws_max_message_size;
+                    let query = pending
+                        .cold
+                        .as_mut()
+                        .and_then(|c| c.query.take())
+                        .map(String::from)
+                        .unwrap_or_default();
+                    st.conn_meta.ensure(pending.conn_id).ws = Some(Box::new(WsConnState {
+                        conn: WsConn::with_deflate(max_msg, deflate.as_ref()),
+                        awaiting_pong: Default::default(),
+                        raw_head: owned_head,
+                        query,
+                        close_emitted: false,
+                        topics: Vec::new(),
+                    }));
+                    (st.raw_env, st.on_ws_open_ref, pending.conn_id)
+                }
+                UpgradeKind::H2 { stream_id, deflate } => {
+                    let Some(mut pending) = st.remove_pending(req_id) else {
+                        return -1;
+                    };
+                    let conn_id = pending.conn_id;
+                    let mut resp_hdrs: Vec<(&str, &str)> = Vec::new();
+                    if let Some(ref d) = deflate {
+                        resp_hdrs.push(("sec-websocket-extensions", d.header_value.as_str()));
+                    }
+                    st.scratch_frame.clear();
+                    let ok = {
+                        let UvHttpShared {
+                            ref mut conn_meta,
+                            ref mut scratch_frame,
+                            ..
+                        } = *st;
+                        conn_meta
+                            .get_mut(conn_id)
+                            .and_then(|s| s.h2.as_deref_mut())
+                            .is_some_and(|h2| {
+                                h2.write_ws_connect_response(stream_id, &resp_hdrs, scratch_frame)
+                            })
+                    };
+                    if !ok
+                        || self.server.write_to_conn(conn_id, &st.scratch_frame, false)
+                            == WriteResult::Closed
+                    {
+                        return -1;
+                    }
+                    let max_msg = st.ws_max_message_size;
+                    let h2_headers = pending
+                        .cold
+                        .as_mut()
+                        .and_then(|c| c.h2_headers.take())
+                        .unwrap_or_default();
+                    let mut raw_head = Vec::new();
+                    for (k, v) in h2_headers {
+                        raw_head.extend_from_slice(k.as_bytes());
+                        raw_head.extend_from_slice(b": ");
+                        raw_head.extend_from_slice(v.as_bytes());
+                        raw_head.extend_from_slice(b"\r\n");
+                    }
+                    let mut serialized_head = b"GET / HTTP/1.1\r\n".to_vec();
+                    serialized_head.extend_from_slice(&raw_head);
+                    serialized_head.extend_from_slice(b"\r\n");
+                    let query = pending
+                        .cold
+                        .as_mut()
+                        .and_then(|c| c.query.take())
+                        .map(String::from)
+                        .unwrap_or_default();
+                    st.h2_ws_seq = st.h2_ws_seq.wrapping_add(1).max(1) & 0x3FFF_FFFF;
+                    let socket_id = H2_WS_ID_BIT | st.h2_ws_seq;
+                    let conn = WsConn::with_deflate(max_msg, deflate.as_ref());
+                    st.conn_meta.ensure(conn_id).h2_ws.insert(
+                        stream_id,
+                        (
+                            socket_id,
+                            Box::new(WsConnState {
+                                conn,
+                                awaiting_pong: Default::default(),
+                                raw_head: serialized_head.into_boxed_slice(),
+                                query,
+                                close_emitted: false,
+                                topics: Vec::new(),
+                            }),
+                        ),
+                    );
+                    st.h2_ws_map.insert(socket_id, (conn_id, stream_id));
+                    (st.raw_env, st.on_ws_open_ref, socket_id)
+                }
             }
-            let Some(mut pending) = st.remove_pending(req_id) else {
-                return -1;
-            };
-            let owned_head = pending.raw_head.into_owned(&st.batch_heads);
-            // The connection speaks WebSocket from here on; no HTTP response is owed in order.
-            if let Some(slot) = st.conn_meta.get_mut(pending.conn_id) {
-                slot.h1_head = 0;
-                slot.h1_overflow = None;
-            }
-            st.scratch_frame.clear();
-            write_upgrade_response_with_extensions(
-                &accept,
-                negotiated_deflate.as_ref().map(|n| n.header_value.as_str()),
-                &mut st.scratch_frame,
-            );
-            if self
-                .server
-                .write_to_conn(pending.conn_id, &st.scratch_frame, false)
-                == WriteResult::Closed
-            {
-                return -1;
-            }
-            let max_msg = st.ws_max_message_size;
-            let query = pending
-                .cold
-                .as_mut()
-                .and_then(|c| c.query.take())
-                .map(String::from)
-                .unwrap_or_default();
-            st.conn_meta.ensure(pending.conn_id).ws = Some(Box::new(WsConnState {
-                conn: WsConn::with_deflate(max_msg, negotiated_deflate.as_ref()),
-                awaiting_pong: Default::default(),
-                raw_head: owned_head,
-                query,
-                close_emitted: false,
-            }));
-            (st.raw_env, st.on_ws_open_ref, pending.conn_id)
         };
 
-        unsafe { call_js_u32(raw_env, open_ref, conn_id) };
-        conn_id as i32
+        unsafe { call_js_u32(raw_env, open_ref, socket_id) };
+        socket_id as i32
     }
 
     /// Send a binary or text WebSocket frame from a `Buffer`.
@@ -2990,10 +4112,211 @@ impl UvHttpServer {
         )
     }
 
+    /// Send multiple UTF-8 text WebSocket messages in a single N-API crossing.
+    #[napi]
+    pub fn ws_send_batch(&self, socket_id: u32, messages: Vec<String>) -> u32 {
+        let mut sent = 0u32;
+        for msg in messages {
+            if send_ws_frame(
+                &self.server,
+                &self.shared,
+                socket_id,
+                OPCODE_TEXT,
+                msg.as_bytes(),
+            ) {
+                sent += 1;
+            } else {
+                break;
+            }
+        }
+        sent
+    }
+
+    /// Current queued outbound bytes on the underlying TCP socket for a WebSocket.
+    #[napi]
+    pub fn ws_get_buffered_amount(&self, socket_id: u32) -> u32 {
+        let st = self.shared.borrow();
+        let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
+            return 0;
+        };
+        self.server.queued_bytes(conn_id).min(u32::MAX as usize) as u32
+    }
+
+    /// Subscribe `socket_id` to a native WebSocket topic for native fan-out.
+    #[napi]
+    pub fn ws_subscribe(&self, socket_id: u32, topic: String) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let found = if socket_id >= H2_WS_ID_BIT {
+            if let Some(&(cid, sid)) = st.h2_ws_map.get(&socket_id) {
+                if let Some((_, ws)) = st
+                    .conn_meta
+                    .get_mut(cid)
+                    .and_then(|s| s.h2_ws.get_mut(&sid))
+                {
+                    if !ws.topics.contains(&topic) {
+                        ws.topics.push(topic.clone());
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else if let Some(ws) = st
+            .conn_meta
+            .get_mut(socket_id)
+            .and_then(|s| s.ws.as_deref_mut())
+        {
+            if !ws.topics.contains(&topic) {
+                ws.topics.push(topic.clone());
+            }
+            true
+        } else {
+            false
+        };
+        if !found {
+            return false;
+        }
+        let subscribers = st.ws_topics.entry(topic).or_default();
+        if !subscribers.contains(&socket_id) {
+            subscribers.push(socket_id);
+        }
+        true
+    }
+
+    /// Unsubscribe `socket_id` from a native WebSocket topic.
+    #[napi]
+    pub fn ws_unsubscribe(&self, socket_id: u32, topic: String) -> bool {
+        let mut st = self.shared.borrow_mut();
+        if let Some(list) = st.ws_topics.get_mut(&topic) {
+            list.retain(|&id| id != socket_id);
+            if list.is_empty() {
+                st.ws_topics.remove(&topic);
+            }
+        }
+        if socket_id >= H2_WS_ID_BIT {
+            if let Some(&(cid, sid)) = st.h2_ws_map.get(&socket_id) {
+                if let Some((_, ws)) = st
+                    .conn_meta
+                    .get_mut(cid)
+                    .and_then(|s| s.h2_ws.get_mut(&sid))
+                {
+                    ws.topics.retain(|t| t != &topic);
+                    return true;
+                }
+            }
+            false
+        } else if let Some(ws) = st
+            .conn_meta
+            .get_mut(socket_id)
+            .and_then(|s| s.ws.as_deref_mut())
+        {
+            ws.topics.retain(|t| t != &topic);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Broadcast a binary or text payload to all subscribers of `topic` (optionally skipping `exclude_socket_id`).
+    #[napi]
+    pub fn ws_publish(
+        &self,
+        topic: String,
+        payload: Buffer,
+        is_binary: bool,
+        exclude_socket_id: Option<u32>,
+    ) -> u32 {
+        publish_ws_topic(
+            &self.server,
+            &self.shared,
+            &topic,
+            if is_binary {
+                OPCODE_BINARY
+            } else {
+                OPCODE_TEXT
+            },
+            payload.as_ref(),
+            exclude_socket_id,
+        )
+    }
+
+    /// Broadcast a UTF-8 text payload to all subscribers of `topic` (optionally skipping `exclude_socket_id`).
+    #[napi]
+    pub fn ws_publish_text(
+        &self,
+        topic: String,
+        text: String,
+        exclude_socket_id: Option<u32>,
+    ) -> u32 {
+        publish_ws_topic(
+            &self.server,
+            &self.shared,
+            &topic,
+            OPCODE_TEXT,
+            text.as_bytes(),
+            exclude_socket_id,
+        )
+    }
+
     /// Send an RFC 6455 Close frame and close the WebSocket connection.
     #[napi]
     pub fn ws_close(&self, socket_id: u32, code: u16, reason: Option<String>) -> bool {
         let reason_str = reason.unwrap_or_default();
+        if socket_id >= H2_WS_ID_BIT {
+            let immediate_close = {
+                let mut st = self.shared.borrow_mut();
+                let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+                    return false;
+                };
+                st.scratch_frame.clear();
+                let mut close_payload = Vec::new();
+                write_close_frame(code, &reason_str, &mut close_payload);
+                let closed = {
+                    let UvHttpShared {
+                        ref mut conn_meta,
+                        ref mut scratch_frame,
+                        ..
+                    } = *st;
+                    let Some(slot) = conn_meta.get_mut(conn_id) else {
+                        return false;
+                    };
+                    if let Some((_, ws)) = slot.h2_ws.get_mut(&stream_id) {
+                        ws.conn.mark_close_sent();
+                    } else {
+                        return false;
+                    }
+                    if let Some(h2) = slot.h2.as_deref_mut() {
+                        h2.write_stream_data(stream_id, &close_payload, true, scratch_frame);
+                        self.server.write_to_conn(conn_id, scratch_frame, false)
+                            == WriteResult::Closed
+                    } else {
+                        true
+                    }
+                };
+                if closed {
+                    st.h2_ws_map.remove(&socket_id);
+                    if let Some((_, mut ws)) = st
+                        .conn_meta
+                        .get_mut(conn_id)
+                        .and_then(|s| s.h2_ws.remove(&stream_id))
+                    {
+                        let topics = std::mem::take(&mut ws.topics);
+                        unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                        (!ws.close_emitted).then_some((st.raw_env, st.on_ws_close_ref))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some((raw_env, close_ref)) = immediate_close {
+                unsafe { call_js_ws_close(raw_env, close_ref, socket_id, code, &reason_str) };
+            }
+            return true;
+        }
         let immediate_close = {
             let mut st = self.shared.borrow_mut();
             let Some(ws) = st
@@ -3015,16 +4338,14 @@ impl UvHttpServer {
                 self.server.close_within(socket_id, WS_CLOSE_WAIT);
             }
             if res == WriteResult::Closed {
-                let emit = st
-                    .conn_meta
+                st.conn_meta
                     .get_mut(socket_id)
                     .and_then(|s| s.ws.take())
-                    .is_some_and(|w| !w.close_emitted);
-                if emit {
-                    Some((st.raw_env, st.on_ws_close_ref))
-                } else {
-                    None
-                }
+                    .and_then(|mut w| {
+                        let topics = std::mem::take(&mut w.topics);
+                        unsubscribe_all_ws_topics(&mut st, socket_id, topics);
+                        (!w.close_emitted).then_some((st.raw_env, st.on_ws_close_ref))
+                    })
             } else {
                 None
             }
@@ -3038,6 +4359,19 @@ impl UvHttpServer {
     #[napi]
     pub fn ws_get_headers(&self, socket_id: u32) -> Vec<String> {
         let st = self.shared.borrow();
+        if socket_id >= H2_WS_ID_BIT {
+            let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+                return Vec::new();
+            };
+            let Some((_, ws)) = st
+                .conn_meta
+                .get(conn_id)
+                .and_then(|s| s.h2_ws.get(&stream_id))
+            else {
+                return Vec::new();
+            };
+            return collect_headers_in_head(&ws.raw_head);
+        }
         let Some(ws) = st.conn_meta.get(socket_id).and_then(|s| s.ws.as_deref()) else {
             return Vec::new();
         };
@@ -3046,9 +4380,19 @@ impl UvHttpServer {
 
     #[napi]
     pub fn ws_get_query(&self, socket_id: u32) -> String {
-        self.shared
-            .borrow()
-            .conn_meta
+        let st = self.shared.borrow();
+        if socket_id >= H2_WS_ID_BIT {
+            let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+                return String::new();
+            };
+            return st
+                .conn_meta
+                .get(conn_id)
+                .and_then(|s| s.h2_ws.get(&stream_id))
+                .map(|(_, ws)| ws.query.clone())
+                .unwrap_or_default();
+        }
+        st.conn_meta
             .get(socket_id)
             .and_then(|s| s.ws.as_deref())
             .map(|ws| ws.query.clone())
@@ -3057,21 +4401,30 @@ impl UvHttpServer {
 
     #[napi]
     pub fn ws_get_remote_address(&self, socket_id: u32) -> Option<String> {
-        if !self
-            .shared
-            .borrow()
-            .conn_meta
-            .get(socket_id)
-            .is_some_and(|s| s.ws.is_some())
-        {
-            return None;
-        }
-        let ip = self.server.remote_addr(socket_id)?;
+        let st = self.shared.borrow();
+        let conn_id = ws_conn_id_for_socket(&st, socket_id)?;
+        let ip = self.server.remote_addr(conn_id)?;
         if ip.is_empty() {
             None
         } else {
             Some(ip)
         }
+    }
+
+    /// Add or replace an SNI certificate/key entry at runtime.
+    #[napi]
+    pub fn add_server_name(&self, entry: TlsSniEntry) -> Result<()> {
+        self.server
+            .add_server_name(to_sni_input(&entry))
+            .map_err(|e| Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    /// Remove an SNI certificate entry at runtime. Returns `true` if one was removed.
+    #[napi]
+    pub fn remove_server_name(&self, server_name: String) -> Result<bool> {
+        self.server
+            .remove_server_name(&server_name)
+            .map_err(|e| Error::new(Status::InvalidArg, e.to_string()))
     }
 
     /// Atomically replace the TLS certificate/key for all new handshakes (preserving session tickets).
@@ -3150,6 +4503,53 @@ fn send_ws_frame(
     bytes: &[u8],
 ) -> bool {
     let mut st = shared.borrow_mut();
+    let max_bp = st.ws_max_backpressure;
+    let close_on_bp = st.ws_close_on_backpressure_limit;
+    if socket_id >= H2_WS_ID_BIT {
+        let Some(&(conn_id, stream_id)) = st.h2_ws_map.get(&socket_id) else {
+            return false;
+        };
+        if max_bp > 0 && server.queued_bytes(conn_id) >= max_bp {
+            if close_on_bp {
+                server.close_conn(conn_id);
+            }
+            return false;
+        }
+        let UvHttpShared {
+            ref mut conn_meta,
+            ref mut ws_shared_pool,
+            ref mut scratch_frame,
+            ..
+        } = *st;
+        let Some(slot) = conn_meta.get_mut(conn_id) else {
+            return false;
+        };
+        let mut encoded = Vec::new();
+        let Some((_, ws)) = slot.h2_ws.get_mut(&stream_id) else {
+            return false;
+        };
+        let shared_comp = ws
+            .conn
+            .deflate_server_window_bits()
+            .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
+        ws.conn
+            .encode_server_message(opcode, bytes, shared_comp, &mut encoded);
+        let Some(h2) = slot.h2.as_deref_mut() else {
+            return false;
+        };
+        scratch_frame.clear();
+        h2.write_stream_data(stream_id, &encoded, false, scratch_frame);
+        let res = server.write_to_conn(conn_id, scratch_frame, false);
+        return res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp);
+    }
+
+    if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+        if close_on_bp {
+            server.close_conn(socket_id);
+        }
+        return false;
+    }
+
     let UvHttpShared {
         ref mut conn_meta,
         ref mut ws_shared_pool,
@@ -3170,7 +4570,87 @@ fn send_ws_frame(
     scratch_frame.clear();
     ws.conn
         .encode_server_message(opcode, bytes, shared_comp, scratch_frame);
-    server.write_to_conn(socket_id, scratch_frame, false) != WriteResult::Closed
+    let res = server.write_to_conn(socket_id, scratch_frame, false);
+    res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp)
+}
+
+#[cfg(unix)]
+fn publish_ws_topic(
+    server: &UvServer,
+    shared: &Rc<RefCell<UvHttpShared>>,
+    topic: &str,
+    opcode: u8,
+    bytes: &[u8],
+    exclude_socket_id: Option<u32>,
+) -> u32 {
+    let targets: Vec<u32> = {
+        let st = shared.borrow();
+        let Some(list) = st.ws_topics.get(topic) else {
+            return 0;
+        };
+        list.iter()
+            .copied()
+            .filter(|&id| Some(id) != exclude_socket_id)
+            .collect()
+    };
+    if targets.is_empty() {
+        return 0;
+    }
+
+    // Encode once in plaintext when none of the recipients negotiated permessage-deflate,
+    // or per-socket otherwise so deflate contexts stay isolated.
+    let mut delivered = 0u32;
+    let mut plain_frame: Option<Vec<u8>> = None;
+    for socket_id in targets {
+        let mut st = shared.borrow_mut();
+        let max_bp = st.ws_max_backpressure;
+        let close_on_bp = st.ws_close_on_backpressure_limit;
+        if socket_id >= H2_WS_ID_BIT {
+            drop(st);
+            if send_ws_frame(server, shared, socket_id, opcode, bytes) {
+                delivered += 1;
+            }
+            continue;
+        }
+        if max_bp > 0 && server.queued_bytes(socket_id) >= max_bp {
+            if close_on_bp {
+                server.close_conn(socket_id);
+            }
+            continue;
+        }
+        let UvHttpShared {
+            ref mut conn_meta,
+            ref mut ws_shared_pool,
+            ref mut scratch_frame,
+            ..
+        } = *st;
+        let Some(ws) = conn_meta
+            .get_mut(socket_id)
+            .filter(|s| s.ws_sendable())
+            .and_then(|s| s.ws.as_deref_mut())
+        else {
+            continue;
+        };
+        let frame_slice: &[u8] = if let Some(bits) = ws.conn.deflate_server_window_bits() {
+            let shared_comp = ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits));
+            scratch_frame.clear();
+            ws.conn
+                .encode_server_message(opcode, bytes, shared_comp, scratch_frame);
+            scratch_frame.as_slice()
+        } else {
+            let buf = plain_frame.get_or_insert_with(|| {
+                let mut f = Vec::new();
+                write_server_frame(opcode, bytes, &mut f);
+                f
+            });
+            buf.as_slice()
+        };
+        let res = server.write_to_conn(socket_id, frame_slice, false);
+        if res == WriteResult::Written || (res == WriteResult::Backpressured && !close_on_bp) {
+            delivered += 1;
+        }
+    }
+    delivered
 }
 
 #[cfg(unix)]
@@ -3201,12 +4681,16 @@ pub fn create_uv_server(
 
     let mut limits = ParseLimits::default();
     let mut ws_max_message_size = WsConfig::default().max_message_size;
+    let mut ws_max_backpressure = 0usize;
+    let mut ws_close_on_backpressure_limit = false;
     let mut ws_deflate_cfg = WsDeflateConfig::default();
+    let mut compression = CompressionCfg::default();
     let mut max_held_bytes = MAX_HELD_BYTES;
     let mut http2_enabled = false;
     let mut h2_cfg = H2Config::default();
     let mut sock_cfg = SocketConfig::default();
     let mut tls_store: Option<Arc<TlsStore>> = None;
+    let mut unix_path: Option<String> = None;
     if let Some(opts) = options {
         if let Some(v) = opts.max_body_size {
             limits.max_body_size = v as usize;
@@ -3264,6 +4748,34 @@ pub fn create_uv_server(
         if let Some(v) = opts.ws_max_lifetime_ms {
             sock_cfg.ws_max_lifetime_ms = v as u64;
         }
+        if let Some(v) = opts.ws_max_backpressure {
+            ws_max_backpressure = v as usize;
+        }
+        if let Some(v) = opts.ws_close_on_backpressure_limit {
+            ws_close_on_backpressure_limit = v;
+        }
+        if let Some(v) = opts.stream_request_bodies {
+            limits.stream_request_bodies = v;
+            h2_cfg.stream_request_bodies = v;
+        }
+        if let Some(comp) = opts.compression {
+            compression.enabled = comp.enabled.unwrap_or(true);
+            if let Some(v) = comp.brotli {
+                compression.brotli = v;
+            }
+            if let Some(v) = comp.gzip {
+                compression.gzip = v;
+            }
+            if let Some(v) = comp.deflate {
+                compression.deflate = v;
+            }
+            if let Some(v) = comp.min_bytes {
+                compression.min_bytes = v as usize;
+            }
+        }
+        if let Some(p) = opts.unix_path {
+            unix_path = Some(p);
+        }
         if let Some(def) = opts.ws_deflate {
             ws_deflate_cfg.enabled = true;
             if let Some(v) = def.server_no_context_takeover {
@@ -3313,6 +4825,7 @@ pub fn create_uv_server(
         }
     }
 
+    h2_cfg.enable_connect_protocol = http2_enabled;
     h2_cfg.request_timeout = (sock_cfg.request_timeout_ms > 0)
         .then(|| std::time::Duration::from_millis(sock_cfg.request_timeout_ms));
 
@@ -3322,10 +4835,26 @@ pub fn create_uv_server(
         pool
     });
 
-    let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
-        .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
+    enum BoundListener {
+        Tcp(std::net::TcpListener, u16),
+        Unix(std::os::unix::net::UnixListener),
+    }
 
-    // Taken only once the options are valid and the port is bound, so a failed start holds no callback.
+    let bound = if let Some(ref path) = unix_path {
+        let listener = bind_unix_listener(path, sock_cfg)
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
+        BoundListener::Unix(listener)
+    } else {
+        let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
+        BoundListener::Tcp(listener, local_addr.port())
+    };
+    let bound_port = match &bound {
+        BoundListener::Tcp(_, p) => *p,
+        BoundListener::Unix(_) => 0,
+    };
+
+    // Taken only once the options are valid and the port/path is bound, so a failed start holds no callback.
     let mut cb_ref: sys::napi_ref = std::ptr::null_mut();
     let status = unsafe { sys::napi_create_reference(env.raw(), on_batch.raw(), 1, &mut cb_ref) };
     if status != sys::Status::napi_ok {
@@ -3363,12 +4892,20 @@ pub fn create_uv_server(
         on_batch_ref: cb_ref,
         on_writable_ref: std::ptr::null_mut(),
         on_aborted_ref: std::ptr::null_mut(),
+        on_req_body_ref: std::ptr::null_mut(),
         on_ws_open_ref: std::ptr::null_mut(),
         on_ws_message_ref: std::ptr::null_mut(),
         on_ws_close_ref: std::ptr::null_mut(),
+        on_ws_drain_ref: std::ptr::null_mut(),
         ws_max_message_size,
+        ws_max_backpressure,
+        ws_close_on_backpressure_limit,
         ws_deflate_cfg,
         ws_shared_pool,
+        ws_topics: HashMap::new(),
+        h2_ws_map: HashMap::new(),
+        h2_ws_seq: 0,
+        compression,
         http2_enabled,
         h2_cfg,
         routes: FastRoutes::default(),
@@ -3401,7 +4938,18 @@ pub fn create_uv_server(
 
     // SAFETY: `uv_loop` came from `napi_get_uv_event_loop` for this thread's environment just above.
     let server = unsafe {
-        UvServer::start_with_tls(uv_loop.cast(), listener, sock_cfg, tls_store, callbacks)
+        match bound {
+            BoundListener::Tcp(listener, _) => {
+                UvServer::start_with_tls(uv_loop.cast(), listener, sock_cfg, tls_store, callbacks)
+            }
+            BoundListener::Unix(listener) => UvServer::start_unix_with_tls(
+                uv_loop.cast(),
+                listener,
+                sock_cfg,
+                tls_store,
+                callbacks,
+            ),
+        }
     }
     .map_err(|e| {
         unsafe { sys::napi_delete_reference(env.raw(), cb_ref) };
@@ -3425,7 +4973,7 @@ pub fn create_uv_server(
     }
 
     Ok(UvHttpServer {
-        port: local_addr.port(),
+        port: bound_port,
         server,
         shared,
         closed,
@@ -3500,7 +5048,7 @@ impl NifraEngine {
                     offset += parsed.total_bytes;
                     req_id += 1;
                 }
-                Ok(ParseStatus::Incomplete) => break,
+                Ok(ParseStatus::Incomplete) | Ok(ParseStatus::StreamHead(_)) => break,
                 Err(err) => {
                     return Err(Error::new(
                         Status::InvalidArg,
@@ -3571,7 +5119,7 @@ pub fn serve_echo_blocking(host: String, port: u16) -> Result<()> {
                         break;
                     }
                 }
-                Ok(ParseStatus::Incomplete) => break,
+                Ok(ParseStatus::Incomplete) | Ok(ParseStatus::StreamHead(_)) => break,
                 Err(_) => {
                     templates.write_prepared(bad_req, b"Bad Request", write_buf);
                     return ConnAction::CloseAfterWrite {

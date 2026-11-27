@@ -505,6 +505,8 @@ pub(crate) struct ConnCore {
     pub accepted_at: Instant,
     /// Output is backed up far enough that the socket is not being read.
     pub read_paused: bool,
+    /// Application-level read pause (e.g. streaming request body backpressure).
+    pub app_read_paused: bool,
     /// When unsent output last stopped making progress.
     pub stalled_since: Option<Instant>,
 }
@@ -539,8 +541,14 @@ impl ConnCore {
             close_deadline: None,
             accepted_at: now,
             read_paused: false,
+            app_read_paused: false,
             stalled_since: None,
         }
+    }
+
+    #[inline]
+    pub fn is_read_paused(&self) -> bool {
+        self.read_paused || self.app_read_paused
     }
 
     #[inline]

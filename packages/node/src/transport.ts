@@ -3,9 +3,18 @@
  * nifra app answers through, the Host and target policy `serve()` applies, and the app's lifecycle and
  * error hooks. Not part of the app-facing API - `serve()` is.
  */
+import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { serve } from "./index.ts"
 
 export type { NodeServeOutcome } from "./generated/node-outcome.ts"
+
+/** Resolver built by {@link createStaticResolver} for sibling HTTP adapters supporting `static`. */
+export type StaticRequestResolver = (
+  method: string,
+  pathname: string,
+  getHeader: (name: string) => string | null,
+  buildRequest: () => Request,
+) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
 
 /** The Host and target options `serve()` accepts, resolved once at startup. */
 export interface HostPolicy {
@@ -29,6 +38,8 @@ interface TransportKit {
   hostPolicyOf(options: HostPolicyOptions): HostPolicy
   resolveRequestHost(host: string | null | undefined, policy: HostPolicy): string | undefined
   resolveRequestTarget(target: string, normalizeTarget: boolean): string
+  installFastResponse(): void
+  createStaticResolver(staticOption: unknown): StaticRequestResolver
 }
 
 // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: index.ts defines this property on `serve` with exactly the TransportKit shape
@@ -63,6 +74,13 @@ export const resolveRequestHost: (
 /** The origin-form target the app routes on: absolute-form unwrapped, dot segments resolved when asked. */
 export const resolveRequestTarget: (target: string, normalizeTarget: boolean) => string =
   kit.resolveRequestTarget
+
+/** Swap `globalThis.Response` for the lazy direct-write `DeferringResponse` (`fastResponse: true`). */
+export const installFastResponse: () => void = kit.installFastResponse
+
+/** Compile a `static` option (`serveStatic(...)` or fallback handler) into a zero-alloc request resolver. */
+export const createStaticResolver: (staticOption: unknown) => StaticRequestResolver =
+  kit.createStaticResolver
 
 /** How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`. */
 export interface NodeStopOptions {

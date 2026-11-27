@@ -47,11 +47,32 @@ test("a TLS response larger than the record buffer arrives whole", async () => {
   }
 })
 
-test("a Content-Length too large to frame is refused without waiting for the body", async () => {
+test("a Content-Length over 4 GiB frames on HEAD and past Number.MAX_SAFE_INTEGER is refused", async () => {
+  const over4g = await serve(
+    server().get(
+      "/large",
+      () => new Response(new ReadableStream(), { headers: { "content-length": "4294967296" } }),
+    ),
+    loopback,
+  )
+  try {
+    const headReply = await raw(
+      over4g.port,
+      "HEAD /large HTTP/1.1\r\nHost: x\r\nconnection: close\r\n\r\n",
+    )
+    assert.match(headReply, /^HTTP\/1\.1 200 /)
+    assert.match(headReply, /content-length: 4294967296\r\n/i)
+  } finally {
+    await over4g.stop({ drainMs: 50 })
+  }
+
   const running = await serve(
     server().get(
       "/huge",
-      () => new Response(new ReadableStream(), { headers: { "content-length": "4294967296" } }),
+      () =>
+        new Response(new ReadableStream(), {
+          headers: { "content-length": "9007199254740992" },
+        }),
     ),
     loopback,
   )

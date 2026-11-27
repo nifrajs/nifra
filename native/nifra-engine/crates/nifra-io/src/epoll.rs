@@ -13,7 +13,7 @@ use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::TcpListener as StdTcpListener;
-use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -91,7 +91,7 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, acti
         match action {
             FlushAction::ArmWritable => {
                 let events = (libc::EPOLLOUT as u32)
-                    | if core.read_ended || core.read_paused {
+                    | if core.read_ended || core.is_read_paused() {
                         0
                     } else {
                         libc::EPOLLIN as u32
@@ -102,7 +102,7 @@ fn apply_epoll_flush_action(epfd: RawFd, core: &mut ConnCore, conn_id: u32, acti
                 }
             }
             FlushAction::DisarmWritable => {
-                if core.read_ended {
+                if core.read_ended || core.is_read_paused() {
                     libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, core.fd, std::ptr::null_mut());
                 } else {
                     epoll_ctl_mod(epfd, core.fd, conn_id, libc::EPOLLIN as u32);
@@ -129,6 +129,7 @@ struct TimerCtx {
 struct EpollState {
     uv: &'static UvApi,
     uv_loop: *mut c_void,
+    is_tcp: bool,
     cfg: SocketConfig,
     tls: Option<Arc<TlsStore>>,
     clock: LoopClock,
@@ -227,6 +228,22 @@ impl EpollServer {
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
+        // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
+        // would stall Node's thread once the backlog is empty.
+        listener.set_nonblocking(true)?;
+        Self::start_fd_with_tls(uv_loop, OwnedFd::from(listener), true, cfg, tls, callbacks)
+    }
+
+    /// # Safety
+    /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
+    pub(crate) unsafe fn start_fd_with_tls(
+        uv_loop: *mut c_void,
+        listener: OwnedFd,
+        is_tcp: bool,
+        cfg: SocketConfig,
+        tls: Option<Arc<TlsStore>>,
+        callbacks: Box<dyn UvCallbacks>,
+    ) -> io::Result<Self> {
         if uv_loop.is_null() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -234,16 +251,13 @@ impl EpollServer {
             ));
         }
         let uv = uv_api()?;
-        // `accept4(SOCK_NONBLOCK)` only makes accepted sockets nonblocking: a blocking listener
-        // would stall Node's thread once the backlog is empty.
-        listener.set_nonblocking(true)?;
         let epfd = libc::epoll_create1(libc::EPOLL_CLOEXEC);
         if epfd < 0 {
             return Err(io::Error::last_os_error());
         }
 
         let listener_fd = listener.as_raw_fd();
-        let nodelay_inherited = if cfg.tcp_nodelay {
+        let nodelay_inherited = if is_tcp && cfg.tcp_nodelay {
             set_tcp_nodelay(listener_fd)
         } else {
             true
@@ -283,6 +297,7 @@ impl EpollServer {
         let state = Rc::new(RefCell::new(EpollState {
             uv,
             uv_loop,
+            is_tcp,
             cfg,
             tls,
             clock: LoopClock::new(initial_uv_ms),
@@ -373,6 +388,34 @@ impl EpollServer {
             return Err(TlsError::MissingMaterial);
         };
         store.reload_input(input)
+    }
+
+    pub fn add_server_name(&self, entry: nifra_tls::SniCertInput) -> Result<(), TlsError> {
+        let store = {
+            let st = self.state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Err(TlsError::MissingMaterial);
+        };
+        store.add_server_name(entry)
+    }
+
+    pub fn remove_server_name(&self, server_name: &str) -> Result<bool, TlsError> {
+        let store = {
+            let st = self.state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Ok(false);
+        };
+        store.remove_server_name(server_name)
     }
 
     pub fn remote_addr(&self, conn_id: u32) -> Option<String> {
@@ -493,6 +536,47 @@ impl EpollServer {
         !st.deferred.is_empty() || st.conns.iter().any(|(_, c)| c.queued_bytes() > 0)
     }
 
+    pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        let st = self.state.borrow();
+        let deferred = if st.dispatching == Some(conn_id) {
+            st.deferred.len()
+        } else {
+            0
+        };
+        deferred + st.conns.get(conn_id).map_or(0, |c| c.queued_bytes())
+    }
+
+    pub fn set_read_paused(&self, conn_id: u32, paused: bool) -> bool {
+        let mut st = self.state.borrow_mut();
+        let epfd = st.epfd;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        if conn.app_read_paused == paused {
+            return true;
+        }
+        conn.app_read_paused = paused;
+        let events = (if conn.writable_armed {
+            libc::EPOLLOUT as u32
+        } else {
+            0
+        }) | (if conn.read_ended || conn.is_read_paused() {
+            0
+        } else {
+            libc::EPOLLIN as u32
+        });
+        unsafe {
+            if events == 0 {
+                if epfd >= 0 {
+                    libc::epoll_ctl(epfd, libc::EPOLL_CTL_DEL, conn.fd, std::ptr::null_mut());
+                }
+            } else {
+                let _ = epoll_ctl_mod(epfd, conn.fd, conn_id, events);
+            }
+        }
+        true
+    }
+
     pub fn stop_listening(&self) {
         let mut st = self.state.borrow_mut();
         if st.listener_fd >= 0 {
@@ -571,7 +655,7 @@ unsafe fn accept_pending(st: &mut EpollState, now: std::time::Instant) {
     if lfd < 0 || st.epfd < 0 {
         return;
     }
-    let nodelay = st.cfg.tcp_nodelay && !st.listener_tcp_nodelay_inherited;
+    let nodelay = st.is_tcp && st.cfg.tcp_nodelay && !st.listener_tcp_nodelay_inherited;
 
     loop {
         let mut storage: libc::sockaddr_storage = std::mem::zeroed();

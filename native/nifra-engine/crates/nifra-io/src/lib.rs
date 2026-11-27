@@ -131,6 +131,20 @@ pub fn bind_tcp_listener(
     Err(failure)
 }
 
+/// Bind a non-blocking Unix domain socket listener with the configured backlog.
+#[cfg(unix)]
+pub fn bind_unix_listener(
+    path: &str,
+    cfg: SocketConfig,
+) -> io::Result<std::os::unix::net::UnixListener> {
+    let addr = socket2::SockAddr::unix(path)?;
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr)?;
+    socket.listen(cfg.backlog)?;
+    Ok(socket.into())
+}
+
 fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, SocketAddr)> {
     let domain = match addr {
         SocketAddr::V4(_) => Domain::IPV4,

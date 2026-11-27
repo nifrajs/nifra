@@ -4727,14 +4727,20 @@ _No named exports (side-effect entrypoint)._
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
 - **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
   How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
+- **StaticRequestResolver** _(type)_ - `type StaticRequestResolver = ( method: string, pathname: string, getHeader: (name: string) => string | null, buildRequest: () => Request, ) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined`
+  Resolver built by {@link createStaticResolver} for sibling HTTP adapters supporting `static`.
 - **activateAsyncContextFrame** _(const)_ - `activateAsyncContextFrame: () => void`
   Node's async-context bookkeeping flips on lazily; flipping it before listening keeps the tick loop monomorphic.
+- **createStaticResolver** _(const)_ - `createStaticResolver: (staticOption: unknown) => StaticRequestResolver`
+  Compile a `static` option (`serveStatic(...)` or fallback handler) into a zero-alloc request resolver.
 - **enableNodeDirect** _(const)_ - `enableNodeDirect: (app: object) => void`
   Install the app's node-direct hooks (a no-op for a plain `{ fetch }` handler or an already-served app).
 - **errorReporterOf** _(const)_ - `errorReporterOf: (app: object) => ((error: unknown) => void) | undefined`
   The app's own error log, when it has one.
 - **hostPolicyOf** _(const)_ - `hostPolicyOf: (options: HostPolicyOptions) => HostPolicy`
   Validate and normalize `allowedHosts` / `canonicalHost` / `normalizeTarget`; throws a `TypeError` on a malformed entry.
+- **installFastResponse** _(const)_ - `installFastResponse: () => void`
+  Swap `globalThis.Response` for the lazy direct-write `DeferringResponse` (`fastResponse: true`).
 - **lifecycleOf** _(const)_ - `lifecycleOf: (app: object) => (phase: "stopping" | "stopped") => Promise<void>`
   The app's `onStopping` / `onStop` hooks as one function; a no-op for a plain handler.
 - **nodeOutcomeRuntime** _(const)_ - `nodeOutcomeRuntime: object`

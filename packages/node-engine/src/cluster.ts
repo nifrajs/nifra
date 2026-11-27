@@ -20,6 +20,8 @@ import type { EngineServer, FetchHandler, NodeStopOptions, ServeOptions } from "
 import { serve } from "./serve.ts"
 
 export interface ClusterOptions extends ServeOptions {
+  /** Fixed port every worker binds with `SO_REUSEPORT`. */
+  readonly port: number
   /** Worker processes. Default: one per available core. */
   readonly workers?: number
   /** Start a replacement when a worker dies while the cluster is running. Default `true`. */

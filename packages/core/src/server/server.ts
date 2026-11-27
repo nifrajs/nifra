@@ -197,6 +197,7 @@ import {
   INSTALL_EFFECT_LEDGER,
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
+  INSTALL_NATIVE_PUBLISH,
   INSTALL_NODE_DIRECT,
   INSTALL_NOT_FOUND,
   INSTALL_RESPONSE_CONTRACT,
@@ -3151,6 +3152,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_WS](runtime: WsRuntime): void {
     this.assertConfigurable("websocket()")
     this.wsRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for native WebSocket pub/sub transports. Returns `true` when accepted. */
+  [INSTALL_NATIVE_PUBLISH](
+    publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void,
+  ): boolean {
+    const eligible =
+      this.wsRoutes.length > 0 &&
+      this.options.topicAdapter === undefined &&
+      !this.mountsTakeUpgrades() &&
+      !this.wsHasValidatedSend
+    this.nativePublish = eligible ? publish : undefined
+    return eligible
   }
 
   /**
