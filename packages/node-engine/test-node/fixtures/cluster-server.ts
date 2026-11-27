@@ -56,6 +56,7 @@ try {
       hostname: "127.0.0.1",
       workers: Number(process.env.WORKERS ?? 3),
       gracefulSignals: { drainMs: 500 },
+      sharedListener: process.env.SHARED_LISTENER === "1",
       tls,
       onWorkerEvent: (event) => say({ event: event.type, ...event }),
     },
@@ -86,7 +87,7 @@ try {
       )
     })
     // Last: the tests signal as soon as they read this, and an unhandled SIGUSR2 kills the process.
-    say({ event: "ready", workers: node.workers() })
+    say({ event: "ready", port: node.port, workers: node.workers() })
   }
 } catch (error) {
   say({ event: "failed", message: error instanceof Error ? error.message : String(error) })

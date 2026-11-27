@@ -533,6 +533,56 @@ impl EpollServer {
         self.state.borrow_mut().remove_and_close_conn(conn_id)
     }
 
+    pub fn cork_begin(&self, conn_id: u32) -> bool {
+        let mut st = self.state.borrow_mut();
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        conn.cork_depth = conn.cork_depth.saturating_add(1);
+        true
+    }
+
+    pub fn cork_end(&self, conn_id: u32) -> WriteResult {
+        let mut st = self.state.borrow_mut();
+        let epfd = st.epfd;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return WriteResult::Closed;
+        };
+        conn.cork_depth = conn.cork_depth.saturating_sub(1);
+        if conn.cork_depth > 0 {
+            return if conn.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        if conn.queued_bytes() == 0 && !conn.close_after_write {
+            return if conn.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        let fa = flush_write_buf_core(conn);
+        if fa == FlushAction::Close {
+            st.remove_and_close_conn(conn_id);
+            return WriteResult::Closed;
+        }
+        let armed = conn.writable_armed;
+        apply_epoll_flush_action(epfd, conn, conn_id, fa);
+        if fa == FlushAction::DisarmWritable {
+            st.pending_writable.push(conn_id);
+            if !st.in_poll_loop {
+                st.arm_check();
+            }
+        }
+        if armed {
+            WriteResult::Backpressured
+        } else {
+            WriteResult::Written
+        }
+    }
+
     pub fn close_within(&self, conn_id: u32, wait: std::time::Duration) {
         let mut st = self.state.borrow_mut();
         let at = st.clock.now() + wait;

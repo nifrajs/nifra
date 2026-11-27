@@ -14,9 +14,9 @@ const running = await serve(app, { port: 3000 })
 await running.stop()
 ```
 
-Requires Node 22 or newer and the built addon. `@nifrajs/node` is a peer dependency: this package reuses its Host policy, lifecycle and outcome runtime.
+Requires Node 22 or newer and the built addon (`win32`, `darwin`, and `linux`, with `NIFRA_ENGINE_TRANSPORT=uring|epoll|uv` on Linux; pass `fallback: true` to fall back to `@nifrajs/node` if no native binary is available). `@nifrajs/node` is a peer dependency: this package reuses its Host policy, lifecycle and outcome runtime.
 
-Build `nifra-napi` with Cargo from `native/nifra-engine`; `serve()` loads it on first use from `native/nifra-engine/target/{release,debug}`, or from the path in `NIFRA_RUST_ENGINE_PATH` when set. The loader opens the shared library in place. It is unix-only (libuv poll handles).
+Build `nifra-napi` with Cargo from `native/nifra-engine` (or stage prebuilt `.node` binaries via `bun run scripts/stage-native-addon.ts`); `serve()` loads from `NIFRA_RUST_ENGINE_PATH`, installed platform packages (`@nifrajs/node-engine-<platform>-<arch>[-gnu|-musl]`), local `packages/node-engine/prebuilds/`, or `native/nifra-engine/target/{release,debug}`. The loader opens the shared library in place.
 
 Run the integration tests from the repository root. On macOS:
 
@@ -44,7 +44,8 @@ Resolves to an `EngineServer` once the port is bound. Invalid options throw befo
 | `protocol` | The scheme `Request.url` carries. `"https"` when `tls` is set, else `"http"`. |
 | `tls` | In-process TLS (rustls): inline `cert` / `key`, or `cert_file_name` / `key_file_name`, optional `serverNames` SNI entries, plus optional `ticketKeys`. |
 | `http2` | HTTP/2 beside HTTP/1.1 on the same port (including RFC 8441 WebSocket over HTTP/2). `true`, or an object of settings. |
-| `compression` | Native response compression (`br`, `gzip`, `deflate`) via `Accept-Encoding`. |
+| `compression` | Native response compression (`zstd`, `br`, `gzip`, `deflate`) via `Accept-Encoding`. |
+| `fallback` | Fall back to `@nifrajs/node` (`node:http`/`node:https`) when no native addon can be loaded. |
 | `static` | Static file middleware (`serveStatic(...)`) or handler consulted before routes on GET/HEAD. |
 | `fastResponse` | Swap `globalThis.Response` for the lazy direct-write wrapper to skip stream drains. |
 | `maxBodySize` | Largest request body, in bytes (default 1 MiB) when buffering request bodies. |

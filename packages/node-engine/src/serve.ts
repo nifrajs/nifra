@@ -12,9 +12,10 @@
  */
 import { createPrivateKey } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import { Module } from "node:module"
+import { createRequire, Module } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { serve as serveNode } from "@nifrajs/node"
 import {
   activateAsyncContextFrame,
   createStaticResolver,
@@ -41,6 +42,7 @@ import {
   type FetchHandler,
   isCap,
   mayServeSockets,
+  type ProbeResult,
   payloadCeiling,
   type ServeOptions,
   type TlsOptions,
@@ -135,6 +137,7 @@ interface RustTlsOptions {
 
 interface RustCompressionOptions {
   readonly enabled?: boolean
+  readonly zstd?: boolean
   readonly brotli?: boolean
   readonly gzip?: boolean
   readonly deflate?: boolean
@@ -178,6 +181,8 @@ interface RustUvServer {
   wsGetQuery(socketId: number): string
   wsGetRemoteAddress(socketId: number): string | null
   wsGetBufferedAmount(socketId: number): number
+  wsCorkBegin(socketId: number): boolean
+  wsCorkEnd(socketId: number): boolean
   wsSubscribe(socketId: number, topic: string): boolean
   wsUnsubscribe(socketId: number, topic: string): boolean
   wsPublish(
@@ -191,6 +196,7 @@ interface RustUvServer {
   getMethod(reqId: number): string | null
   getHeader(reqId: number, name: string): string | null
   getHeaders(reqId: number): string[]
+  getTrailers(reqId: number): string[]
   getBody(reqId: number): Buffer | null
   getRemoteAddress(reqId: number): string | null
   setStaticRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
@@ -223,7 +229,13 @@ interface RustUvServer {
 }
 
 interface RustAddon {
-  probe(): { readonly ok: boolean; readonly transport: string }
+  probe(): ProbeResult
+  bindSharedListener?(
+    host?: string | null,
+    port?: number,
+    backlog?: number | null,
+  ): { readonly fd: number; readonly port: number }
+  dupListenerFd?(fd: number): number
   createUvServer(
     host: string,
     port: number,
@@ -249,6 +261,7 @@ interface RustAddon {
       readonly streamRequestBodies?: boolean | undefined
       readonly compression?: RustCompressionOptions | undefined
       readonly unixPath?: string | undefined
+      readonly listenerFd?: number | undefined
       readonly wsDeflate?: RustWsDeflateOptions | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
@@ -396,11 +409,18 @@ function toRustCompression(
   }
   const out: {
     enabled?: boolean
+    zstd?: boolean
     brotli?: boolean
     gzip?: boolean
     deflate?: boolean
     minBytes?: number
   } = { enabled: opt.enabled ?? true }
+  if (opt.zstd !== undefined) {
+    if (typeof opt.zstd !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `compression.zstd` must be a boolean")
+    }
+    out.zstd = opt.zstd
+  }
   if (opt.brotli !== undefined) {
     if (typeof opt.brotli !== "boolean") {
       throw new TypeError("@nifrajs/node-engine: `compression.brotli` must be a boolean")
@@ -563,35 +583,119 @@ function optionalNonNegMs(name: string, value: number | undefined): number | und
 }
 
 let cachedAddon: RustAddon | undefined
+let cachedAddonKey: string | undefined
 
-function loadRustAddon(): RustAddon {
-  if (cachedAddon !== undefined) return cachedAddon
-  const explicit = process.env.NIFRA_RUST_ENGINE_PATH
-  const here = dirname(fileURLToPath(import.meta.url))
-  const engineRoot = resolve(here, "../../../native/nifra-engine")
+function linuxLibcSuffix(): string {
+  if (process.platform !== "linux") return ""
+  try {
+    const report = process.report?.getReport()
+    if (typeof report === "object" && report !== null && "header" in report) {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: narrowed Node diagnostic report object
+      const header = (report as { readonly header?: { readonly glibcVersionRuntime?: string } })
+        .header
+      if (header?.glibcVersionRuntime !== undefined) return "-gnu"
+    }
+  } catch {
+    // ignore report unavailability
+  }
+  return existsSync("/lib/ld-musl-x86_64.so.1") || existsSync("/lib/ld-musl-aarch64.so.1")
+    ? "-musl"
+    : "-gnu"
+}
+
+function resolvePrebuiltAddon(engineRoot: string): string | undefined {
+  const libc = linuxLibcSuffix()
+  const pkgTags =
+    libc.length > 0
+      ? [`${process.platform}-${process.arch}${libc}`, `${process.platform}-${process.arch}`]
+      : [`${process.platform}-${process.arch}`]
+  const req = createRequire(import.meta.url)
+  for (const tag of pkgTags) {
+    try {
+      const resolved = req.resolve(`@nifrajs/node-engine-${tag}/nifra_napi.node`)
+      if (existsSync(resolved)) return resolved
+    } catch {
+      // optional prebuilt package not installed
+    }
+  }
+  const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+  for (const tag of pkgTags) {
+    const localPrebuild = join(pkgRoot, "prebuilds", tag, "nifra_napi.node")
+    if (existsSync(localPrebuild)) return localPrebuild
+  }
   const library =
     process.platform === "win32"
       ? "nifra_napi.dll"
       : process.platform === "darwin"
         ? "libnifra_napi.dylib"
         : "libnifra_napi.so"
-  const binary =
-    explicit === undefined
-      ? [`target/release/${library}`, `target/debug/${library}`, "nifra_napi.node"]
-          .map((name) => join(engineRoot, name))
-          .find(existsSync)
-      : resolve(explicit)
+  return [`target/release/${library}`, `target/debug/${library}`, "nifra_napi.node"]
+    .map((name) => join(engineRoot, name))
+    .find(existsSync)
+}
+
+function loadRustAddon(): RustAddon {
+  const explicit = process.env.NIFRA_RUST_ENGINE_PATH
+  const here = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(here, "../../../native/nifra-engine")
+  const binary = explicit === undefined ? resolvePrebuiltAddon(engineRoot) : resolve(explicit)
   if (binary === undefined || !existsSync(binary)) {
     throw new TypeError(
       `@nifrajs/node-engine: a native addon is required at ${binary ?? engineRoot}. Run \`cargo build --release -p nifra-napi\` in native/nifra-engine or set NIFRA_RUST_ENGINE_PATH.`,
     )
   }
+  if (cachedAddon !== undefined && cachedAddonKey === binary) return cachedAddon
   const addon = new Module(binary)
   // Cargo uses the platform's shared library extension. Load it in place.
   process.dlopen(addon, binary)
   // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: native NAPI-RS addon conforms to RustAddon
   cachedAddon = addon.exports as RustAddon
+  cachedAddonKey = binary
   return cachedAddon
+}
+
+/** Probe whether a native addon binary is available on this host and report its transport/capabilities. */
+export function probe(): ProbeResult {
+  try {
+    return loadRustAddon().probe()
+  } catch (error) {
+    return {
+      ok: false,
+      version: "0.0.0",
+      platform: process.platform,
+      arch: process.arch,
+      transport: "unavailable",
+      reason: error instanceof Error ? error.message : String(error),
+      capabilities: {},
+    }
+  }
+}
+
+/** Whether the native Rust engine addon can be loaded in this process. */
+export function isNativeAvailable(): boolean {
+  return probe().ok
+}
+
+/** Bind a passive primary listener socket without starting a libuv accept loop in the primary. */
+export function bindSharedListenerSocket(
+  port: number,
+  host: string | undefined,
+  backlog: number | undefined,
+): { readonly fd: number; readonly port: number } | undefined {
+  try {
+    return loadRustAddon().bindSharedListener?.(host ?? "127.0.0.1", port, backlog ?? null)
+  } catch {
+    return undefined
+  }
+}
+
+/** Duplicate a received IPC listener descriptor so the IPC wrapper socket can close immediately. */
+export function dupSharedListenerFd(fd: number): number | undefined {
+  try {
+    return loadRustAddon().dupListenerFd?.(fd)
+  } catch {
+    return undefined
+  }
 }
 
 const isBodyless = (status: number): boolean => status === 204 || status === 205 || status === 304
@@ -771,6 +875,7 @@ class RustBatchSource {
   private peer: string | undefined
   private urlValue: string | undefined
   private headersValue: Headers | undefined
+  private trailersValue: Record<string, string> | undefined
   private requestValue: Request | undefined
   private controller: AbortController | undefined
 
@@ -932,6 +1037,20 @@ class RustBatchSource {
       this.headersValue = h
     }
     return this.headersValue
+  }
+
+  get trailers(): Record<string, string> {
+    if (this.trailersValue === undefined) {
+      const pairs = this.id < 0 ? [] : this.server.getTrailers(this.id)
+      const out: Record<string, string> = {}
+      for (let i = 0; i < pairs.length; i += 2) {
+        const name = pairs[i] ?? ""
+        const val = pairs[i + 1] ?? ""
+        if (name.length > 0) out[name] = name in out ? `${out[name]}, ${val}` : val
+      }
+      this.trailersValue = out
+    }
+    return this.trailersValue
   }
 
   private toBytes(): Uint8Array | null {
@@ -1165,9 +1284,91 @@ const nativeMs = (value: unknown): number | undefined =>
     ? Math.min(Math.round(value), MAX_NATIVE_LENGTH)
     : undefined
 
+async function serveWithNodeFallback(
+  app: FetchHandler,
+  options: ServeOptions,
+): Promise<EngineServer> {
+  if (options.path !== undefined) {
+    throw new TypeError(
+      "@nifrajs/node-engine: Unix domain socket `path` is not supported by `@nifrajs/node` fallback",
+    )
+  }
+  const tlsOpt = options.tls
+  const certVal =
+    tlsOpt === undefined
+      ? undefined
+      : (pemToString(tlsOpt.cert) ??
+        (tlsOpt.cert_file_name !== undefined ? readFileSync(tlsOpt.cert_file_name) : undefined))
+  const keyVal =
+    tlsOpt === undefined
+      ? undefined
+      : (pemToString(tlsOpt.key) ??
+        (tlsOpt.key_file_name !== undefined ? readFileSync(tlsOpt.key_file_name) : undefined))
+  const caVal =
+    tlsOpt === undefined
+      ? undefined
+      : (pemBundleToString(tlsOpt.ca) ??
+        (tlsOpt.ca_file_name !== undefined ? readFileSync(tlsOpt.ca_file_name) : undefined))
+  const crlVal =
+    tlsOpt === undefined
+      ? undefined
+      : (pemBundleToString(tlsOpt.crl) ??
+        (tlsOpt.crl_file_name !== undefined ? readFileSync(tlsOpt.crl_file_name) : undefined))
+  type NodeServeOpts = Parameters<typeof serveNode>[1]
+  type NodeTlsOpts = NonNullable<NodeServeOpts["tls"]>
+  let tlsInput: NodeTlsOpts | undefined
+  if (tlsOpt !== undefined) {
+    const tlsMut: { -readonly [K in keyof NodeTlsOpts]: NodeTlsOpts[K] } = {}
+    if (certVal !== undefined) tlsMut.cert = certVal
+    if (keyVal !== undefined) tlsMut.key = keyVal
+    if (tlsOpt.passphrase !== undefined) tlsMut.passphrase = tlsOpt.passphrase
+    if (caVal !== undefined) tlsMut.ca = caVal
+    if (crlVal !== undefined) tlsMut.crl = crlVal
+    if (tlsOpt.requestCert !== undefined) tlsMut.requestCert = tlsOpt.requestCert
+    if (tlsOpt.rejectUnauthorized !== undefined) {
+      tlsMut.rejectUnauthorized = tlsOpt.rejectUnauthorized
+    }
+    if (tlsOpt.minVersion !== undefined) tlsMut.minVersion = tlsOpt.minVersion
+    if (tlsOpt.maxVersion !== undefined) tlsMut.maxVersion = tlsOpt.maxVersion
+    if (tlsOpt.ciphers !== undefined) tlsMut.ciphers = tlsOpt.ciphers
+    if (tlsOpt.ecdhCurve !== undefined) tlsMut.ecdhCurve = tlsOpt.ecdhCurve
+    if (tlsOpt.ticketKeys !== undefined) tlsMut.ticketKeys = toTicketBuffer(tlsOpt.ticketKeys)
+    tlsInput = tlsMut
+  }
+  const unsupported = (op: string): never => {
+    throw new Error(
+      `@nifrajs/node-engine: \`${op}()\` is unavailable while running on \`@nifrajs/node\` fallback`,
+    )
+  }
+  const nodeOpts: { -readonly [K in keyof NodeServeOpts]: NodeServeOpts[K] } = {
+    port: options.port ?? 0,
+  }
+  if (options.hostname !== undefined) nodeOpts.hostname = options.hostname
+  if (options.protocol !== undefined) nodeOpts.protocol = options.protocol
+  if (tlsInput !== undefined) nodeOpts.tls = tlsInput
+  if (options.static !== undefined) nodeOpts.static = options.static
+  if (options.fastResponse !== undefined) nodeOpts.fastResponse = options.fastResponse
+  if (options.allowedHosts !== undefined) nodeOpts.allowedHosts = options.allowedHosts
+  if (options.canonicalHost !== undefined) nodeOpts.canonicalHost = options.canonicalHost
+  if (options.normalizeTarget !== undefined) nodeOpts.normalizeTarget = options.normalizeTarget
+  if (options.gracefulSignals !== undefined) nodeOpts.gracefulSignals = options.gracefulSignals
+  const nodeServer = await serveNode(app, nodeOpts)
+  return {
+    port: nodeServer.port,
+    stop: (stopOpts) => nodeServer.stop(stopOpts),
+    reloadTls: () => unsupported("reloadTls"),
+    addServerName: () => unsupported("addServerName"),
+    removeServerName: () => unsupported("removeServerName"),
+    [Symbol.asyncDispose]: () => nodeServer[Symbol.asyncDispose](),
+  }
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineServer> {
   if (options.fastResponse !== undefined && typeof options.fastResponse !== "boolean") {
     throw new TypeError("@nifrajs/node-engine: `fastResponse` must be a boolean")
+  }
+  if (options.fallback !== undefined && typeof options.fallback !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `fallback` must be a boolean")
   }
   if (options.path !== undefined) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -1221,7 +1422,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     throw new TypeError(`@nifrajs/node-engine: protocol must be "http" or "https"`)
   }
 
-  const addon = loadRustAddon()
+  let addon: RustAddon
+  try {
+    addon = loadRustAddon()
+  } catch (err) {
+    if (options.fallback === true) {
+      return serveWithNodeFallback(app, options)
+    }
+    throw err
+  }
   activateAsyncContextFrame()
   enableNodeDirect(app)
   const report = errorReporterOf(app)
@@ -2101,6 +2310,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         else pubsub.unsubscribe(topic, nifra)
       },
       getBufferedAmount: () => handle.getBufferedAmount(),
+      cork: (callback) => {
+        if (entry.state !== WS_OPEN || !uvServer.wsCorkBegin(id)) {
+          callback()
+          return
+        }
+        try {
+          callback()
+        } finally {
+          uvServer.wsCorkEnd(id)
+        }
+      },
       data,
       raw: handle,
     }
@@ -2161,6 +2381,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   if (streamRequestBodies !== undefined && typeof streamRequestBodies !== "boolean") {
     throw new TypeError("@nifrajs/node-engine: `engine.streamRequestBodies` must be a boolean")
   }
+  const listenerFd = options.engine?.listenerFd
+  if (
+    listenerFd !== undefined &&
+    (typeof listenerFd !== "number" || !Number.isInteger(listenerFd) || listenerFd < 0)
+  ) {
+    throw new TypeError("@nifrajs/node-engine: `engine.listenerFd` must be a non-negative integer")
+  }
   const wsDeflate = toRustWsDeflate(options.wsDeflate)
   const rustCompression = toRustCompression(options.compression)
   const rustTls = currentTls === undefined ? undefined : toRustTls(currentTls)
@@ -2187,6 +2414,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       streamRequestBodies,
       compression: rustCompression,
       unixPath,
+      listenerFd,
       wsDeflate,
       http2: http2Enabled ? true : undefined,
       http2MaxConcurrentStreams: http2MaxStreams,

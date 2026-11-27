@@ -1,7 +1,7 @@
 //! Zero-hop `libuv` (`uv_poll_t` + `uv_check_t`) driver and Linux `epoll` facade running on
 //! Node.js's main event loop, with optional sans-I/O `rustls` TLS termination and hot reload.
 
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -9,7 +9,6 @@ use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::TcpListener as StdTcpListener;
-use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -18,12 +17,17 @@ use nifra_tls::{feed_ciphertext, TlsError, TlsInput, TlsStore};
 #[cfg(target_os = "linux")]
 use crate::epoll::EpollServer;
 use crate::sys::{
-    alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
-    free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_nosigpipe_if_supported,
-    set_tcp_nodelay, uv_api, write_buf_limit, write_bytes_or_queue, ConnCore, ConnSlab,
-    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
-    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE, WS_PING_FRAME,
+    accept_and_discard, accept_nonblock, alloc_handle, alloc_read_scratch, as_raw_sock, close_sock,
+    collect_timeouts, configure_accepted_socket, ensure_read_scratch, flush_write_buf_core,
+    free_handle, into_raw_sock, is_valid_sock, last_recv_error, open_spare_fd, recv_nonblock,
+    set_tcp_nodelay, tcp_into_owned_sock, to_uv_os_sock, uv_api, write_buf_limit,
+    write_bytes_or_queue, AcceptOutcome, ConnCore, ConnSlab, FlushAction, LoopClock, OwnedSock,
+    RawSock, RecvErrKind, UvApi, DATE_TICK_INTERVAL_MS, INVALID_SOCK, MAX_READ_PER_EVENT,
+    MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, UV_WRITABLE,
+    WS_PING_FRAME,
 };
+#[cfg(target_os = "linux")]
+use crate::uring::UringServer;
 use crate::{ConnAction, SocketConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +93,8 @@ enum ServerBackend {
     Uv(Rc<RefCell<UvPollState>>),
     #[cfg(target_os = "linux")]
     Epoll(EpollServer),
+    #[cfg(target_os = "linux")]
+    Uring(UringServer),
 }
 
 /// Zero-hop HTTP/HTTPS server handle attached directly to Node.js's `uv_loop_t`.
@@ -119,9 +125,9 @@ impl UvServer {
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
         listener.set_nonblocking(true)?;
-        Self::start_fd_with_tls(
+        Self::start_sock_with_tls(
             uv_loop,
-            OwnedFd::from(listener),
+            tcp_into_owned_sock(listener),
             true,
             None,
             cfg,
@@ -134,6 +140,7 @@ impl UvServer {
     ///
     /// # Safety
     /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
+    #[cfg(unix)]
     pub unsafe fn start_unix_with_tls(
         uv_loop: *mut c_void,
         bound: crate::BoundUnixSocket,
@@ -142,9 +149,9 @@ impl UvServer {
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
         bound.listener.set_nonblocking(true)?;
-        Self::start_fd_with_tls(
+        Self::start_sock_with_tls(
             uv_loop,
-            OwnedFd::from(bound.listener),
+            std::os::fd::OwnedFd::from(bound.listener),
             false,
             Some(bound.guard),
             cfg,
@@ -153,9 +160,25 @@ impl UvServer {
         )
     }
 
-    unsafe fn start_fd_with_tls(
+    /// Start on a duplicated existing listener file descriptor (for shared cluster sockets).
+    ///
+    /// # Safety
+    /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
+    #[cfg(unix)]
+    pub unsafe fn start_from_raw_fd_with_tls(
         uv_loop: *mut c_void,
-        listener: OwnedFd,
+        raw_fd: i32,
+        cfg: SocketConfig,
+        tls: Option<Arc<TlsStore>>,
+        callbacks: Box<dyn UvCallbacks>,
+    ) -> io::Result<Self> {
+        let sock = crate::sys::dup_listener_sock(raw_fd)?;
+        Self::start_sock_with_tls(uv_loop, sock, true, None, cfg, tls, callbacks)
+    }
+
+    unsafe fn start_sock_with_tls(
+        uv_loop: *mut c_void,
+        listener: OwnedSock,
         is_tcp: bool,
         unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
@@ -163,16 +186,34 @@ impl UvServer {
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
-        if std::env::var_os("NIFRA_ENGINE_TRANSPORT").as_deref() != Some(std::ffi::OsStr::new("uv"))
         {
-            return Ok(Self {
-                backend: ServerBackend::Epoll(EpollServer::start_fd_with_tls(
-                    uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
-                )?),
-            });
+            let transport = std::env::var_os("NIFRA_ENGINE_TRANSPORT");
+            if transport.as_deref() == Some(std::ffi::OsStr::new("uring")) {
+                if let Ok(ring_pair) = crate::uring::init_uring_ring() {
+                    return Ok(Self {
+                        backend: ServerBackend::Uring(UringServer::start_fd_with_tls(
+                            uv_loop,
+                            listener,
+                            is_tcp,
+                            unix_guard,
+                            cfg,
+                            tls,
+                            callbacks,
+                            Some(ring_pair),
+                        )?),
+                    });
+                }
+            }
+            if transport.as_deref() != Some(std::ffi::OsStr::new("uv")) {
+                return Ok(Self {
+                    backend: ServerBackend::Epoll(EpollServer::start_fd_with_tls(
+                        uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
+                    )?),
+                });
+            }
         }
         Ok(Self {
-            backend: ServerBackend::Uv(UvPollState::start_fd_with_tls(
+            backend: ServerBackend::Uv(UvPollState::start_sock_with_tls(
                 uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
             )?),
         })
@@ -185,6 +226,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::reload_tls(state, input),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.reload_tls(input),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.reload_tls(input),
         }
     }
 
@@ -193,6 +236,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::add_server_name(state, entry),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.add_server_name(entry),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.add_server_name(entry),
         }
     }
 
@@ -201,6 +246,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::remove_server_name(state, server_name),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.remove_server_name(server_name),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.remove_server_name(server_name),
         }
     }
 
@@ -209,6 +256,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::remote_addr(state, conn_id),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.remote_addr(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.remote_addr(conn_id),
         }
     }
 
@@ -217,6 +266,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::has_read_ended(state, conn_id),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.has_read_ended(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.has_read_ended(conn_id),
         }
     }
 
@@ -226,6 +277,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::alpn_protocol(state, conn_id),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.alpn_protocol(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.alpn_protocol(conn_id),
         }
     }
 
@@ -237,6 +290,8 @@ impl UvServer {
             }
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.write_to_conn(conn_id, bytes, close_after, false),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.write_to_conn(conn_id, bytes, close_after, false),
         }
     }
 
@@ -257,6 +312,10 @@ impl UvServer {
             ServerBackend::Epoll(ep) => {
                 ep.write_to_conn(conn_id, bytes, force_close, close_if_read_ended)
             }
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => {
+                ur.write_to_conn(conn_id, bytes, force_close, close_if_read_ended)
+            }
         }
     }
 
@@ -265,6 +324,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::close_conn(state, conn_id),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.close_conn(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.close_conn(conn_id),
         }
     }
 
@@ -280,6 +341,8 @@ impl UvServer {
             }
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.close_within(conn_id, wait),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.close_within(conn_id, wait),
         }
     }
 
@@ -293,6 +356,8 @@ impl UvServer {
             }
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.any_queued(),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.any_queued(),
         }
     }
 
@@ -310,6 +375,8 @@ impl UvServer {
             }
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.queued_bytes(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.queued_bytes(conn_id),
         }
     }
 
@@ -319,6 +386,30 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::set_read_paused(state, conn_id, paused),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.set_read_paused(conn_id, paused),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.set_read_paused(conn_id, paused),
+        }
+    }
+
+    /// Increment `cork_depth` on `conn_id` so subsequent writes buffer until `cork_end`.
+    pub fn cork_begin(&self, conn_id: u32) -> bool {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::cork_begin(state, conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.cork_begin(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.cork_begin(conn_id),
+        }
+    }
+
+    /// Decrement `cork_depth` on `conn_id` and flush buffered writes once depth returns to zero.
+    pub fn cork_end(&self, conn_id: u32) -> WriteResult {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::cork_end(state, conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.cork_end(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.cork_end(conn_id),
         }
     }
 
@@ -327,6 +418,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::stop_listening(state),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.stop_listening(),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.stop_listening(),
         }
     }
 
@@ -335,6 +428,8 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::close_all(state),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.close_all(),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.close_all(),
         }
     }
 }
@@ -346,13 +441,13 @@ struct UvConn {
 
 struct ListenerCtx {
     state: Rc<RefCell<UvPollState>>,
-    fd: RawFd,
+    fd: RawSock,
 }
 
 struct ClientCtx {
     state: Rc<RefCell<UvPollState>>,
     conn_id: u32,
-    fd: RawFd,
+    fd: RawSock,
 }
 
 struct CheckCtx {
@@ -382,7 +477,7 @@ struct UvPollState {
     closed: bool,
     read_scratch: Vec<MaybeUninit<u8>>,
     scratch_write: Vec<u8>,
-    spare_fd: RawFd,
+    spare_fd: RawSock,
     dispatching: Option<u32>,
     deferred: Vec<u8>,
     deferred_close: bool,
@@ -391,9 +486,9 @@ struct UvPollState {
 }
 
 impl UvPollState {
-    unsafe fn start_fd_with_tls(
+    unsafe fn start_sock_with_tls(
         uv_loop: *mut c_void,
-        listener: OwnedFd,
+        listener: OwnedSock,
         is_tcp: bool,
         unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
@@ -407,7 +502,7 @@ impl UvPollState {
             ));
         }
         let uv = uv_api()?;
-        let listener_fd = listener.as_raw_fd();
+        let listener_fd = as_raw_sock(&listener);
         if is_tcp && cfg.tcp_nodelay {
             set_tcp_nodelay(listener_fd);
         }
@@ -440,7 +535,7 @@ impl UvPollState {
         }));
 
         let poll_handle = alloc_handle(uv.poll_size);
-        let rc = (uv.poll_init_socket)(uv_loop, poll_handle, listener_fd);
+        let rc = (uv.poll_init_socket)(uv_loop, poll_handle, to_uv_os_sock(listener_fd));
         if rc != 0 {
             free_handle(poll_handle, uv.poll_size);
             close_spare_fd(&state);
@@ -477,7 +572,7 @@ impl UvPollState {
             std::ptr::null_mut()
         };
 
-        let fd_owned = listener.into_raw_fd();
+        let fd_owned = into_raw_sock(listener);
         let l_ctx = Box::into_raw(Box::new(ListenerCtx {
             state: Rc::clone(&state),
             fd: fd_owned,
@@ -693,6 +788,58 @@ impl UvPollState {
         false
     }
 
+    fn cork_begin(state: &Rc<RefCell<Self>>, conn_id: u32) -> bool {
+        let mut st = state.borrow_mut();
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        conn.core.cork_depth = conn.core.cork_depth.saturating_add(1);
+        true
+    }
+
+    fn cork_end(state: &Rc<RefCell<Self>>, conn_id: u32) -> WriteResult {
+        let mut st = state.borrow_mut();
+        let uv = st.uv;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return WriteResult::Closed;
+        };
+        conn.core.cork_depth = conn.core.cork_depth.saturating_sub(1);
+        if conn.core.cork_depth > 0 {
+            return if conn.core.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        if conn.core.queued_bytes() == 0 && !conn.core.close_after_write {
+            return if conn.core.writable_armed {
+                WriteResult::Backpressured
+            } else {
+                WriteResult::Written
+            };
+        }
+        let fa = flush_write_buf_core(&mut conn.core);
+        if fa == FlushAction::Close {
+            if let Some(c) = st.conns.remove(conn_id) {
+                close_client_handle(uv, c.poll_handle);
+            }
+            return WriteResult::Closed;
+        }
+        let armed = conn.core.writable_armed;
+        let poll_handle = conn.poll_handle;
+        let no_read = conn.core.read_ended || conn.core.is_read_paused();
+        apply_uv_flush_action(uv, poll_handle, no_read, fa);
+        if fa == FlushAction::DisarmWritable {
+            st.pending_writable.push(conn_id);
+            st.turn_dirty = true;
+        }
+        if armed {
+            WriteResult::Backpressured
+        } else {
+            WriteResult::Written
+        }
+    }
+
     fn stop_listening(state: &Rc<RefCell<Self>>) {
         let mut st = state.borrow_mut();
         let uv = st.uv;
@@ -746,9 +893,9 @@ impl UvPollState {
             }
         }
         st.callbacks = None;
-        if st.spare_fd >= 0 {
-            unsafe { libc::close(st.spare_fd) };
-            st.spare_fd = -1;
+        if is_valid_sock(st.spare_fd) {
+            unsafe { close_sock(st.spare_fd) };
+            st.spare_fd = INVALID_SOCK;
         }
     }
 }
@@ -775,9 +922,9 @@ fn apply_uv_flush_action(uv: &UvApi, handle: *mut c_void, no_read: bool, action:
 
 fn close_spare_fd(state: &Rc<RefCell<UvPollState>>) {
     let mut st = state.borrow_mut();
-    if st.spare_fd >= 0 {
-        unsafe { libc::close(st.spare_fd) };
-        st.spare_fd = -1;
+    if is_valid_sock(st.spare_fd) {
+        unsafe { close_sock(st.spare_fd) };
+        st.spare_fd = INVALID_SOCK;
     }
 }
 
@@ -809,32 +956,22 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
     let now = st.clock.tick((uv.now)(uv_loop));
 
     loop {
-        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
-        let mut addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-        let client_fd = libc::accept(
-            ctx.fd,
-            (&mut storage as *mut libc::sockaddr_storage).cast(),
-            &mut addr_len,
-        );
-        if client_fd < 0 {
-            let err = io::Error::last_os_error();
-            match err.raw_os_error() {
-                Some(libc::EMFILE | libc::ENFILE) if st.spare_fd >= 0 => {
-                    libc::close(st.spare_fd);
-                    let shed = libc::accept(ctx.fd, std::ptr::null_mut(), std::ptr::null_mut());
-                    if shed >= 0 {
-                        libc::close(shed);
-                    }
+        let (client_fd, peer_ip) = match accept_nonblock(ctx.fd) {
+            AcceptOutcome::Accepted { sock, peer_ip } => (sock, peer_ip),
+            AcceptOutcome::Emfile => {
+                if is_valid_sock(st.spare_fd) {
+                    close_sock(st.spare_fd);
+                    accept_and_discard(ctx.fd);
                     st.spare_fd = open_spare_fd();
                     continue;
                 }
-                Some(libc::ECONNABORTED | libc::EPROTO | libc::EINTR) => continue,
-                _ => break,
+                break;
             }
-        }
-        libc::fcntl(client_fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            AcceptOutcome::Retry => continue,
+            AcceptOutcome::WouldBlock => break,
+        };
         if st.cfg.max_connections > 0 && st.conns.len() >= st.cfg.max_connections {
-            libc::close(client_fd);
+            close_sock(client_fd);
             continue;
         }
 
@@ -842,22 +979,14 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
             Some(store) => match store.new_connection() {
                 Ok(c) => Some(c),
                 Err(_) => {
-                    libc::close(client_fd);
+                    close_sock(client_fd);
                     continue;
                 }
             },
             None => None,
         };
-        let peer_ip = peer_ip_from_storage(&storage);
 
-        let flags = libc::fcntl(client_fd, libc::F_GETFL, 0);
-        if flags >= 0 {
-            libc::fcntl(client_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-        set_nosigpipe_if_supported(client_fd);
-        if nodelay {
-            set_tcp_nodelay(client_fd);
-        }
+        configure_accepted_socket(client_fd, nodelay);
 
         // The slot is taken before libuv is handed the handle: a full slab then frees an
         // uninitialised handle, which libuv does not yet own.
@@ -867,13 +996,13 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
             poll_handle,
         }) else {
             free_handle(poll_handle, uv.poll_size);
-            libc::close(client_fd);
+            close_sock(client_fd);
             continue;
         };
-        if (uv.poll_init_socket)(uv_loop, poll_handle, client_fd) != 0 {
+        if (uv.poll_init_socket)(uv_loop, poll_handle, to_uv_os_sock(client_fd)) != 0 {
             st.conns.remove(conn_id);
             free_handle(poll_handle, uv.poll_size);
-            libc::close(client_fd);
+            close_sock(client_fd);
             continue;
         }
 
@@ -964,15 +1093,14 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                                         read_ended = true;
                                         break;
                                     } else {
-                                        let err = io::Error::last_os_error();
-                                        if err.kind() == io::ErrorKind::WouldBlock {
-                                            break;
+                                        match last_recv_error() {
+                                            RecvErrKind::WouldBlock => break,
+                                            RecvErrKind::Interrupted => continue,
+                                            RecvErrKind::Fatal => {
+                                                remove = true;
+                                                break;
+                                            }
                                         }
-                                        if err.kind() == io::ErrorKind::Interrupted {
-                                            continue;
-                                        }
-                                        remove = true;
-                                        break;
                                     }
                                 }
                             }
@@ -981,15 +1109,14 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                             read_ended = true;
                             break;
                         } else {
-                            let err = io::Error::last_os_error();
-                            if err.kind() == io::ErrorKind::WouldBlock {
-                                break;
+                            match last_recv_error() {
+                                RecvErrKind::WouldBlock => break,
+                                RecvErrKind::Interrupted => continue,
+                                RecvErrKind::Fatal => {
+                                    remove = true;
+                                    break;
+                                }
                             }
-                            if err.kind() == io::ErrorKind::Interrupted {
-                                continue;
-                            }
-                            remove = true;
-                            break;
                         }
                     }
                 } else {
@@ -1030,15 +1157,14 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                             read_ended = true;
                             break;
                         } else {
-                            let err = io::Error::last_os_error();
-                            if err.kind() == io::ErrorKind::WouldBlock {
-                                break;
+                            match last_recv_error() {
+                                RecvErrKind::WouldBlock => break,
+                                RecvErrKind::Interrupted => continue,
+                                RecvErrKind::Fatal => {
+                                    remove = true;
+                                    break;
+                                }
                             }
-                            if err.kind() == io::ErrorKind::Interrupted {
-                                continue;
-                            }
-                            remove = true;
-                            break;
                         }
                     }
                     has_buf_plaintext = conn.core.read_buf.len() > before_len;
@@ -1342,7 +1468,7 @@ unsafe extern "C" fn on_listener_close(handle: *mut c_void) {
         let data = (uv.handle_get_data)(handle);
         if !data.is_null() {
             let ctx = Box::from_raw(data as *mut ListenerCtx);
-            libc::close(ctx.fd);
+            close_sock(ctx.fd);
             drop(ctx);
         }
         free_handle(handle, uv.poll_size);
@@ -1354,7 +1480,7 @@ unsafe extern "C" fn on_client_close(handle: *mut c_void) {
         let data = (uv.handle_get_data)(handle);
         if !data.is_null() {
             let ctx = Box::from_raw(data as *mut ClientCtx);
-            libc::close(ctx.fd);
+            close_sock(ctx.fd);
             let callbacks = {
                 let mut st = ctx.state.borrow_mut();
                 st.read_ended.remove(&ctx.conn_id);

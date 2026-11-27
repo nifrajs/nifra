@@ -17,6 +17,7 @@ export interface NifraWs {
   subscribe(topic: string): void
   unsubscribe(topic: string): void
   getBufferedAmount?(): number
+  cork?(callback: () => void): void
   data: unknown
   readonly raw: unknown
 }

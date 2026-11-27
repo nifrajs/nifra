@@ -184,6 +184,7 @@ pub struct ParsedRequest<'a> {
     pub over_max_body: bool,
     pub head_len: usize,
     pub body: Cow<'a, [u8]>,
+    pub trailers: Vec<(String, String)>,
     pub total_bytes: usize,
 }
 
@@ -313,13 +314,55 @@ pub fn is_valid_header_value(val: &str) -> bool {
 
 enum ChunkedStatus {
     Incomplete,
-    Complete { body: Vec<u8>, consumed: usize },
+    Complete {
+        body: Vec<u8>,
+        consumed: usize,
+        trailers: Vec<(String, String)>,
+    },
 }
 
 /// Longest chunk-size line (hex size plus extensions) a request may carry.
 const MAX_CHUNK_LINE: usize = 4096;
 /// Longest trailer section a chunked request may carry.
 const MAX_CHUNK_TRAILERS: usize = 16 * 1024;
+
+fn push_trailer_line(line: &[u8], out: &mut Vec<(String, String)>) -> Result<(), ParseError> {
+    let Some(colon) = memchr::memchr(b':', line) else {
+        return Err(ParseError::Malformed);
+    };
+    let name_bytes = &line[..colon];
+    if name_bytes.is_empty()
+        || !name_bytes
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    {
+        return Err(ParseError::Malformed);
+    }
+    let val_bytes = trim_ows(&line[colon + 1..]);
+    if !val_bytes
+        .iter()
+        .all(|&b| b == b'\t' || (0x20..=0x7e).contains(&b) || b >= 0x80)
+    {
+        return Err(ParseError::Malformed);
+    }
+    let name = std::str::from_utf8(name_bytes)
+        .map_err(|_| ParseError::Malformed)?
+        .to_ascii_lowercase();
+    if matches!(
+        name.as_str(),
+        "transfer-encoding"
+            | "content-length"
+            | "host"
+            | "trailer"
+            | "te"
+            | "connection"
+            | "upgrade"
+    ) {
+        return Err(ParseError::Malformed);
+    }
+    out.push((name, latin1(val_bytes)));
+    Ok(())
+}
 
 /// Where a chunked body decode stopped, so the next read continues instead of starting over.
 ///
@@ -332,6 +375,7 @@ pub struct ChunkResume {
     /// Offset, from the end of the head, of the next chunk-size line.
     pos: usize,
     body: Vec<u8>,
+    trailers: Vec<(String, String)>,
     /// Wire bytes spent on size lines, extensions, CRLFs and trailers rather than payload.
     framing: usize,
     examined: u64,
@@ -483,6 +527,7 @@ fn scan_trailers(
             return Ok(ChunkedStatus::Complete {
                 body: std::mem::take(&mut resume.body),
                 consumed,
+                trailers: std::mem::take(&mut resume.trailers),
             });
         }
         let from = scan.searched.min(tail.len());
@@ -500,6 +545,7 @@ fn scan_trailers(
         if t_lf == 0 || tail[t_lf - 1] != b'\r' {
             return Err(ParseError::Malformed);
         }
+        push_trailer_line(&tail[..t_lf - 1], &mut resume.trailers)?;
         scan.line_start += t_lf + 1;
         scan.searched = 0;
         if scan.line_start - scan.start > MAX_CHUNK_TRAILERS {
@@ -733,16 +779,20 @@ pub fn parse_http1_resume<'a>(
     }
 
     let hard_cap = limits.max_body_size.saturating_add(limits.oversize_window);
-    let (body, total_bytes) = if is_chunked {
+    let (body, trailers, total_bytes) = if is_chunked {
         resume.active = true;
         let framing_cap = limits.max_header_bytes.saturating_add(hard_cap / 8);
         match decode_chunked(&buf[head_len..], hard_cap, framing_cap, resume)? {
             ChunkedStatus::Incomplete => return Ok(ParseStatus::Incomplete),
-            ChunkedStatus::Complete { body, consumed } => {
+            ChunkedStatus::Complete {
+                body,
+                consumed,
+                trailers,
+            } => {
                 let total = head_len
                     .checked_add(consumed)
                     .ok_or(ParseError::PayloadTooLarge)?;
-                (Cow::Owned(body), total)
+                (Cow::Owned(body), trailers, total)
             }
         }
     } else {
@@ -757,7 +807,7 @@ pub fn parse_http1_resume<'a>(
         if buf.len() < total {
             return Ok(ParseStatus::Incomplete);
         }
-        (Cow::Borrowed(&buf[head_len..total]), total)
+        (Cow::Borrowed(&buf[head_len..total]), Vec::new(), total)
     };
 
     let over_max_body = body.len() > limits.max_body_size;
@@ -778,6 +828,7 @@ pub fn parse_http1_resume<'a>(
         over_max_body,
         head_len,
         body,
+        trailers,
         total_bytes,
     }))
 }
@@ -806,8 +857,13 @@ pub struct H1BodyDecoder(H1BodyDecoderInner);
 
 #[derive(Debug)]
 enum H1BodyDecoderInner {
-    Fixed { remaining: u64 },
-    Chunked { phase: ChunkStreamPhase },
+    Fixed {
+        remaining: u64,
+    },
+    Chunked {
+        phase: ChunkStreamPhase,
+        trailers: Vec<(String, String)>,
+    },
 }
 
 impl H1BodyDecoder {
@@ -820,13 +876,21 @@ impl H1BodyDecoder {
     pub fn chunked() -> Self {
         Self(H1BodyDecoderInner::Chunked {
             phase: ChunkStreamPhase::SizeLine,
+            trailers: Vec::new(),
         })
     }
 
     pub fn is_done(&self) -> bool {
         match &self.0 {
             H1BodyDecoderInner::Fixed { remaining } => *remaining == 0,
-            H1BodyDecoderInner::Chunked { phase } => *phase == ChunkStreamPhase::Done,
+            H1BodyDecoderInner::Chunked { phase, .. } => *phase == ChunkStreamPhase::Done,
+        }
+    }
+
+    pub fn take_trailers(&mut self) -> Vec<(String, String)> {
+        match &mut self.0 {
+            H1BodyDecoderInner::Fixed { .. } => Vec::new(),
+            H1BodyDecoderInner::Chunked { trailers, .. } => std::mem::take(trailers),
         }
     }
 
@@ -850,7 +914,7 @@ impl H1BodyDecoder {
                     done: *remaining == 0,
                 })
             }
-            H1BodyDecoderInner::Chunked { phase } => {
+            H1BodyDecoderInner::Chunked { phase, trailers } => {
                 let mut pos = 0usize;
                 loop {
                     match *phase {
@@ -956,6 +1020,7 @@ impl H1BodyDecoder {
                             if *used > MAX_CHUNK_TRAILERS {
                                 return Err(ParseError::Malformed);
                             }
+                            push_trailer_line(&rest[..rel_lf - 1], trailers)?;
                             pos += rel_lf + 1;
                         }
                     }

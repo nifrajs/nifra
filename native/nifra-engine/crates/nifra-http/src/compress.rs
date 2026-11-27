@@ -1,4 +1,4 @@
-//! Native HTTP response compression (`br`, `gzip`, `deflate`) with Accept-Encoding negotiation
+//! Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) with Accept-Encoding negotiation
 //! and compressible media-type filtering.
 
 use std::io::Write;
@@ -8,6 +8,7 @@ use flate2::Compression;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionEncoding {
+    Zstd,
     Brotli,
     Gzip,
     Deflate,
@@ -17,6 +18,7 @@ impl CompressionEncoding {
     #[inline]
     pub const fn header_value(self) -> &'static str {
         match self {
+            Self::Zstd => "zstd",
             Self::Brotli => "br",
             Self::Gzip => "gzip",
             Self::Deflate => "deflate",
@@ -24,14 +26,16 @@ impl CompressionEncoding {
     }
 }
 
-/// Select the best supported encoding from an `Accept-Encoding` header value (`br` > `gzip` > `deflate`).
+/// Select the best supported encoding from an `Accept-Encoding` header value (`zstd`/`br` > `gzip` > `deflate`).
 pub fn negotiate_encoding(
     accept_encoding: Option<&str>,
     allow_br: bool,
     allow_gzip: bool,
     allow_deflate: bool,
+    allow_zstd: bool,
 ) -> Option<CompressionEncoding> {
     let raw = accept_encoding?;
+    let mut q_zstd = -1.0f32;
     let mut q_br = -1.0f32;
     let mut q_gzip = -1.0f32;
     let mut q_deflate = -1.0f32;
@@ -67,7 +71,9 @@ pub fn negotiate_encoding(
         if !valid {
             continue;
         }
-        if token.eq_ignore_ascii_case("br") {
+        if token.eq_ignore_ascii_case("zstd") {
+            q_zstd = q_zstd.max(q);
+        } else if token.eq_ignore_ascii_case("br") {
             q_br = q_br.max(q);
         } else if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
             q_gzip = q_gzip.max(q);
@@ -93,6 +99,7 @@ pub fn negotiate_encoding(
 
     let candidates = [
         (CompressionEncoding::Brotli, eff(q_br, allow_br)),
+        (CompressionEncoding::Zstd, eff(q_zstd, allow_zstd)),
         (CompressionEncoding::Gzip, eff(q_gzip, allow_gzip)),
         (CompressionEncoding::Deflate, eff(q_deflate, allow_deflate)),
     ];
@@ -148,6 +155,9 @@ pub fn compress_bytes(enc: CompressionEncoding, input: &[u8]) -> Option<Vec<u8>>
     }
     let mut out = Vec::with_capacity(input.len() / 2 + 32);
     match enc {
+        CompressionEncoding::Zstd => {
+            out = zstd::bulk::compress(input, 3).ok()?;
+        }
         CompressionEncoding::Brotli => {
             let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 4, 22);
             writer.write_all(input).ok()?;
@@ -175,18 +185,25 @@ mod tests {
     #[test]
     fn negotiates_quality_and_priority() {
         assert_eq!(
-            negotiate_encoding(Some("gzip, deflate, br"), true, true, true),
+            negotiate_encoding(Some("gzip, deflate, br"), true, true, true, true),
             Some(CompressionEncoding::Brotli)
         );
         assert_eq!(
-            negotiate_encoding(Some("gzip;q=1.0, br;q=0.5"), true, true, true),
+            negotiate_encoding(Some("zstd;q=1.0, br;q=0.8"), true, true, true, true),
+            Some(CompressionEncoding::Zstd)
+        );
+        assert_eq!(
+            negotiate_encoding(Some("gzip;q=1.0, br;q=0.5"), true, true, true, true),
             Some(CompressionEncoding::Gzip)
         );
         assert_eq!(
-            negotiate_encoding(Some("br;q=0, gzip;q=0.8"), true, true, true),
+            negotiate_encoding(Some("br;q=0, gzip;q=0.8"), true, true, true, true),
             Some(CompressionEncoding::Gzip)
         );
-        assert_eq!(negotiate_encoding(Some("identity"), true, true, true), None);
+        assert_eq!(
+            negotiate_encoding(Some("identity"), true, true, true, true),
+            None
+        );
     }
 
     #[test]
@@ -225,6 +242,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(df_out, repetitive);
+
+        let zstd_bytes = compress_bytes(CompressionEncoding::Zstd, &repetitive).unwrap();
+        let zstd_out = zstd::bulk::decompress(&zstd_bytes, repetitive.len() * 2).unwrap();
+        assert_eq!(zstd_out, repetitive);
 
         assert!(compress_bytes(CompressionEncoding::Brotli, b"hi").is_none());
     }

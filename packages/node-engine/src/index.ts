@@ -7,10 +7,11 @@ export type {
   FetchHandler,
   Http2Options,
   NodeStopOptions,
+  ProbeResult,
   ServeOptions,
   TlsOptions,
   TlsSniEntry,
   WsDeflateOptions,
 } from "./options.ts"
 export { bodyCeiling, mayServeSockets, payloadCeiling } from "./options.ts"
-export { serve } from "./serve.ts"
+export { isNativeAvailable, probe, serve } from "./serve.ts"

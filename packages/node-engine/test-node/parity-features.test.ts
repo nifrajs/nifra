@@ -10,12 +10,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { type ConnectionOptions, connect as tlsConnect } from "node:tls"
-import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib"
+import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { WebSocket as WsClient } from "ws"
 import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
-import { serve, serveStatic } from "../src/index.ts"
+import { isNativeAvailable, probe, serve, serveStatic } from "../src/index.ts"
 
 const fingerprintOf = (pem: string): string => new X509Certificate(pem).fingerprint256
 
@@ -609,4 +609,160 @@ test("releasing an unconsumed streaming request body terminates detached readers
     sock.destroy()
     await running.stop({ drainMs: 50 })
   }
+})
+
+test("native zstd compression negotiates and compresses payloads", async () => {
+  const big = "zstd-compressible-payload-".repeat(120)
+  const app = server().get("/zstd", () => ({ text: big }))
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    compression: { zstd: true, brotli: false, gzip: false, deflate: false, minBytes: 128 },
+  })
+  try {
+    const res = await new Promise<{ ce: string | undefined; raw: Buffer }>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          port: running.port,
+          hostname: "127.0.0.1",
+          path: "/zstd",
+          headers: { "accept-encoding": "zstd" },
+        },
+        (r) => {
+          const chunks: Buffer[] = []
+          r.on("data", (c) => chunks.push(c))
+          r.on("end", () =>
+            resolve({
+              ce:
+                typeof r.headers["content-encoding"] === "string"
+                  ? r.headers["content-encoding"]
+                  : undefined,
+              raw: Buffer.concat(chunks),
+            }),
+          )
+        },
+      )
+      req.on("error", reject)
+      req.end()
+    })
+    assert.equal(res.ce, "zstd")
+    assert.equal(JSON.parse(zstdDecompressSync(res.raw).toString("utf8")).text, big)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("HTTP/1.1 chunked and HTTP/2 request trailers are exposed via platform.trailers", async () => {
+  const handler = {
+    async fetch(req: Request, platform?: { readonly trailers?: Record<string, string> }) {
+      const text = await req.text()
+      return Response.json({ text, trailers: platform?.trailers ?? {} })
+    },
+  }
+  const running = await serve(handler, { port: 0, hostname: "127.0.0.1", http2: true })
+  try {
+    const h1Wire = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+        sock.write(
+          "POST /trail HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\nX-Checksum: abc123\r\n\r\n",
+        )
+      })
+      const chunks: Buffer[] = []
+      sock.on("data", (c) => chunks.push(c))
+      sock.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      sock.on("error", reject)
+    })
+    const h1Json = JSON.parse(h1Wire.slice(h1Wire.indexOf("\r\n\r\n") + 4))
+    assert.deepEqual(h1Json, { text: "hello", trailers: { "x-checksum": "abc123" } })
+
+    const h2 = http2Connect(`http://127.0.0.1:${running.port}`)
+    try {
+      const h2Body = await new Promise<string>((resolve, reject) => {
+        const stream = h2.request(
+          { ":method": "POST", ":path": "/trail", trailer: "x-digest" },
+          { waitForTrailers: true },
+        )
+        stream.on("wantTrailers", () => {
+          stream.sendTrailers({ "x-digest": "sha256=ok" })
+        })
+        const chunks: Buffer[] = []
+        stream.on("data", (c) => chunks.push(c))
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+        stream.on("error", reject)
+        stream.end("payload")
+      })
+      assert.deepEqual(JSON.parse(h2Body), {
+        text: "payload",
+        trailers: { "x-digest": "sha256=ok" },
+      })
+    } finally {
+      h2.close()
+    }
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("ws.cork batches outbound WebSocket frames cleanly", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/cork", {
+      message(ws, data) {
+        assert.equal(typeof ws.cork, "function")
+        ws.cork?.(() => {
+          ws.send(`${String(data)}-1`)
+          ws.send(`${String(data)}-2`)
+        })
+      },
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const received = await new Promise<string[]>((resolve, reject) => {
+      const out: string[] = []
+      const client = new WsClient(`ws://127.0.0.1:${running.port}/cork`)
+      client.once("open", () => client.send("hi"))
+      client.on("message", (d) => {
+        out.push(d.toString())
+        if (out.length === 2) {
+          client.close()
+          resolve(out)
+        }
+      })
+      client.once("error", reject)
+    })
+    assert.deepEqual(received, ["hi-1", "hi-2"])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("probe(), isNativeAvailable(), and graceful fallback: true to @nifrajs/node", async () => {
+  const info = probe()
+  assert.equal(info.ok, true)
+  assert.equal(isNativeAvailable(), true)
+  assert.equal(info.capabilities.http2, true)
+  assert.equal(info.capabilities.websocket, true)
+
+  const app = server().get("/fb", () => ({ fallback: true }))
+  const prev = process.env.NIFRA_RUST_ENGINE_PATH
+  process.env.NIFRA_RUST_ENGINE_PATH = "/nonexistent-nifra-addon-for-fallback-test.node"
+  try {
+    assert.equal(isNativeAvailable(), false)
+    assert.equal(probe().ok, false)
+    assert.throws(() => serve(app, { port: 0, hostname: "127.0.0.1" }), TypeError)
+
+    const running = await serve(app, { port: 0, hostname: "127.0.0.1", fallback: true })
+    try {
+      const res = await fetch(`http://127.0.0.1:${running.port}/fb`)
+      assert.equal(res.status, 200)
+      assert.deepEqual(await res.json(), { fallback: true })
+      assert.throws(() => running.reloadTls(), /fallback/)
+    } finally {
+      await running.stop({ drainMs: 50 })
+    }
+  } finally {
+    if (prev === undefined) delete process.env.NIFRA_RUST_ENGINE_PATH
+    else process.env.NIFRA_RUST_ENGINE_PATH = prev
+  }
+  assert.equal(isNativeAvailable(), true)
 })

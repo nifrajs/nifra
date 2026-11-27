@@ -448,3 +448,36 @@ test("explicit ticketKeys survive a cert-only reloadTls across live and replacem
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("sharedListener supports ephemeral port 0 and rolling restarts across workers", async () => {
+  const run = new Run({ PORT: "0", WORKERS: "2", SHARED_LISTENER: "1" })
+  try {
+    const ready = await run.nth("ready")
+    const port = ready.port
+    assert.equal(typeof port, "number")
+    if (typeof port !== "number") throw new Error("expected numeric port")
+    assert.ok(port > 0)
+
+    const before = pidsOf(ready)
+    assert.equal(before.length, 2)
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(`http://127.0.0.1:${port}/pid`)
+      assert.equal(res.status, 200)
+      const body: unknown = await res.json()
+      const pid = typeof body === "object" && body !== null ? Reflect.get(body, "pid") : undefined
+      assert.ok(typeof pid === "number" && before.includes(pid))
+    }
+
+    run.child.kill("SIGUSR2")
+    const restarted = await run.nth("restarted")
+    const after = pidsOf(restarted)
+    assert.equal(after.length, 2)
+    for (const oldPid of before) assert.ok(!after.includes(oldPid))
+
+    const resAfter = await fetch(`http://127.0.0.1:${port}/pid`)
+    assert.equal(resAfter.status, 200)
+  } finally {
+    run.child.kill("SIGTERM")
+    await run.exited
+  }
+})

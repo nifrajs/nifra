@@ -7,14 +7,14 @@
 
 #[cfg(target_os = "linux")]
 pub mod epoll;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod uv;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use sys::conn_slot;
 
 use std::collections::HashMap;
@@ -31,6 +31,7 @@ const READ_BUF_SIZE: usize = 16 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
     Epoll,
+    IoUring,
     LibuvPoll,
     Mio,
 }
@@ -39,6 +40,7 @@ impl TransportKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Epoll => "epoll",
+            Self::IoUring => "io_uring",
             Self::LibuvPoll => "libuv-poll",
             Self::Mio => "mio",
         }
@@ -87,13 +89,20 @@ impl Default for SocketConfig {
     }
 }
 
-/// The transport the engine will actually run: the epoll loop on Linux unless
+/// The transport the engine will actually run: `io_uring` when requested via
+/// `NIFRA_ENGINE_TRANSPORT=uring` and supported by the kernel, `epoll` on Linux unless
 /// `NIFRA_ENGINE_TRANSPORT=uv` asks for libuv's poller, and libuv's poller elsewhere.
 pub fn detect_transport() -> TransportKind {
     #[cfg(target_os = "linux")]
     {
         match std::env::var("NIFRA_ENGINE_TRANSPORT").as_deref() {
             Ok("uv") => return TransportKind::LibuvPoll,
+            Ok("uring") => {
+                if uring::probe_uring_support(uring::UringConfig::default()).unwrap_or(false) {
+                    return TransportKind::IoUring;
+                }
+                return TransportKind::Epoll;
+            }
             _ => return TransportKind::Epoll,
         }
     }
@@ -129,6 +138,16 @@ pub fn bind_tcp_listener(
         }
     }
     Err(failure)
+}
+
+/// Stub guard on non-Unix platforms (where filesystem-bound Unix domain sockets are not used).
+#[cfg(not(unix))]
+pub struct UnixSocketGuard;
+
+#[cfg(not(unix))]
+impl UnixSocketGuard {
+    pub fn disarm(&mut self) {}
+    pub fn cleanup_now(&mut self) {}
 }
 
 /// Bound non-blocking Unix domain socket listener paired with an ownership-checked unlink guard.
