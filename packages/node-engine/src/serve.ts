@@ -17,21 +17,25 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   activateAsyncContextFrame,
+  createStaticResolver,
   enableNodeDirect,
   errorReporterOf,
   hostPolicyOf,
+  installFastResponse,
   lifecycleOf,
   type NodeServeOutcome,
   type NodeStopOptions,
   nodeOutcomeRuntime,
   resolveRequestHost,
   resolveRequestTarget,
+  type StaticRequestResolver,
 } from "@nifrajs/node/transport"
 import { declarativeRoutes, isServerView } from "./generated/declarative-routes.ts"
 import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
 import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 import {
   bodyCeiling,
+  type CompressionOptions,
   type EngineServer,
   type EngineSocket,
   type FetchHandler,
@@ -40,8 +44,11 @@ import {
   payloadCeiling,
   type ServeOptions,
   type TlsOptions,
+  type TlsSniEntry,
   type WsDeflateOptions,
 } from "./options.ts"
+
+const INSTALL_NATIVE_PUBLISH = Symbol.for("@nifrajs/core/install-native-publish")
 
 type WsUpgrade = Extract<WsUpgradeOutcome, { readonly kind: "upgrade" }>
 
@@ -62,10 +69,14 @@ const FLAG_OVER_MAX_BODY = 1 << 9
 const FLAG_LARGE_BODY = 1 << 10
 const FLAG_CHUNKED = 1 << 12
 const FLAG_HAS_CT = 1 << 13
+const FLAG_STREAM_BODY = 1 << 14
 
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 const MAX_NATIVE_LENGTH = 0xffff_ffff
+const MAX_CONTENT_LENGTH = Number.MAX_SAFE_INTEGER
+const STREAM_BODY_HIGH_WATER = 256 * 1024
+const STREAM_BODY_LOW_WATER = 128 * 1024
 const DEFAULT_MAX_BODY_SIZE = 1_048_576
 const MAX_BUFFERED_RESPONSE_BYTES = 2 * 1024 * 1024
 const STREAM_CHUNK_BYTES = 256 * 1024
@@ -94,6 +105,14 @@ interface RustBatchBuffers {
   readonly outSlotU32s: number
 }
 
+interface RustTlsSniEntry {
+  readonly serverName: string
+  readonly cert: string | undefined
+  readonly key: string | undefined
+  readonly certFileName: string | undefined
+  readonly keyFileName: string | undefined
+}
+
 interface RustTlsOptions {
   readonly cert: string | undefined
   readonly key: string | undefined
@@ -110,10 +129,20 @@ interface RustTlsOptions {
   readonly ciphers: string | undefined
   readonly ciphersuites: string | undefined
   readonly ecdhCurve: string | undefined
+  readonly serverNames: readonly RustTlsSniEntry[] | undefined
   readonly ticketKeys: Buffer | undefined
 }
 
+interface RustCompressionOptions {
+  readonly enabled?: boolean
+  readonly brotli?: boolean
+  readonly gzip?: boolean
+  readonly deflate?: boolean
+  readonly minBytes?: number
+}
+
 interface RustWsDeflateOptions {
+  enabled?: boolean
   serverNoContextTakeover?: boolean
   clientNoContextTakeover?: boolean
   serverMaxWindowBits?: number
@@ -130,18 +159,34 @@ interface RustUvServer {
     onWritable?: ((reqId: number) => void) | null,
     onAborted?: ((reqId: number) => void) | null,
   ): void
+  setReqBodyCallback(
+    onReqBody?: ((reqId: number, chunk: Buffer | null, isLast: boolean) => void) | null,
+  ): void
+  pauseRequestBody(reqId: number): boolean
+  resumeRequestBody(reqId: number): boolean
   setWsCallbacks(
     onOpen?: ((socketId: number) => void) | null,
     onMessage?: ((socketId: number, data: string | ArrayBuffer) => void) | null,
     onClose?: ((socketId: number, code: number, reason: string) => void) | null,
+    onDrain?: ((socketId: number) => void) | null,
   ): void
-  upgradeToWebSocket(reqId: number): number
+  upgradeToWebSocket(reqId: number, deflateOverride?: RustWsDeflateOptions | null): number
   wsSend(socketId: number, payload: Buffer, isBinary: boolean): boolean
   wsSendText(socketId: number, text: string): boolean
   wsClose(socketId: number, code: number, reason?: string | null): boolean
   wsGetHeaders(socketId: number): string[]
   wsGetQuery(socketId: number): string
   wsGetRemoteAddress(socketId: number): string | null
+  wsGetBufferedAmount(socketId: number): number
+  wsSubscribe(socketId: number, topic: string): boolean
+  wsUnsubscribe(socketId: number, topic: string): boolean
+  wsPublish(
+    topic: string,
+    payload: Buffer,
+    isBinary: boolean,
+    excludeSocketId?: number | null,
+  ): number
+  wsPublishText(topic: string, text: string, excludeSocketId?: number | null): number
   getBatchBuffers(): RustBatchBuffers
   getMethod(reqId: number): string | null
   getHeader(reqId: number, name: string): string | null
@@ -149,6 +194,7 @@ interface RustUvServer {
   getBody(reqId: number): Buffer | null
   getRemoteAddress(reqId: number): string | null
   setStaticRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
+  setStaticPostRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
   setParamRoute(prefix: string, suffix: string, status: number, flatHeaders: string[]): void
   prepareResponse(status: number, flatHeaders: string[]): number
   flushResponses(count: number): void
@@ -169,6 +215,8 @@ interface RustUvServer {
   end(reqId: number, chunk?: Buffer | null): boolean
   abortStream(reqId: number): boolean
   reloadTls(tls: RustTlsOptions): void
+  addServerName(entry: RustTlsSniEntry): void
+  removeServerName(serverName: string): boolean
   hasUnsentOutput(): boolean
   stopListening(): void
   close(): void
@@ -196,6 +244,11 @@ interface RustAddon {
       readonly headersTimeoutMs?: number | undefined
       readonly wsMaxMessageSize?: number | undefined
       readonly wsMaxLifetimeMs?: number | undefined
+      readonly wsMaxBackpressure?: number | undefined
+      readonly wsCloseOnBackpressureLimit?: boolean | undefined
+      readonly streamRequestBodies?: boolean | undefined
+      readonly compression?: RustCompressionOptions | undefined
+      readonly unixPath?: string | undefined
       readonly wsDeflate?: RustWsDeflateOptions | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
@@ -256,6 +309,22 @@ function decryptKeyIfNeeded(
   return { key: exported, keyFileName: undefined }
 }
 
+function toRustTlsSni(entry: TlsSniEntry): RustTlsSniEntry {
+  if (typeof entry.serverName !== "string" || entry.serverName.length === 0) {
+    throw new TypeError("@nifrajs/node-engine: `tls.serverNames[].serverName` must be non-empty")
+  }
+  const cert = pemToString(entry.cert)
+  const rawKey = pemToString(entry.key)
+  const { key, keyFileName } = decryptKeyIfNeeded(rawKey, entry.key_file_name, entry.passphrase)
+  return {
+    serverName: entry.serverName,
+    cert,
+    key,
+    certFileName: entry.cert_file_name,
+    keyFileName,
+  }
+}
+
 function toRustTls(tls: TlsOptions): RustTlsOptions {
   if (tls.requestCert !== undefined && typeof tls.requestCert !== "boolean") {
     throw new TypeError("@nifrajs/node-engine: `tls.requestCert` must be a boolean")
@@ -286,11 +355,15 @@ function toRustTls(tls: TlsOptions): RustTlsOptions {
   if (tls.ecdhCurve !== undefined && typeof tls.ecdhCurve !== "string") {
     throw new TypeError("@nifrajs/node-engine: `tls.ecdhCurve` must be a string")
   }
+  if (tls.serverNames !== undefined && !Array.isArray(tls.serverNames)) {
+    throw new TypeError("@nifrajs/node-engine: `tls.serverNames` must be an array")
+  }
   const cert = pemToString(tls.cert)
   const rawKey = pemToString(tls.key)
   const { key, keyFileName } = decryptKeyIfNeeded(rawKey, tls.key_file_name, tls.passphrase)
   const ca = pemBundleToString(tls.ca)
   const crl = pemBundleToString(tls.crl)
+  const serverNames = tls.serverNames?.map(toRustTlsSni)
   const ticketKeys = toTicketBuffer(tls.ticketKeys)
   return {
     cert,
@@ -308,8 +381,58 @@ function toRustTls(tls: TlsOptions): RustTlsOptions {
     ciphers: tls.ciphers,
     ciphersuites: tls.ciphersuites,
     ecdhCurve: tls.ecdhCurve,
+    serverNames,
     ticketKeys,
   }
+}
+
+function toRustCompression(
+  opt: boolean | CompressionOptions | undefined,
+): RustCompressionOptions | undefined {
+  if (opt === undefined || opt === false) return undefined
+  if (opt === true) return { enabled: true }
+  if (typeof opt !== "object" || opt === null) {
+    throw new TypeError("@nifrajs/node-engine: `compression` must be a boolean or options object")
+  }
+  const out: {
+    enabled?: boolean
+    brotli?: boolean
+    gzip?: boolean
+    deflate?: boolean
+    minBytes?: number
+  } = { enabled: opt.enabled ?? true }
+  if (opt.brotli !== undefined) {
+    if (typeof opt.brotli !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `compression.brotli` must be a boolean")
+    }
+    out.brotli = opt.brotli
+  }
+  if (opt.gzip !== undefined) {
+    if (typeof opt.gzip !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `compression.gzip` must be a boolean")
+    }
+    out.gzip = opt.gzip
+  }
+  if (opt.deflate !== undefined) {
+    if (typeof opt.deflate !== "boolean") {
+      throw new TypeError("@nifrajs/node-engine: `compression.deflate` must be a boolean")
+    }
+    out.deflate = opt.deflate
+  }
+  if (opt.minBytes !== undefined) {
+    if (
+      typeof opt.minBytes !== "number" ||
+      !Number.isSafeInteger(opt.minBytes) ||
+      opt.minBytes < 0 ||
+      opt.minBytes > MAX_NATIVE_LENGTH
+    ) {
+      throw new TypeError(
+        "@nifrajs/node-engine: `compression.minBytes` must be a non-negative integer below 2^32",
+      )
+    }
+    out.minBytes = opt.minBytes
+  }
+  return out
 }
 
 function toRustWsDeflate(
@@ -583,7 +706,7 @@ function declaredContentLength(headers: HeaderRecord | undefined): number | unde
   for (const [name, value] of Object.entries(headers)) {
     if (name.length !== 14 || name.toLowerCase() !== "content-length") continue
     const text = typeof value === "string" ? value : value?.[0]
-    if (text === undefined || !/^\d{1,15}$/.test(text)) return undefined
+    if (text === undefined || !/^\d{1,20}$/.test(text)) return undefined
     return Number(text)
   }
   return undefined
@@ -594,6 +717,33 @@ function parseJsonBytes(bytes: Uint8Array): unknown {
   return JSON.parse(
     Buffer.from(bytes.buffer, bytes.byteOffset + skip, bytes.byteLength - skip).toString("utf8"),
   )
+}
+
+interface ReqBodyStreamState {
+  controller?: ReadableStreamDefaultController<Uint8Array> | undefined
+  readonly queue: Uint8Array[]
+  queuedBytes: number
+  paused: boolean
+  ended: boolean
+  cancelled: boolean
+  stream?: ReadableStream<Uint8Array> | undefined
+  waiters: Array<(done: boolean, error?: Error) => void>
+}
+
+function terminateReqBodyStream(state: ReqBodyStreamState, err: Error): void {
+  state.ended = true
+  state.cancelled = true
+  state.queue.length = 0
+  state.queuedBytes = 0
+  if (state.controller !== undefined) {
+    try {
+      state.controller.error(err)
+    } catch {
+      // already errored or closed
+    }
+  }
+  const waiters = state.waiters.splice(0, state.waiters.length)
+  for (const wake of waiters) wake(true, err)
 }
 
 /** Request view backed by the zero-copy `inData` slice with lazy FFI fallback for headers/bodies. */
@@ -615,6 +765,7 @@ class RustBatchSource {
   private readonly bodyLen: number
   private bodyText: string | null
   private bodyBytes: Uint8Array | null | undefined
+  private streamState: ReqBodyStreamState | undefined
   /** The request's first `Content-Type`: `null` when it had none, `undefined` when not carried (ask the engine). */
   private readonly contentType: string | null | undefined
   private peer: string | undefined
@@ -650,6 +801,16 @@ class RustBatchSource {
     this.bodyText = bodyText
     this.bodyBytes = bodyBytes
     this.contentType = contentType
+    if ((flags & FLAG_STREAM_BODY) !== 0) {
+      this.streamState = {
+        queue: [],
+        queuedBytes: 0,
+        paused: false,
+        ended: false,
+        cancelled: false,
+        waiters: [],
+      }
+    }
   }
 
   get requestId(): number {
@@ -660,13 +821,63 @@ class RustBatchSource {
     return (this.flags & FLAG_IS_H2) !== 0
   }
 
+  get isStreamingBody(): boolean {
+    return this.streamState !== undefined
+  }
+
+  pushBodyChunk(chunk: Buffer | null, isLast: boolean): void {
+    const state = this.streamState
+    if (state === undefined || state.ended || state.cancelled) return
+    if (chunk !== null && chunk.byteLength > 0) {
+      const copy = new Uint8Array(chunk.byteLength)
+      copy.set(chunk)
+      if (state.controller !== undefined) {
+        state.controller.enqueue(copy)
+        if ((state.controller.desiredSize ?? 1) <= 0 && !state.paused && this.id >= 0) {
+          state.paused = true
+          this.server.pauseRequestBody(this.id)
+        }
+      } else {
+        state.queue.push(copy)
+        state.queuedBytes += copy.byteLength
+        if (state.queuedBytes >= STREAM_BODY_HIGH_WATER && !state.paused && this.id >= 0) {
+          state.paused = true
+          this.server.pauseRequestBody(this.id)
+        }
+      }
+    }
+    if (isLast) {
+      state.ended = true
+      if (state.controller !== undefined) {
+        state.controller.close()
+      }
+    }
+    if (state.waiters.length > 0 && (state.queue.length > 0 || state.ended)) {
+      const waiters = state.waiters.splice(0, state.waiters.length)
+      for (const wake of waiters) wake(state.ended)
+    }
+  }
+
   release(): void {
+    const reqId = this.id
     this.id = -1
+    const state = this.streamState
+    if (state !== undefined && !state.ended) {
+      if (state.paused && reqId >= 0) {
+        state.paused = false
+        this.server.resumeRequestBody(reqId)
+      }
+      terminateReqBodyStream(state, new Error("Request stream released"))
+    }
   }
 
   abort(): void {
     if (this.aborted) return
     this.aborted = true
+    const state = this.streamState
+    if (state !== undefined && !state.ended) {
+      terminateReqBodyStream(state, new Error("Request aborted"))
+    }
     this.controller?.abort()
     this.onAbort?.()
     this.onWritable?.()
@@ -691,21 +902,22 @@ class RustBatchSource {
   }
 
   header(name: string): string | null {
-    if (name === "content-type" && this.contentType !== undefined) return this.contentType
-    if (name === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
-      if ((this.flags & FLAG_HAS_BODY) !== 0) return String(this.bodyLen)
-    }
-    if (name === "transfer-encoding") {
-      return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
-    }
-    const lower = name.toLowerCase()
+    const lower =
+      name === "content-type" || name === "content-length" || name === "transfer-encoding"
+        ? name
+        : name.toLowerCase()
+    if (lower === "content-type" && this.contentType !== undefined) return this.contentType
     if (lower === "transfer-encoding") {
       return (this.flags & FLAG_CHUNKED) !== 0 ? "chunked" : null
     }
     if (lower === "content-length" && (this.flags & FLAG_CHUNKED) === 0) {
-      if ((this.flags & FLAG_HAS_BODY) !== 0) return String(this.bodyLen)
+      if ((this.flags & FLAG_STREAM_BODY) !== 0) {
+        return this.id >= 0 ? this.server.getHeader(this.id, "content-length") : null
+      }
+      if ((this.flags & FLAG_HAS_BODY) !== 0) {
+        return String(this.bodyLen)
+      }
     }
-    if (lower === "content-type" && this.contentType !== undefined) return this.contentType
     if (this.id < 0) return null
     return this.server.getHeader(this.id, lower)
   }
@@ -738,7 +950,81 @@ class RustBatchSource {
     return this.bodyBytes
   }
 
+  private async drainStreamBytes(): Promise<Uint8Array> {
+    const state = this.streamState
+    if (state === undefined) return this.toBytes() ?? NO_BODY_BYTES
+    const parts: Uint8Array[] = []
+    for (;;) {
+      while (state.queue.length > 0) {
+        const chunk = state.queue.shift()
+        if (chunk !== undefined) {
+          state.queuedBytes -= chunk.byteLength
+          parts.push(chunk)
+        }
+      }
+      if (state.paused && state.queuedBytes < STREAM_BODY_LOW_WATER && this.id >= 0) {
+        state.paused = false
+        this.server.resumeRequestBody(this.id)
+      }
+      if (state.ended) break
+      await new Promise<void>((resolveWait, rejectWait) => {
+        state.waiters.push((_done, err) => {
+          if (err !== undefined) rejectWait(err)
+          else resolveWait()
+        })
+      })
+    }
+    return parts.length === 1 ? (parts[0] ?? NO_BODY_BYTES) : Buffer.concat(parts)
+  }
+
   get body(): ReadableStream<Uint8Array> | null {
+    const state = this.streamState
+    if (state !== undefined) {
+      if (state.stream !== undefined) return state.stream
+      const source = this
+      state.stream = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            state.controller = controller
+            while (state.queue.length > 0) {
+              const chunk = state.queue.shift()
+              if (chunk !== undefined) {
+                state.queuedBytes -= chunk.byteLength
+                controller.enqueue(chunk)
+              }
+            }
+            if (state.ended) {
+              controller.close()
+            } else if (
+              state.paused &&
+              state.queuedBytes < STREAM_BODY_LOW_WATER &&
+              source.id >= 0
+            ) {
+              state.paused = false
+              source.server.resumeRequestBody(source.id)
+            }
+          },
+          pull() {
+            if (state.paused && source.id >= 0) {
+              state.paused = false
+              source.server.resumeRequestBody(source.id)
+            }
+          },
+          cancel() {
+            state.cancelled = true
+            state.ended = true
+            state.queue.length = 0
+            state.queuedBytes = 0
+            if (source.id >= 0) source.server.abortStream(source.id)
+          },
+        },
+        {
+          highWaterMark: STREAM_BODY_HIGH_WATER,
+          size: (chunk) => chunk?.byteLength ?? 0,
+        },
+      )
+      return state.stream
+    }
     const bytes = this.toBytes()
     if (bytes === null) return null
     return new ReadableStream<Uint8Array>({
@@ -750,6 +1036,13 @@ class RustBatchSource {
   }
 
   arrayBuffer(): Promise<ArrayBuffer> {
+    if (this.streamState !== undefined) {
+      return this.drainStreamBytes().then((bytes) => {
+        const copy = new Uint8Array(bytes.byteLength)
+        copy.set(bytes)
+        return copy.buffer
+      })
+    }
     const bytes = this.toBytes()
     if (bytes === null) return Promise.resolve(NO_BODY)
     // Exactly the body's bytes: `bytes` may be a view into a pooled Buffer.
@@ -759,11 +1052,15 @@ class RustBatchSource {
   }
 
   bytes(): Promise<Uint8Array> {
+    if (this.streamState !== undefined) {
+      return this.drainStreamBytes().then((bytes) => new Uint8Array(bytes))
+    }
     // A copy, as `arrayBuffer()`: the view's `.buffer` would expose the rest of a pooled Buffer.
     return Promise.resolve(new Uint8Array(this.toBytes() ?? NO_BODY_BYTES))
   }
 
-  jsonNow(): { readonly value: unknown; readonly byteLength: number } {
+  jsonNow(): { readonly value: unknown; readonly byteLength: number } | undefined {
+    if (this.streamState !== undefined) return undefined
     if (this.bodyText !== null) {
       return { value: JSON.parse(this.bodyText), byteLength: this.bodyText.length }
     }
@@ -773,16 +1070,33 @@ class RustBatchSource {
   }
 
   json(): Promise<unknown> {
+    if (this.streamState !== undefined) {
+      return this.drainStreamBytes().then((bytes) => parseJsonBytes(bytes))
+    }
     try {
-      return Promise.resolve(this.jsonNow().value)
+      const now = this.jsonNow()
+      return Promise.resolve(now === undefined ? undefined : now.value)
     } catch (error) {
       return Promise.reject(error)
     }
   }
 
   jsonWithByteLength(): Promise<{ readonly value: unknown; readonly byteLength: number }> {
+    if (this.streamState !== undefined) {
+      return this.drainStreamBytes().then((bytes) => ({
+        value: parseJsonBytes(bytes),
+        byteLength: bytes.byteLength,
+      }))
+    }
     try {
-      return Promise.resolve(this.jsonNow())
+      const now = this.jsonNow()
+      if (now === undefined) {
+        return this.drainStreamBytes().then((bytes) => ({
+          value: parseJsonBytes(bytes),
+          byteLength: bytes.byteLength,
+        }))
+      }
+      return Promise.resolve(now)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -812,13 +1126,23 @@ class RustBatchSource {
       const controller = new AbortController()
       if (this.aborted) controller.abort()
       this.controller = controller
-      const init: RequestInit = {
+      const init: RequestInit & { duplex?: "half" } = {
         method: this.method,
         headers: this.headers,
         signal: controller.signal,
       }
-      const bytes = this.method === "GET" || this.method === "HEAD" ? null : this.toBytes()
-      if (bytes !== null) init.body = bytes.slice()
+      if (this.method !== "GET" && this.method !== "HEAD") {
+        if (this.streamState !== undefined) {
+          const stream = this.body
+          if (stream !== null) {
+            init.body = stream
+            init.duplex = "half"
+          }
+        } else {
+          const bytes = this.toBytes()
+          if (bytes !== null) init.body = bytes.slice()
+        }
+      }
       this.requestValue = new Request(this.url, init)
     }
     return this.requestValue
@@ -835,8 +1159,6 @@ interface RustWsEntry {
   readonly closeSocket: (code?: number, reason?: string) => void
 }
 
-const UNSUPPORTED_OPTIONS = ["static", "fastResponse"] as const
-
 /** A timeout the engine takes, or `undefined` to keep its default. */
 const nativeMs = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -844,14 +1166,23 @@ const nativeMs = (value: unknown): number | undefined =>
     : undefined
 
 export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineServer> {
-  for (const name of UNSUPPORTED_OPTIONS) {
-    if (name in options) {
+  if (options.fastResponse !== undefined && typeof options.fastResponse !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `fastResponse` must be a boolean")
+  }
+  if (options.path !== undefined) {
+    if (typeof options.path !== "string" || options.path.length === 0) {
+      throw new TypeError("@nifrajs/node-engine: `path` must be a non-empty socket path")
+    }
+    if (options.port !== undefined) {
       throw new TypeError(
-        `@nifrajs/node-engine: \`${name}\` is not supported; serve files from a route or put a static host in front`,
+        "@nifrajs/node-engine: `path` and `port` cannot both be specified; pass one",
       )
     }
-  }
-  if (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port < 0) {
+  } else if (
+    typeof options.port !== "number" ||
+    !Number.isInteger(options.port) ||
+    options.port < 0
+  ) {
     throw new TypeError("@nifrajs/node-engine: `port` must be a non-negative integer")
   }
   if (
@@ -881,6 +1212,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       "@nifrajs/node-engine: `validateHost: false` is not supported with `allowedHosts` or `canonicalHost`",
     )
   }
+  const staticResolver: StaticRequestResolver | undefined =
+    options.static === undefined ? undefined : createStaticResolver(options.static)
+  if (options.fastResponse === true) installFastResponse()
   const policy = hostPolicyOf(options)
   const protocol = options.protocol ?? (options.tls === undefined ? "http" : "https")
   if (protocol !== "http" && protocol !== "https") {
@@ -898,6 +1232,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   const policedHost = options.allowedHosts !== undefined || options.canonicalHost !== undefined
   const checkHost = options.validateHost === true || policedHost
   const host = options.hostname ?? "0.0.0.0"
+  const bindPort = options.port ?? 0
+  const unixPath = options.path
 
   // The native caps are u32: a larger one, the app's own included, is held to the largest it takes.
   const wsDeclared = options.wsMaxMessageSize ?? payloadCeiling(app)
@@ -1029,7 +1365,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     len: number,
   ): Promise<void> => {
     const flat = validateAndBuildFlatHeaders(status, headers, cookies, defaultType)
-    if (len > MAX_NATIVE_LENGTH) {
+    if (len > MAX_CONTENT_LENGTH) {
       throw new RangeError(`Content-Length ${len} is larger than the engine can frame`)
     }
     let unblock: (() => void) | undefined
@@ -1072,7 +1408,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
     const declared = bodyLength ?? declaredContentLength(headers)
     // Only a body that completes at once can still be sent, at its real length: do not wait on one.
-    const unframeable = declared !== undefined && declared > MAX_NATIVE_LENGTH
+    const unframeable = declared !== undefined && declared > MAX_CONTENT_LENGTH
     const pending: Uint8Array[] = []
     let finished = false
     // A second read that is still pending after a turn is not waited for: a route that sent its first
@@ -1483,7 +1819,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
       let bodyText: string | null = null
       let bodyBytes: Uint8Array | null | undefined
-      if ((flags & FLAG_HAS_BODY) !== 0 && (flags & FLAG_LARGE_BODY) === 0) {
+      if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
         if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
           bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
         } else {
@@ -1524,6 +1860,43 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         contentType,
       )
 
+      if (staticResolver !== undefined && (methodIdx === 0 || methodIdx === 5)) {
+        let staticAnswer: NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
+        try {
+          staticAnswer = staticResolver(
+            method,
+            pathname,
+            (name) => source.header(name),
+            () => source.request,
+            authority,
+          )
+        } catch (err) {
+          inflight.set(reqId, source)
+          fail(source, err)
+          continue
+        }
+        if (staticAnswer !== undefined) {
+          if (staticAnswer instanceof Promise) {
+            inflight.set(reqId, source)
+            staticAnswer.then(
+              (settled) => {
+                if (source.aborted || source.settled) return
+                if (settled === undefined) {
+                  if (isWsHandshake) upgradeSocket(source)
+                  else dispatchHttp(source, isHead)
+                } else {
+                  writeComplexOutcome(source, settled, isHead)
+                }
+              },
+              (err: unknown) => fail(source, err),
+            )
+          } else {
+            settleOutcome(source, staticAnswer, isHead)
+          }
+          continue
+        }
+      }
+
       if (isWsHandshake) {
         inflight.set(reqId, source)
         upgradeSocket(source)
@@ -1557,16 +1930,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     flush()
   }
 
-  const dispatchHttp = (source: RustBatchSource): void => {
+  const dispatchHttp = (source: RustBatchSource, isHead = false): void => {
     try {
       const outcome = outcomeOf(source)
       if (outcome instanceof Promise) {
         outcome.then(
-          (settled) => writeComplexOutcome(source, settled, false),
+          (settled) => settleOutcome(source, settled, isHead),
           (err: unknown) => fail(source, err),
         )
       } else {
-        writeComplexOutcome(source, outcome, false)
+        settleOutcome(source, outcome, isHead)
       }
     } catch (err) {
       fail(source, err)
@@ -1607,7 +1980,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           openingWs = outcome
           let socketId: number
           try {
-            socketId = uvServer.upgradeToWebSocket(source.requestId)
+            const deflateOverride: RustWsDeflateOptions | null =
+              outcome.handler.deflate === undefined
+                ? null
+                : outcome.handler.deflate === false
+                  ? { enabled: false }
+                  : (toRustWsDeflate(outcome.handler.deflate) ?? null)
+            socketId = uvServer.upgradeToWebSocket(source.requestId, deflateOverride)
           } finally {
             openingWs = undefined
           }
@@ -1628,7 +2007,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     }
     try {
       if (resolveWs === undefined) throw new TypeError("no WebSocket upgrade seam")
-      const outcome = resolveWs.call(app, source.request, source)
+      const wsRequest = source.isH2
+        ? new Request(source.request, {
+            headers: (() => {
+              const h = new Headers(source.headers)
+              h.set("upgrade", "websocket")
+              return h
+            })(),
+          })
+        : source.request
+      const outcome = resolveWs.call(app, wsRequest, source)
       if (outcome instanceof Promise) {
         outcome.then(settle, (err: unknown) => {
           if (!source.aborted && !source.settled) fail(source, err)
@@ -1690,6 +2078,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       },
       query: () => uvServer.wsGetQuery(id),
       remoteAddress: () => uvServer.wsGetRemoteAddress(id) ?? undefined,
+      getBufferedAmount: () => (entry.state === WS_OPEN ? uvServer.wsGetBufferedAmount(id) : 0),
     }
     const nifra: NifraWs = {
       send: upgrade.sender === undefined ? rawSend : upgrade.sender(handler, rawSend, reportError),
@@ -1700,8 +2089,18 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       get readyState() {
         return entry.state
       },
-      subscribe: (topic) => pubsub.subscribe(topic, nifra),
-      unsubscribe: (topic) => pubsub.unsubscribe(topic, nifra),
+      subscribe: (topic) => {
+        if (nativePubsub) {
+          if (entry.state === WS_OPEN) uvServer.wsSubscribe(id, topic)
+        } else {
+          pubsub.subscribe(topic, nifra)
+        }
+      },
+      unsubscribe: (topic) => {
+        if (nativePubsub) uvServer.wsUnsubscribe(id, topic)
+        else pubsub.unsubscribe(topic, nifra)
+      },
+      getBufferedAmount: () => handle.getBufferedAmount(),
       data,
       raw: handle,
     }
@@ -1748,10 +2147,25 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           }
           return b
         })()
+  const wsMaxBackpressure = optionalNonNegCap(
+    "wsMaxBackpressure",
+    options.engine?.wsMaxBackpressure,
+  )
+  const wsCloseOnBackpressureLimit = options.engine?.wsCloseOnBackpressureLimit
+  if (wsCloseOnBackpressureLimit !== undefined && typeof wsCloseOnBackpressureLimit !== "boolean") {
+    throw new TypeError(
+      "@nifrajs/node-engine: `engine.wsCloseOnBackpressureLimit` must be a boolean",
+    )
+  }
+  const streamRequestBodies = options.engine?.streamRequestBodies
+  if (streamRequestBodies !== undefined && typeof streamRequestBodies !== "boolean") {
+    throw new TypeError("@nifrajs/node-engine: `engine.streamRequestBodies` must be a boolean")
+  }
   const wsDeflate = toRustWsDeflate(options.wsDeflate)
+  const rustCompression = toRustCompression(options.compression)
   const rustTls = currentTls === undefined ? undefined : toRustTls(currentTls)
   try {
-    uvServer = addon.createUvServer(host, options.port, onBatch, {
+    uvServer = addon.createUvServer(host, bindPort, onBatch, {
       maxBodySize,
       oversizeWindow,
       maxHeaders,
@@ -1768,17 +2182,49 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       reusePort: options.engine?.reusePort,
       wsMaxMessageSize: wsCap,
       wsMaxLifetimeMs,
+      wsMaxBackpressure,
+      wsCloseOnBackpressureLimit,
+      streamRequestBodies,
+      compression: rustCompression,
+      unixPath,
       wsDeflate,
       http2: http2Enabled ? true : undefined,
       http2MaxConcurrentStreams: http2MaxStreams,
       tls: rustTls,
     })
   } catch (cause) {
+    const label = unixPath ?? `port ${bindPort}`
     return Promise.reject(
-      new Error(`@nifrajs/node-engine: port ${options.port} is not available to listen on`, {
+      new Error(`@nifrajs/node-engine: ${label} is not available to listen on`, {
         cause,
       }),
     )
+  }
+  type NativePublishFn = (topic: string, data: string | ArrayBufferView | ArrayBuffer) => void
+  type InstallNativePublishFn = (publish: NativePublishFn, remove?: boolean) => boolean
+  let nativePubsub = false
+  let installedNativePublish: NativePublishFn | undefined
+  const installNative = Reflect.get(app, INSTALL_NATIVE_PUBLISH)
+  if (typeof installNative === "function") {
+    const publishNative: NativePublishFn = (topic, data) => {
+      if (closed) return
+      if (typeof data === "string") {
+        uvServer.wsPublishText(topic, data, null)
+      } else if (data instanceof ArrayBuffer) {
+        uvServer.wsPublish(topic, Buffer.from(data), true, null)
+      } else {
+        uvServer.wsPublish(
+          topic,
+          Buffer.from(data.buffer, data.byteOffset, data.byteLength),
+          true,
+          null,
+        )
+      }
+    }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `INSTALL_NATIVE_PUBLISH` on `Server` returns `boolean` and accepts `(publish, remove?)`.
+    const installer = installNative as InstallNativePublishFn
+    nativePubsub = installer.call(app, publishNative, false)
+    if (nativePubsub) installedNativePublish = publishNative
   }
   const abortRequest = (reqId: number): void => {
     const source = inflight.get(reqId)
@@ -1792,10 +2238,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     wsSockets.delete(socketId)
     entry.state = WS_CLOSED
     const { handler, pubsub } = entry.upgrade
-    try {
-      pubsub.unsubscribeAll(entry.nifra)
-    } catch (error) {
-      entry.reportError(error)
+    if (!nativePubsub) {
+      try {
+        pubsub.unsubscribeAll(entry.nifra)
+      } catch (error) {
+        entry.reportError(error)
+      }
     }
     const [finalCode, finalReason] = entry.sentClose ?? [
       code,
@@ -1804,6 +2252,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     entry.safe(() => handler.close?.(entry.nifra, finalCode, finalReason))
   }
   uvServer.setStreamCallbacks((reqId) => inflight.get(reqId)?.onWritable?.(), abortRequest)
+  if (streamRequestBodies === true) {
+    uvServer.setReqBodyCallback((reqId, chunk, isLast) => {
+      inflight.get(reqId)?.pushBodyChunk(chunk, isLast)
+    })
+  }
   uvServer.setWsCallbacks(
     (socketId) => {
       if (openingWs !== undefined) openWs(socketId, openingWs)
@@ -1820,6 +2273,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       entry.safe(() => handler.message?.(entry.nifra, payload))
     },
     finishSocket,
+    (socketId) => {
+      const entry = wsSockets.get(socketId)
+      if (entry === undefined || entry.state !== WS_OPEN) return
+      const { handler } = entry.upgrade
+      entry.safe(() => handler.drain?.(entry.nifra))
+    },
   )
   bufs = uvServer.getBatchBuffers()
   outMeta = bufs.outMeta
@@ -1838,13 +2297,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   tpl500 = jsonTemplate(500)
   tpl501 = jsonTemplate(501)
 
-  // Register staticResponse() and echoParam() GET routes natively in Rust (0 JS calls).
+  // Register staticResponse() and echoParam() routes natively in Rust (0 JS calls).
+  // Skip GET native routes when `static` middleware is active, since files win over GET routes.
   if (isServerView(app) && !checkHost && !policy.normalizeTarget) {
     for (const route of declarativeRoutes(app)) {
-      if (route.method !== "GET") continue
+      if (route.method === "GET" && staticResolver !== undefined) continue
       const flat = fixedHeaders(route.headers)
       if (flat === undefined) continue
-      if (route.param !== undefined) {
+      if (route.method === "POST") {
+        uvServer.setStaticPostRoute(route.path, route.status, flat, Buffer.alloc(0))
+      } else if (route.param !== undefined) {
         uvServer.setParamRoute(
           route.path.slice(0, route.path.lastIndexOf(":")),
           "",
@@ -1877,6 +2339,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   }: NodeStopOptions): Promise<void> => {
     if (closed) return
     closed = true
+    if (installedNativePublish !== undefined && typeof installNative === "function") {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: `INSTALL_NATIVE_PUBLISH` accepts `(publish, true)` to detach on stop.
+      ;(installNative as InstallNativePublishFn).call(app, installedNativePublish, true)
+      installedNativePublish = undefined
+    }
     if (signals !== undefined) {
       process.removeListener("SIGTERM", onSignal)
       process.removeListener("SIGINT", onSignal)
@@ -1901,6 +2368,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     await lifecycle("stopped")
   }
 
+  const normalizeSniKey = (name: string): string => name.trim().replace(/\.$/, "").toLowerCase()
+
   const reloadTls = (tls: TlsOptions | undefined = currentTls): void => {
     if (closed) throw new Error("@nifrajs/node-engine: the server is not running")
     if (tls === undefined) {
@@ -1910,10 +2379,51 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     currentTls = tls
   }
 
-  return Promise.resolve({
+  const addServerName = (entry: TlsSniEntry): void => {
+    if (closed) throw new Error("@nifrajs/node-engine: the server is not running")
+    if (currentTls === undefined) {
+      throw new Error("@nifrajs/node-engine: addServerName requires a server started with `tls`")
+    }
+    uvServer.addServerName(toRustTlsSni(entry))
+    const key = normalizeSniKey(entry.serverName)
+    const nextNames = (currentTls.serverNames ?? []).filter(
+      (existing) => normalizeSniKey(existing.serverName) !== key,
+    )
+    nextNames.push(entry)
+    currentTls = { ...currentTls, serverNames: nextNames }
+  }
+
+  const removeServerName = (serverName: string): boolean => {
+    if (closed) throw new Error("@nifrajs/node-engine: the server is not running")
+    const removed = uvServer.removeServerName(serverName)
+    if (removed && currentTls?.serverNames !== undefined) {
+      const key = normalizeSniKey(serverName)
+      currentTls = {
+        ...currentTls,
+        serverNames: currentTls.serverNames.filter(
+          (existing) => normalizeSniKey(existing.serverName) !== key,
+        ),
+      }
+    }
+    return removed
+  }
+
+  const serverHandle: {
+    readonly port: number
+    path?: string
+    readonly stop: (options?: NodeStopOptions) => Promise<void>
+    readonly reloadTls: (tls?: TlsOptions) => void
+    readonly addServerName: (entry: TlsSniEntry) => void
+    readonly removeServerName: (serverName: string) => boolean
+    readonly [Symbol.asyncDispose]: () => Promise<void>
+  } = {
     port: uvServer.port,
     stop,
     reloadTls,
+    addServerName,
+    removeServerName,
     [Symbol.asyncDispose]: () => stop(),
-  })
+  }
+  if (unixPath !== undefined) serverHandle.path = unixPath
+  return Promise.resolve(serverHandle)
 }

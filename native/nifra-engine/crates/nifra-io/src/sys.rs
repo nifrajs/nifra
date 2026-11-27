@@ -43,11 +43,11 @@ pub(crate) const WS_PING_FRAME: [u8; 2] = [0x89, 0x00];
 /// Number of low bits reserved for the slot index inside a `conn_id`.
 ///
 /// A retired id is refused only until its slot has been reused `MAX_GEN` times, so the generation
-/// takes the 13 bits a 262,144-connection slab leaves free.
+/// takes 12 of the bits a 262,144-connection slab leaves free (keeping bit 30 free for virtual H2 WebSocket ids).
 pub const SLOT_BITS: u32 = 18;
 pub const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
 const MAX_SLOTS: usize = 1 << SLOT_BITS;
-const MAX_GEN: u16 = 8191; // keeps bit 31 = 0 so `conn_id as i32 > 0` always holds
+const MAX_GEN: u16 = 4095; // keeps bits 30..31 = 0 so every conn_id stays below H2_WS_ID_BIT (1 << 30)
 
 /// Extract the direct O(1) slot index from a `conn_id`.
 #[inline]
@@ -505,6 +505,8 @@ pub(crate) struct ConnCore {
     pub accepted_at: Instant,
     /// Output is backed up far enough that the socket is not being read.
     pub read_paused: bool,
+    /// Application-level read pause (e.g. streaming request body backpressure).
+    pub app_read_paused: bool,
     /// When unsent output last stopped making progress.
     pub stalled_since: Option<Instant>,
 }
@@ -539,8 +541,14 @@ impl ConnCore {
             close_deadline: None,
             accepted_at: now,
             read_paused: false,
+            app_read_paused: false,
             stalled_since: None,
         }
+    }
+
+    #[inline]
+    pub fn is_read_paused(&self) -> bool {
+        self.read_paused || self.app_read_paused
     }
 
     #[inline]

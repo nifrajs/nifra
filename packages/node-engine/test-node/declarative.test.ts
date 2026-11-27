@@ -195,11 +195,13 @@ test("a fixed route is answered without entering the app", async () => {
     await observe(running.port, head("GET", "/ping"))
     assert.equal((await observe(running.port, head("GET", "/user/abc"))).body, "abc")
     assert.equal(entered, 0)
-    // A fixed POST stays on the ordinary path: the engine would answer a cross-site form without the
-    // check seeing its Origin.
-    await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))
-    assert.equal(entered, 1)
-    // One with an Origin runs the check, there too.
+    // A fixed POST without Origin/Sec-Fetch-Site is answered natively without entering JS.
+    assert.equal(
+      (await observe(running.port, head("POST", "/ping", "content-length: 0\r\n"))).status,
+      200,
+    )
+    assert.equal(entered, 0)
+    // One with an Origin stays on the ordinary path so cross-site form checks see it.
     const crossSite = await observe(
       running.port,
       head(
@@ -209,9 +211,9 @@ test("a fixed route is answered without entering the app", async () => {
       ),
     )
     assert.equal(crossSite.status, 403)
-    assert.equal(entered, 2)
+    assert.equal(entered, 1)
     await observe(running.port, head("GET", "/dynamic"))
-    assert.equal(entered, 3)
+    assert.equal(entered, 2)
   } finally {
     await running.stop()
   }

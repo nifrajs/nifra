@@ -71,6 +71,10 @@ pub struct H2Config {
     pub max_rst_streams: u32,
     pub max_empty_frames: u32,
     pub request_timeout: Option<Duration>,
+    /// Advertise RFC 8441 Extended CONNECT (`SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`).
+    pub enable_connect_protocol: bool,
+    /// Emit `H2Event::Request` on head arrival and stream body via `H2Event::StreamData`.
+    pub stream_request_bodies: bool,
 }
 
 impl Default for H2Config {
@@ -85,6 +89,8 @@ impl Default for H2Config {
             max_rst_streams: 100,
             max_empty_frames: 64,
             request_timeout: None,
+            enable_connect_protocol: false,
+            stream_request_bodies: false,
         }
     }
 }
@@ -100,6 +106,8 @@ pub struct H2Request {
     pub host_valid: bool,
     pub is_json_ct: bool,
     pub over_max_body: bool,
+    pub is_ws_upgrade: bool,
+    pub streaming_body: bool,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
@@ -107,6 +115,11 @@ pub struct H2Request {
 #[derive(Debug)]
 pub enum H2Event {
     Request(H2Request),
+    StreamData {
+        stream_id: u32,
+        data: Vec<u8>,
+        end_stream: bool,
+    },
     StreamReset(u32),
     GoAway,
 }
@@ -128,9 +141,12 @@ struct InStream {
     headers: Vec<(String, String)>,
     is_json_ct: bool,
     body: Vec<u8>,
-    declared_cl: Option<usize>,
+    declared_cl: Option<u64>,
+    received_len: u64,
     headers_done: bool,
     end_stream: bool,
+    streaming: bool,
+    is_ws_connect: bool,
     started: Instant,
 }
 
@@ -220,6 +236,8 @@ pub struct H2Conn {
     client_settings_seen: bool,
     /// When response bytes held by flow control last moved.
     out_progress: Option<Instant>,
+    /// Per-stream held `WINDOW_UPDATE` credit while application-level stream recv is paused.
+    paused_recv_streams: HashMap<u32, u32>,
 }
 
 impl H2Conn {
@@ -248,6 +266,7 @@ impl H2Conn {
             early_credit: HashMap::new(),
             client_settings_seen: false,
             out_progress: None,
+            paused_recv_streams: HashMap::new(),
         }
     }
 
@@ -262,27 +281,43 @@ impl H2Conn {
                 .count()
     }
 
-    /// Cancel expired uploads. An incomplete HPACK block requires closing the connection.
-    pub fn expire_requests(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+    /// Cancel expired uploads and return `(close_conn, expired_stream_ids)`.
+    /// An incomplete HPACK block requires closing the connection.
+    pub fn drain_expired_streams(&mut self, now: Instant, out: &mut Vec<u8>) -> (bool, Vec<u32>) {
         let Some(timeout) = self.cfg.request_timeout else {
-            return false;
+            return (false, Vec::new());
         };
         if self
             .continuation
             .as_ref()
             .is_some_and(|cont| now.saturating_duration_since(cont.started) >= timeout)
         {
-            return true;
+            return (true, Vec::new());
         }
-        self.active_streams.retain(|&id, stream| {
-            if now.saturating_duration_since(stream.started) < timeout {
-                return true;
-            }
-            self.early_credit.remove(&id);
-            write_rst_stream(id, ERR_CANCEL, out);
-            false
-        });
-        false
+        let expired: Vec<u32> = self
+            .active_streams
+            .iter()
+            .filter(|(_, stream)| {
+                !stream.is_ws_connect && now.saturating_duration_since(stream.started) >= timeout
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for &id in &expired {
+            self.reset_stream(id, ERR_CANCEL, out);
+        }
+        (false, expired)
+    }
+
+    /// Cancel expired uploads. An incomplete HPACK block requires closing the connection.
+    pub fn expire_requests(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+        self.drain_expired_streams(now, out).0
+    }
+
+    /// Queued outbound HTTP/2 DATA bytes waiting on flow control for `stream_id`.
+    pub fn stream_queued_bytes(&self, stream_id: u32) -> usize {
+        self.out_streams
+            .get(&stream_id)
+            .map_or(0, OutStream::backlog)
     }
 
     fn request_expired(&self, started: Instant) -> bool {
@@ -379,6 +414,20 @@ impl H2Conn {
         let _ = self.count_reset();
     }
 
+    fn reset_and_emit(
+        &mut self,
+        stream_id: u32,
+        error_code: u32,
+        notify: bool,
+        out: &mut Vec<u8>,
+        res: &mut H2FeedResult,
+    ) {
+        self.fault(stream_id, error_code, out);
+        if notify {
+            res.events.push(H2Event::StreamReset(stream_id));
+        }
+    }
+
     fn queued_response_bytes(&self) -> usize {
         self.out_streams.values().map(OutStream::backlog).sum()
     }
@@ -395,13 +444,22 @@ impl H2Conn {
         }
         self.server_settings_sent = true;
         // SETTINGS: MAX_CONCURRENT_STREAMS (3), INITIAL_WINDOW_SIZE (4), MAX_HEADER_LIST_SIZE (6)
-        let mut payload = Vec::with_capacity(18);
+        // plus optional RFC 8441 ENABLE_CONNECT_PROTOCOL (8).
+        let mut payload = Vec::with_capacity(if self.cfg.enable_connect_protocol {
+            24
+        } else {
+            18
+        });
         payload.extend_from_slice(&3u16.to_be_bytes());
         payload.extend_from_slice(&self.cfg.max_concurrent_streams.to_be_bytes());
         payload.extend_from_slice(&4u16.to_be_bytes());
         payload.extend_from_slice(&STREAM_RECV_WINDOW_TARGET.to_be_bytes());
         payload.extend_from_slice(&6u16.to_be_bytes());
         payload.extend_from_slice(&(self.cfg.max_header_list_size as u32).to_be_bytes());
+        if self.cfg.enable_connect_protocol {
+            payload.extend_from_slice(&8u16.to_be_bytes());
+            payload.extend_from_slice(&1u32.to_be_bytes());
+        }
         write_frame(FRAME_SETTINGS, 0, 0, &payload, out);
 
         // Increase connection-level receive window so large POSTs aren't throttled at 64 KiB.
@@ -659,6 +717,7 @@ impl H2Conn {
                     self.open_response_streams.remove(&stream_id);
                     self.out_streams.remove(&stream_id);
                     self.early_credit.remove(&stream_id);
+                    self.paused_recv_streams.remove(&stream_id);
                     res.events.push(H2Event::StreamReset(stream_id));
                     // Rapid-reset DoS protection (CVE-2023-44487).
                     if flooding {
@@ -792,18 +851,22 @@ impl H2Conn {
                             return res;
                         }
                     }
-                    // Replenish connection + stream flow-control windows.
+                    // Replenish connection + stream flow-control windows (respecting stream recv pause).
                     if !payload.is_empty() {
                         let inc = payload.len() as u32;
                         write_frame(FRAME_WINDOW_UPDATE, 0, 0, &inc.to_be_bytes(), write_buf);
                         if !end_stream && self.active_streams.contains_key(&stream_id) {
-                            write_frame(
-                                FRAME_WINDOW_UPDATE,
-                                0,
-                                stream_id,
-                                &inc.to_be_bytes(),
-                                write_buf,
-                            );
+                            if let Some(held) = self.paused_recv_streams.get_mut(&stream_id) {
+                                *held = held.saturating_add(inc);
+                            } else {
+                                write_frame(
+                                    FRAME_WINDOW_UPDATE,
+                                    0,
+                                    stream_id,
+                                    &inc.to_be_bytes(),
+                                    write_buf,
+                                );
+                            }
                         }
                     }
                     let hard_cap = self
@@ -812,8 +875,11 @@ impl H2Conn {
                         .saturating_add(self.cfg.oversize_window);
                     let buffered: usize =
                         self.active_streams.values().map(|st| st.body.len()).sum();
-                    if buffered.saturating_add(data.len()) > hard_cap.max(CONN_BODY_LIMIT)
-                        && self.active_streams.contains_key(&stream_id)
+                    if self
+                        .active_streams
+                        .get(&stream_id)
+                        .is_some_and(|st| !st.streaming && !st.is_ws_connect)
+                        && buffered.saturating_add(data.len()) > hard_cap.max(CONN_BODY_LIMIT)
                     {
                         self.fault(stream_id, ERR_ENHANCE_YOUR_CALM, write_buf);
                         if !end_stream {
@@ -823,13 +889,37 @@ impl H2Conn {
                     }
                     let mut remove_stream = false;
                     let mut too_large = false;
+                    let mut streamed_chunk: Option<(Vec<u8>, bool)> = None;
                     if let Some(st) = self.active_streams.get_mut(&stream_id) {
-                        if st.body.len().saturating_add(data.len()) > hard_cap {
+                        if st.streaming || st.is_ws_connect {
+                            let next_len = st.received_len.saturating_add(data.len() as u64);
+                            if !st.is_ws_connect && st.declared_cl.is_some_and(|cl| next_len > cl) {
+                                self.reset_and_emit(
+                                    stream_id,
+                                    ERR_PROTOCOL_ERROR,
+                                    true,
+                                    write_buf,
+                                    &mut res,
+                                );
+                                if !end_stream {
+                                    self.drain_stream(stream_id, false);
+                                }
+                                continue;
+                            }
+                            st.received_len = next_len;
+                            if end_stream {
+                                st.end_stream = true;
+                                remove_stream = true;
+                            }
+                            if !data.is_empty() || end_stream {
+                                streamed_chunk = Some((data.to_vec(), end_stream));
+                            }
+                        } else if st.body.len().saturating_add(data.len()) > hard_cap {
                             too_large = true;
                             remove_stream = true;
                         } else if st
                             .declared_cl
-                            .is_some_and(|cl| st.body.len() + data.len() > cl)
+                            .is_some_and(|cl| (st.body.len() + data.len()) as u64 > cl)
                         {
                             // More body than content-length declared (RFC 9113 §8.1.1).
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
@@ -839,6 +929,7 @@ impl H2Conn {
                             continue;
                         } else {
                             st.body.extend_from_slice(data);
+                            st.received_len = st.body.len() as u64;
                             if end_stream {
                                 st.end_stream = true;
                                 remove_stream = true;
@@ -848,7 +939,45 @@ impl H2Conn {
                         self.stray_data(stream_id, end_stream, write_buf, &mut res);
                         continue;
                     }
-                    if too_large {
+                    if let Some((chunk, is_end)) = streamed_chunk {
+                        let (invalid_short, expired, notify_reset) = if remove_stream {
+                            self.paused_recv_streams.remove(&stream_id);
+                            self.active_streams.remove(&stream_id).map_or(
+                                (false, false, false),
+                                |st| {
+                                    let short = !st.is_ws_connect
+                                        && st.declared_cl.is_some_and(|cl| cl != st.received_len);
+                                    let exp = !st.is_ws_connect && self.request_expired(st.started);
+                                    (short, exp, st.streaming || st.is_ws_connect)
+                                },
+                            )
+                        } else {
+                            (false, false, false)
+                        };
+                        if invalid_short {
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_PROTOCOL_ERROR,
+                                notify_reset,
+                                write_buf,
+                                &mut res,
+                            );
+                        } else if expired {
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_CANCEL,
+                                notify_reset,
+                                write_buf,
+                                &mut res,
+                            );
+                        } else {
+                            res.events.push(H2Event::StreamData {
+                                stream_id,
+                                data: chunk,
+                                end_stream: is_end,
+                            });
+                        }
+                    } else if too_large {
                         self.active_streams.remove(&stream_id);
                         self.open_response_streams.insert(stream_id, ());
                         self.write_response(stream_id, 413, &[], None, write_buf);
@@ -857,7 +986,7 @@ impl H2Conn {
                         }
                     } else if remove_stream {
                         if let Some(st) = self.active_streams.remove(&stream_id) {
-                            if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
+                            if st.declared_cl.is_some_and(|cl| cl != st.body.len() as u64) {
                                 self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             } else {
                                 self.finalize_request(stream_id, st, write_buf, &mut res);
@@ -927,18 +1056,38 @@ impl H2Conn {
 
         // Check if this is trailing headers on an already-open stream.
         if let Some(st) = self.active_streams.get_mut(&stream_id) {
-            if st.headers_done && end_stream {
+            if st.headers_done && end_stream && !st.is_ws_connect {
                 // Trailers are ordinary fields: a pseudo-header, a malformed name or value, or a
                 // connection-specific field fails this stream (the table above is already in step).
+                let notify = st.streaming;
                 if decoded
                     .iter()
                     .any(|(name, val)| name.starts_with(':') || invalid_field(name, val))
                 {
-                    self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    self.reset_and_emit(stream_id, ERR_PROTOCOL_ERROR, notify, write_buf, res);
                     return Ok(());
                 }
+                self.paused_recv_streams.remove(&stream_id);
                 if let Some(st) = self.active_streams.remove(&stream_id) {
-                    if st.declared_cl.is_some_and(|cl| cl != st.body.len()) {
+                    if st.streaming {
+                        if st.declared_cl.is_some_and(|cl| cl != st.received_len) {
+                            self.reset_and_emit(
+                                stream_id,
+                                ERR_PROTOCOL_ERROR,
+                                true,
+                                write_buf,
+                                res,
+                            );
+                        } else if self.request_expired(st.started) {
+                            self.reset_and_emit(stream_id, ERR_CANCEL, true, write_buf, res);
+                        } else {
+                            res.events.push(H2Event::StreamData {
+                                stream_id,
+                                data: Vec::new(),
+                                end_stream: true,
+                            });
+                        }
+                    } else if st.declared_cl.is_some_and(|cl| cl != st.body.len() as u64) {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
                         self.finalize_request(stream_id, st, write_buf, res);
@@ -946,7 +1095,8 @@ impl H2Conn {
                 }
                 return Ok(());
             }
-            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+            let notify = st.streaming || st.is_ws_connect;
+            self.reset_and_emit(stream_id, ERR_PROTOCOL_ERROR, notify, write_buf, res);
             return Ok(());
         }
 
@@ -957,9 +1107,21 @@ impl H2Conn {
         if stream_id <= self.last_stream_id {
             return Err(ERR_PROTOCOL_ERROR);
         }
-        if (self.active_streams.len() + self.active_response_streams()) as u32
-            >= self.cfg.max_concurrent_streams
-        {
+        let open_streams = self.active_streams.len()
+            + self
+                .open_response_streams
+                .keys()
+                .filter(|id| !self.active_streams.contains_key(id))
+                .count()
+            + self
+                .out_streams
+                .keys()
+                .filter(|id| {
+                    !self.active_streams.contains_key(id)
+                        && !self.open_response_streams.contains_key(id)
+                })
+                .count();
+        if open_streams as u32 >= self.cfg.max_concurrent_streams {
             self.fault(stream_id, ERR_REFUSED_STREAM, write_buf);
             return Ok(());
         }
@@ -968,12 +1130,14 @@ impl H2Conn {
         let mut method: Option<String> = None;
         let mut raw_path: Option<String> = None;
         let mut authority: Option<String> = None;
+        let mut has_pseudo_authority = false;
+        let mut protocol: Option<String> = None;
         let mut seen_regular = false;
         let mut seen_scheme = false;
         let mut headers = Vec::with_capacity(decoded.len());
         let mut is_json_ct = false;
         let mut seen_content_type = false;
-        let mut declared_cl: Option<usize> = None;
+        let mut declared_cl: Option<u64> = None;
         let mut has_host = false;
 
         for (name, val) in decoded {
@@ -1009,10 +1173,11 @@ impl H2Conn {
                         raw_path = Some(val);
                     }
                     ":authority" => {
-                        if authority.is_some() {
+                        if has_pseudo_authority {
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                             return Ok(());
                         }
+                        has_pseudo_authority = true;
                         authority = Some(val);
                     }
                     ":scheme" => {
@@ -1021,6 +1186,14 @@ impl H2Conn {
                             return Ok(());
                         }
                         seen_scheme = true;
+                    }
+                    ":protocol" => {
+                        if !self.cfg.enable_connect_protocol || protocol.is_some() || val.is_empty()
+                        {
+                            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                            return Ok(());
+                        }
+                        protocol = Some(val);
                     }
                     _ => {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
@@ -1056,7 +1229,7 @@ impl H2Conn {
                 let parsed = if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                     None
                 } else {
-                    digits.parse::<usize>().ok()
+                    digits.parse::<u64>().ok()
                 };
                 match parsed {
                     Some(n) if declared_cl.is_none_or(|prev| prev == n) => declared_cl = Some(n),
@@ -1073,6 +1246,23 @@ impl H2Conn {
             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
         };
+        let is_ws_connect = protocol
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case("websocket"));
+        if protocol.is_some()
+            && !(is_ws_connect
+                && method == "CONNECT"
+                && has_pseudo_authority
+                && !end_stream
+                && declared_cl.is_none())
+        {
+            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+            return Ok(());
+        }
+        if !is_ws_connect && method == "CONNECT" {
+            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+            return Ok(());
+        }
         if self.cfg.max_uri_size > 0 && raw_target.len() > self.cfg.max_uri_size {
             self.open_response_streams.insert(stream_id, ());
             self.write_response(stream_id, 414, &[], None, write_buf);
@@ -1089,18 +1279,18 @@ impl H2Conn {
             }
         }
 
-        let hard_cap = self
-            .cfg
-            .max_body_size
-            .saturating_add(self.cfg.oversize_window);
-        if let Some(cl) = declared_cl {
-            if cl > hard_cap {
-                self.open_response_streams.insert(stream_id, ());
-                self.write_response(stream_id, 413, &[], None, write_buf);
-                if !end_stream {
-                    self.drain_stream(stream_id, true);
+        let hard_cap =
+            (self.cfg.max_body_size as u64).saturating_add(self.cfg.oversize_window as u64);
+        if !self.cfg.stream_request_bodies && !is_ws_connect {
+            if let Some(cl) = declared_cl {
+                if cl > hard_cap {
+                    self.open_response_streams.insert(stream_id, ());
+                    self.write_response(stream_id, 413, &[], None, write_buf);
+                    if !end_stream {
+                        self.drain_stream(stream_id, true);
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
         }
 
@@ -1112,7 +1302,11 @@ impl H2Conn {
             None => (raw_target, String::new()),
         };
 
-        let st = InStream {
+        let streaming = self.cfg.stream_request_bodies
+            && !is_ws_connect
+            && !end_stream
+            && declared_cl.is_none_or(|cl| cl > 0);
+        let mut st = InStream {
             method,
             path,
             query,
@@ -1121,8 +1315,11 @@ impl H2Conn {
             is_json_ct,
             body: Vec::new(),
             declared_cl,
+            received_len: 0,
             headers_done: true,
             end_stream,
+            streaming,
+            is_ws_connect,
             started,
         };
 
@@ -1133,6 +1330,38 @@ impl H2Conn {
             } else {
                 self.finalize_request(stream_id, st, write_buf, res);
             }
+        } else if is_ws_connect || streaming {
+            self.open_response_streams.insert(stream_id, ());
+            let host_valid = st
+                .headers
+                .iter()
+                .find(|(name, _)| name == "host")
+                .is_some_and(|(_, value)| is_valid_host(value));
+            let method_idx = if is_ws_connect {
+                0
+            } else {
+                method_to_idx(&st.method)
+            };
+            res.events.push(H2Event::Request(H2Request {
+                stream_id,
+                method_idx,
+                method: if is_ws_connect {
+                    "GET".to_owned()
+                } else {
+                    st.method.clone()
+                },
+                path: st.path.clone(),
+                query: st.query.clone(),
+                authority: st.authority.clone(),
+                host_valid,
+                is_json_ct: st.is_json_ct,
+                over_max_body: false,
+                is_ws_upgrade: is_ws_connect,
+                streaming_body: streaming,
+                headers: std::mem::take(&mut st.headers),
+                body: Vec::new(),
+            }));
+            self.active_streams.insert(stream_id, st);
         } else {
             self.active_streams.insert(stream_id, st);
         }
@@ -1152,7 +1381,9 @@ impl H2Conn {
         }
         self.open_response_streams.insert(stream_id, ());
         let over_max_body = st.body.len() > self.cfg.max_body_size
-            || st.declared_cl.is_some_and(|cl| cl > self.cfg.max_body_size);
+            || st
+                .declared_cl
+                .is_some_and(|cl| cl > self.cfg.max_body_size as u64);
         // Judged on the value the request's URL is built from, which a `host` field overrides.
         let host_valid = st
             .headers
@@ -1170,6 +1401,8 @@ impl H2Conn {
             host_valid,
             is_json_ct: st.is_json_ct,
             over_max_body,
+            is_ws_upgrade: false,
+            streaming_body: false,
             headers: st.headers,
             body: st.body,
         }));
@@ -1385,7 +1618,45 @@ impl H2Conn {
         self.open_response_streams.remove(&stream_id);
         self.out_streams.remove(&stream_id);
         self.early_credit.remove(&stream_id);
+        self.paused_recv_streams.remove(&stream_id);
         write_rst_stream(stream_id, error_code, out);
+    }
+
+    /// Accept an RFC 8441 Extended CONNECT WebSocket tunnel with `:status 200` (without `END_STREAM`).
+    pub fn write_ws_connect_response(
+        &mut self,
+        stream_id: u32,
+        headers: &[(&str, &str)],
+        out: &mut Vec<u8>,
+    ) -> bool {
+        if !self.open_response_streams.contains_key(&stream_id) {
+            return false;
+        }
+        let mut block = Vec::with_capacity(64);
+        encode_response_headers(200, headers, None, &mut block);
+        write_header_frames(
+            stream_id,
+            FLAG_END_HEADERS,
+            &block,
+            self.peer_max_frame_size,
+            out,
+        );
+        if !self.out_streams.contains_key(&stream_id) {
+            let os = self.new_out_stream(stream_id);
+            self.out_streams.insert(stream_id, os);
+        }
+        true
+    }
+
+    /// Pause or resume per-stream `WINDOW_UPDATE` credits for streaming uploads / WebSockets.
+    pub fn set_stream_recv_paused(&mut self, stream_id: u32, paused: bool, out: &mut Vec<u8>) {
+        if paused {
+            self.paused_recv_streams.entry(stream_id).or_insert(0);
+        } else if let Some(held) = self.paused_recv_streams.remove(&stream_id) {
+            if held > 0 && self.active_streams.contains_key(&stream_id) {
+                write_frame(FRAME_WINDOW_UPDATE, 0, stream_id, &held.to_be_bytes(), out);
+            }
+        }
     }
 
     /// Send `GOAWAY(NO_ERROR)` for graceful shutdown.
@@ -3145,5 +3416,46 @@ mod tests {
         assert!(result.events.is_empty());
         assert!(!result.close_after_write);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn rfc8441_extended_connect_websocket_and_streaming_body_work() {
+        let mut conn = ready_conn(H2Config {
+            enable_connect_protocol: true,
+            stream_request_bodies: true,
+            ..H2Config::default()
+        });
+        let mut wire = Vec::new();
+        let mut out = Vec::new();
+        // :method CONNECT (encoded literal without indexing), :protocol websocket, :scheme https, :authority a, :path /ws
+        let mut hblock = Vec::new();
+        let fields: &[(&str, &str)] = &[
+            (":method", "CONNECT"),
+            (":protocol", "websocket"),
+            (":scheme", "https"),
+            (":authority", "example.test"),
+            (":path", "/ws"),
+            ("sec-websocket-version", "13"),
+        ];
+        for (k, v) in fields {
+            hblock.push(0x00);
+            hblock.push(k.len() as u8);
+            hblock.extend_from_slice(k.as_bytes());
+            hblock.push(v.len() as u8);
+            hblock.extend_from_slice(v.as_bytes());
+        }
+        write_frame(FRAME_HEADERS, FLAG_END_HEADERS, 1, &hblock, &mut wire);
+        write_frame(FRAME_DATA, 0, 1, b"frame-bytes", &mut wire);
+        let result = conn.feed(&wire, &mut out);
+        assert!(matches!(
+            result.events.as_slice(),
+            [
+                H2Event::Request(req),
+                H2Event::StreamData { stream_id: 1, data, end_stream: false }
+            ] if req.is_ws_upgrade && req.path == "/ws" && data == b"frame-bytes"
+        ));
+        let mut resp = Vec::new();
+        assert!(conn.write_ws_connect_response(1, &[], &mut resp));
+        assert!(!frames(&resp).is_empty());
     }
 }

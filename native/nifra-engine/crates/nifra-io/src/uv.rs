@@ -9,7 +9,7 @@ use std::ffi::{c_int, c_void};
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::TcpListener as StdTcpListener;
-use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -118,18 +118,62 @@ impl UvServer {
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
     ) -> io::Result<Self> {
+        listener.set_nonblocking(true)?;
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(listener),
+            true,
+            None,
+            cfg,
+            tls,
+            callbacks,
+        )
+    }
+
+    /// Start on a non-blocking Unix domain socket listener.
+    ///
+    /// # Safety
+    /// `uv_loop` must point to the live `uv_loop_t` of the calling thread and outlive the server.
+    pub unsafe fn start_unix_with_tls(
+        uv_loop: *mut c_void,
+        bound: crate::BoundUnixSocket,
+        cfg: SocketConfig,
+        tls: Option<Arc<TlsStore>>,
+        callbacks: Box<dyn UvCallbacks>,
+    ) -> io::Result<Self> {
+        bound.listener.set_nonblocking(true)?;
+        Self::start_fd_with_tls(
+            uv_loop,
+            OwnedFd::from(bound.listener),
+            false,
+            Some(bound.guard),
+            cfg,
+            tls,
+            callbacks,
+        )
+    }
+
+    unsafe fn start_fd_with_tls(
+        uv_loop: *mut c_void,
+        listener: OwnedFd,
+        is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
+        cfg: SocketConfig,
+        tls: Option<Arc<TlsStore>>,
+        callbacks: Box<dyn UvCallbacks>,
+    ) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         if std::env::var_os("NIFRA_ENGINE_TRANSPORT").as_deref() != Some(std::ffi::OsStr::new("uv"))
         {
             return Ok(Self {
-                backend: ServerBackend::Epoll(EpollServer::start_with_tls(
-                    uv_loop, listener, cfg, tls, callbacks,
+                backend: ServerBackend::Epoll(EpollServer::start_fd_with_tls(
+                    uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
                 )?),
             });
         }
         Ok(Self {
-            backend: ServerBackend::Uv(UvPollState::start_with_tls(
-                uv_loop, listener, cfg, tls, callbacks,
+            backend: ServerBackend::Uv(UvPollState::start_fd_with_tls(
+                uv_loop, listener, is_tcp, unix_guard, cfg, tls, callbacks,
             )?),
         })
     }
@@ -141,6 +185,22 @@ impl UvServer {
             ServerBackend::Uv(state) => UvPollState::reload_tls(state, input),
             #[cfg(target_os = "linux")]
             ServerBackend::Epoll(ep) => ep.reload_tls(input),
+        }
+    }
+
+    pub fn add_server_name(&self, entry: nifra_tls::SniCertInput) -> Result<(), TlsError> {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::add_server_name(state, entry),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.add_server_name(entry),
+        }
+    }
+
+    pub fn remove_server_name(&self, server_name: &str) -> Result<bool, TlsError> {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::remove_server_name(state, server_name),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.remove_server_name(server_name),
         }
     }
 
@@ -236,6 +296,32 @@ impl UvServer {
         }
     }
 
+    /// Queued outbound bytes buffered for `conn_id`.
+    pub fn queued_bytes(&self, conn_id: u32) -> usize {
+        match &self.backend {
+            ServerBackend::Uv(state) => {
+                let st = state.borrow();
+                let deferred = if st.dispatching == Some(conn_id) {
+                    st.deferred.len()
+                } else {
+                    0
+                };
+                deferred + st.conns.get(conn_id).map_or(0, |c| c.core.queued_bytes())
+            }
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.queued_bytes(conn_id),
+        }
+    }
+
+    /// Pause or resume socket read polling for `conn_id` (independent of write backpressure).
+    pub fn set_read_paused(&self, conn_id: u32, paused: bool) -> bool {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::set_read_paused(state, conn_id, paused),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.set_read_paused(conn_id, paused),
+        }
+    }
+
     pub fn stop_listening(&self) {
         match &self.backend {
             ServerBackend::Uv(state) => UvPollState::stop_listening(state),
@@ -280,10 +366,12 @@ struct TimerCtx {
 struct UvPollState {
     uv: &'static UvApi,
     uv_loop: *mut c_void,
+    is_tcp: bool,
     cfg: SocketConfig,
     tls: Option<Arc<TlsStore>>,
     clock: LoopClock,
     listener_handle: *mut c_void,
+    unix_guard: Option<crate::UnixSocketGuard>,
     check_handle: *mut c_void,
     timer_handle: *mut c_void,
     conns: ConnSlab<UvConn>,
@@ -303,9 +391,11 @@ struct UvPollState {
 }
 
 impl UvPollState {
-    unsafe fn start_with_tls(
+    unsafe fn start_fd_with_tls(
         uv_loop: *mut c_void,
-        listener: StdTcpListener,
+        listener: OwnedFd,
+        is_tcp: bool,
+        unix_guard: Option<crate::UnixSocketGuard>,
         cfg: SocketConfig,
         tls: Option<Arc<TlsStore>>,
         callbacks: Box<dyn UvCallbacks>,
@@ -317,9 +407,8 @@ impl UvPollState {
             ));
         }
         let uv = uv_api()?;
-        listener.set_nonblocking(true)?;
         let listener_fd = listener.as_raw_fd();
-        if cfg.tcp_nodelay {
+        if is_tcp && cfg.tcp_nodelay {
             set_tcp_nodelay(listener_fd);
         }
         let initial_uv_ms = (uv.now)(uv_loop);
@@ -327,10 +416,12 @@ impl UvPollState {
         let state = Rc::new(RefCell::new(Self {
             uv,
             uv_loop,
+            is_tcp,
             cfg,
             tls,
             clock: LoopClock::new(initial_uv_ms),
             listener_handle: std::ptr::null_mut(),
+            unix_guard,
             check_handle: std::ptr::null_mut(),
             timer_handle: std::ptr::null_mut(),
             conns: ConnSlab::with_capacity(256),
@@ -435,6 +526,37 @@ impl UvPollState {
         store.reload_input(input)
     }
 
+    fn add_server_name(
+        state: &Rc<RefCell<Self>>,
+        entry: nifra_tls::SniCertInput,
+    ) -> Result<(), TlsError> {
+        let store = {
+            let st = state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Err(TlsError::MissingMaterial);
+        };
+        store.add_server_name(entry)
+    }
+
+    fn remove_server_name(state: &Rc<RefCell<Self>>, server_name: &str) -> Result<bool, TlsError> {
+        let store = {
+            let st = state.borrow();
+            if st.closed {
+                return Err(TlsError::MissingMaterial);
+            }
+            st.tls.clone()
+        };
+        let Some(store) = store else {
+            return Ok(false);
+        };
+        store.remove_server_name(server_name)
+    }
+
     fn remote_addr(state: &Rc<RefCell<Self>>, conn_id: u32) -> Option<String> {
         state
             .borrow()
@@ -518,7 +640,7 @@ impl UvPollState {
         }
         let armed = conn.core.writable_armed;
         let poll_handle = conn.poll_handle;
-        let no_read = conn.core.read_ended || conn.core.read_paused;
+        let no_read = conn.core.read_ended || conn.core.is_read_paused();
         apply_uv_flush_action(uv, poll_handle, no_read, action);
         if action == FlushAction::DisarmWritable {
             // A producer waiting for the queue to drain is woken at the turn's end.
@@ -530,6 +652,35 @@ impl UvPollState {
         } else {
             WriteResult::Written
         }
+    }
+
+    fn set_read_paused(state: &Rc<RefCell<Self>>, conn_id: u32, paused: bool) -> bool {
+        let mut st = state.borrow_mut();
+        let uv = st.uv;
+        let Some(conn) = st.conns.get_mut(conn_id) else {
+            return false;
+        };
+        if conn.core.app_read_paused == paused {
+            return true;
+        }
+        conn.core.app_read_paused = paused;
+        let events = if conn.core.writable_armed {
+            UV_WRITABLE
+        } else {
+            0
+        } | if conn.core.read_ended || conn.core.is_read_paused() {
+            0
+        } else {
+            UV_READABLE
+        };
+        unsafe {
+            if events == 0 {
+                (uv.poll_stop)(conn.poll_handle);
+            } else {
+                (uv.poll_start)(conn.poll_handle, events, on_client_event);
+            }
+        }
+        true
     }
 
     fn close_conn(state: &Rc<RefCell<Self>>, conn_id: u32) -> bool {
@@ -554,6 +705,9 @@ impl UvPollState {
                     (uv.close)(h, on_listener_close);
                 }
             }
+        }
+        if let Some(mut guard) = st.unix_guard.take() {
+            guard.cleanup_now();
         }
     }
 
@@ -651,7 +805,7 @@ unsafe extern "C" fn on_listener_event(handle: *mut c_void, status: c_int, _even
         return;
     }
     let uv_loop = st.uv_loop;
-    let nodelay = st.cfg.tcp_nodelay;
+    let nodelay = st.is_tcp && st.cfg.tcp_nodelay;
     let now = st.clock.tick((uv.now)(uv_loop));
 
     loop {
@@ -937,7 +1091,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                         apply_uv_flush_action(
                             uv,
                             conn.poll_handle,
-                            conn.core.read_ended || conn.core.read_paused,
+                            conn.core.read_ended || conn.core.is_read_paused(),
                             fa,
                         );
                     }
@@ -1062,7 +1216,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                     apply_uv_flush_action(
                         uv,
                         conn.poll_handle,
-                        conn.core.read_ended || conn.core.read_paused,
+                        conn.core.read_ended || conn.core.is_read_paused(),
                         fa,
                     );
                 }
@@ -1082,7 +1236,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
                     apply_uv_flush_action(
                         uv,
                         conn.poll_handle,
-                        conn.core.read_ended || conn.core.read_paused,
+                        conn.core.read_ended || conn.core.is_read_paused(),
                         fa,
                     );
                 }
@@ -1166,7 +1320,7 @@ unsafe extern "C" fn on_check_event(handle: *mut c_void) {
                         apply_uv_flush_action(
                             uv,
                             conn.poll_handle,
-                            conn.core.read_ended || conn.core.read_paused,
+                            conn.core.read_ended || conn.core.is_read_paused(),
                             fa,
                         );
                     }
@@ -1265,7 +1419,7 @@ unsafe extern "C" fn on_timer_event(handle: *mut c_void) {
             if fa == FlushAction::Close {
                 close.push(id);
             } else {
-                let no_read = conn.core.read_ended || conn.core.read_paused;
+                let no_read = conn.core.read_ended || conn.core.is_read_paused();
                 apply_uv_flush_action(uv, conn.poll_handle, no_read, fa);
             }
         }

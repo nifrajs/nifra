@@ -3216,6 +3216,51 @@ async function writeSocketResponse(
  * under a registry symbol so the package's public exports stay exactly what they were; the
  * `@nifrajs/node/transport` entry reads it back.
  */
+function createStaticResolver(
+  staticOption: ServeOptions["static"],
+): (
+  method: string,
+  pathname: string,
+  getHeader: (name: string) => string | null,
+  buildRequest: () => Request,
+  authority?: string,
+) => NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined {
+  if (typeof staticOption !== "function") {
+    throw new TypeError(
+      "[nifra/node] `static` takes a function; pass a directory as `static: serveStatic({ dir })`",
+    )
+  }
+  const states = nativeMountsOf(staticOption)
+  if (states === undefined) {
+    return (_method, _pathname, _getHeader, buildRequest) => {
+      const answer = staticOption(buildRequest())
+      if (answer === undefined) return undefined
+      if (answer instanceof Promise) {
+        return answer.then((response) =>
+          response === undefined ? undefined : ({ kind: "response", response } as const),
+        )
+      }
+      return { kind: "response", response: answer }
+    }
+  }
+  return (method, pathname, getHeader, _buildRequest, authority) => {
+    if (method !== "GET" && method !== "HEAD") return undefined
+    const headers: IncomingHttpHeaders = {}
+    for (const h of ["if-none-match", "if-modified-since", "range", "if-range"]) {
+      const v = getHeader(h)
+      if (v !== null) headers[h] = v
+    }
+    return serveMounts(
+      states,
+      0,
+      staticPathOf(pathname),
+      () => authority ?? getHeader("host") ?? "",
+      method,
+      { headers },
+    )
+  }
+}
+
 Object.defineProperty(serve, Symbol.for("@nifrajs/node/transport-kit"), {
   value: {
     runtime: NODE_OUTCOME_RUNTIME,
@@ -3226,5 +3271,7 @@ Object.defineProperty(serve, Symbol.for("@nifrajs/node/transport-kit"), {
     hostPolicyOf,
     resolveRequestHost,
     resolveRequestTarget,
+    installFastResponse,
+    createStaticResolver,
   },
 })

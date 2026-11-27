@@ -1,0 +1,612 @@
+/** Integration coverage for PR 1 engine parity features: SNI, UDS, compression, static/fastResponse, streaming request bodies, WS backpressure/reason/deflate/RFC 8441. */
+
+import assert from "node:assert/strict"
+import { randomBytes, X509Certificate } from "node:crypto"
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises"
+import { request as httpRequest } from "node:http"
+import { connect as http2Connect } from "node:http2"
+import { createConnection } from "node:net"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { test } from "node:test"
+import { type ConnectionOptions, connect as tlsConnect } from "node:tls"
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib"
+import { server } from "@nifrajs/core"
+import { websocket } from "@nifrajs/core/ws"
+import { WebSocket as WsClient } from "ws"
+import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
+import { serve, serveStatic } from "../src/index.ts"
+
+const fingerprintOf = (pem: string): string => new X509Certificate(pem).fingerprint256
+
+function tlsFingerprintForSni(
+  port: number,
+  servername: string | undefined,
+  trustedCa: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const tlsOpts: ConnectionOptions = {
+      port,
+      host: "127.0.0.1",
+      ca: trustedCa,
+      checkServerIdentity: () => undefined,
+    }
+    if (servername !== undefined) tlsOpts.servername = servername
+    const sock = tlsConnect(tlsOpts, () => {
+      const fp = sock.getPeerCertificate().fingerprint256
+      sock.destroy()
+      resolve(fp)
+    })
+    sock.on("error", reject)
+  })
+}
+
+function encodeClientWsFrame(opcode: number, payload: Buffer, fin = true): Buffer {
+  const mask = randomBytes(4)
+  const len = payload.byteLength
+  let header: Buffer
+  if (len < 126) {
+    header = Buffer.allocUnsafe(6)
+    header[0] = (fin ? 0x80 : 0x00) | (opcode & 0x0f)
+    header[1] = 0x80 | len
+    mask.copy(header, 2)
+  } else if (len <= 0xffff) {
+    header = Buffer.allocUnsafe(8)
+    header[0] = (fin ? 0x80 : 0x00) | (opcode & 0x0f)
+    header[1] = 0x80 | 126
+    header.writeUInt16BE(len, 2)
+    mask.copy(header, 4)
+  } else {
+    header = Buffer.allocUnsafe(14)
+    header[0] = (fin ? 0x80 : 0x00) | (opcode & 0x0f)
+    header[1] = 0x80 | 127
+    header.writeBigUInt64BE(BigInt(len), 2)
+    mask.copy(header, 10)
+  }
+  const masked = Buffer.allocUnsafe(len)
+  for (let i = 0; i < len; i++) {
+    masked[i] = (payload[i] ?? 0) ^ (mask[i & 3] ?? 0)
+  }
+  return Buffer.concat([header, masked])
+}
+
+function decodeServerWsFrame(
+  buf: Buffer,
+): { opcode: number; payload: Buffer; consumed: number } | null {
+  if (buf.byteLength < 2) return null
+  const first = buf[0] ?? 0
+  const second = buf[1] ?? 0
+  let len = second & 0x7f
+  let offset = 2
+  if (len === 126) {
+    if (buf.byteLength < 4) return null
+    len = buf.readUInt16BE(2)
+    offset = 4
+  } else if (len === 127) {
+    if (buf.byteLength < 10) return null
+    len = Number(buf.readBigUInt64BE(2))
+    offset = 10
+  }
+  if (buf.byteLength < offset + len) return null
+  return {
+    opcode: first & 0x0f,
+    payload: buf.subarray(offset, offset + len),
+    consumed: offset + len,
+  }
+}
+
+test("TLS SNI selects exact, wildcard, fallback, and runtime-added/removed certs", async () => {
+  const [defCert, exactCert, wildCert, runtimeCert] = await Promise.all([
+    selfSignedCertificate(),
+    selfSignedCertificate(),
+    selfSignedCertificate(),
+    selfSignedCertificate(),
+  ])
+  const running = await serve(
+    server().get("/ok", () => ({ ok: true })),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: {
+        cert: defCert.cert,
+        key: defCert.key,
+        serverNames: [
+          { serverName: "api.example.test", cert: exactCert.cert, key: exactCert.key },
+          { serverName: "*.wild.test", cert: wildCert.cert, key: wildCert.key },
+        ],
+      },
+    },
+  )
+  try {
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "api.example.test", exactCert.cert),
+      fingerprintOf(exactCert.cert),
+    )
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "sub.wild.test", wildCert.cert),
+      fingerprintOf(wildCert.cert),
+    )
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "a.b.wild.test", defCert.cert),
+      fingerprintOf(defCert.cert),
+    )
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "unknown.test", defCert.cert),
+      fingerprintOf(defCert.cert),
+    )
+
+    running.addServerName({
+      serverName: "dyn.example.test",
+      cert: runtimeCert.cert,
+      key: runtimeCert.key,
+    })
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "dyn.example.test", runtimeCert.cert),
+      fingerprintOf(runtimeCert.cert),
+    )
+    assert.equal(running.removeServerName("dyn.example.test"), true)
+    assert.equal(running.removeServerName("dyn.example.test"), false)
+    assert.equal(
+      await tlsFingerprintForSni(running.port, "dyn.example.test", defCert.cert),
+      fingerprintOf(defCert.cert),
+    )
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("Unix domain socket listener answers GET and POST over serve({ path })", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nifra-uds-"))
+  const sockPath = join(dir, "app.sock")
+  const running = await serve(
+    server()
+      .get("/hello", () => ({ transport: "unix" }))
+      .post("/echo", async (c) => ({ body: await c.req.text() })),
+    { path: sockPath },
+  )
+  try {
+    assert.equal(running.path, sockPath)
+    const getBody = await new Promise<string>((resolve, reject) => {
+      const req = httpRequest({ socketPath: sockPath, path: "/hello", method: "GET" }, (res) => {
+        const chunks: Buffer[] = []
+        res.on("data", (c) => chunks.push(c))
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      })
+      req.on("error", reject)
+      req.end()
+    })
+    assert.deepEqual(JSON.parse(getBody), { transport: "unix" })
+
+    const postBody = await new Promise<string>((resolve, reject) => {
+      const req = httpRequest({ socketPath: sockPath, path: "/echo", method: "POST" }, (res) => {
+        const chunks: Buffer[] = []
+        res.on("data", (c) => chunks.push(c))
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      })
+      req.on("error", reject)
+      req.end("unix-payload")
+    })
+    assert.deepEqual(JSON.parse(postBody), { body: "unix-payload" })
+
+    await running.stop({ drainMs: 50 })
+    await assert.rejects(() => stat(sockPath))
+    // Re-binding the exact same socket path succeeds after stop() unlinked the owned file.
+    const rebound = await serve(
+      server().get("/hello", () => ({ rebound: true })),
+      {
+        path: sockPath,
+      },
+    )
+    try {
+      const rb = await new Promise<string>((resolve, reject) => {
+        const req = httpRequest({ socketPath: sockPath, path: "/hello", method: "GET" }, (res) => {
+          const chunks: Buffer[] = []
+          res.on("data", (c) => chunks.push(c))
+          res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+        })
+        req.on("error", reject)
+        req.end()
+      })
+      assert.deepEqual(JSON.parse(rb), { rebound: true })
+    } finally {
+      await rebound.stop({ drainMs: 50 })
+    }
+  } finally {
+    await running.stop({ drainMs: 50 })
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("native compression negotiates br/gzip/deflate by quality and respects minBytes & explicit encoding", async () => {
+  const big = "x".repeat(4096)
+  const small = "ok"
+  const app = server()
+    .get("/big", () => ({ data: big }))
+    .get("/small", () => ({ data: small }))
+    .get(
+      "/pre",
+      () =>
+        new Response(big, {
+          headers: { "content-type": "text/plain", "content-encoding": "identity" },
+        }),
+    )
+    .get(
+      "/vary-origin",
+      () =>
+        new Response(JSON.stringify({ data: big }), {
+          headers: { "content-type": "application/json", vary: "Origin" },
+        }),
+    )
+    .get("/img", () => new Response(big, { headers: { "content-type": "image/png" } }))
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    compression: { minBytes: 512 },
+  })
+  try {
+    const reqEnc = (
+      path: string,
+      ae: string,
+    ): Promise<{ ce: string | null; vary: string | null; body: Buffer }> =>
+      new Promise((resolve, reject) => {
+        const req = httpRequest(
+          { port: running.port, host: "127.0.0.1", path, headers: { "accept-encoding": ae } },
+          (res) => {
+            const chunks: Buffer[] = []
+            res.on("data", (c) => chunks.push(c))
+            res.on("end", () =>
+              resolve({
+                ce:
+                  typeof res.headers["content-encoding"] === "string"
+                    ? res.headers["content-encoding"]
+                    : null,
+                vary: typeof res.headers.vary === "string" ? res.headers.vary : null,
+                body: Buffer.concat(chunks),
+              }),
+            )
+          },
+        )
+        req.on("error", reject)
+        req.end()
+      })
+
+    const br = await reqEnc("/big", "gzip;q=0.5, br;q=0.9")
+    assert.equal(br.ce, "br")
+    assert.match(br.vary ?? "", /accept-encoding/i)
+    assert.deepEqual(JSON.parse(brotliDecompressSync(br.body).toString("utf8")), { data: big })
+
+    const gz = await reqEnc("/big", "deflate;q=0.4, gzip;q=0.8")
+    assert.equal(gz.ce, "gzip")
+    assert.deepEqual(JSON.parse(gunzipSync(gz.body).toString("utf8")), { data: big })
+
+    const df = await reqEnc("/big", "deflate")
+    assert.equal(df.ce, "deflate")
+    assert.deepEqual(JSON.parse(inflateSync(df.body).toString("utf8")), { data: big })
+
+    const idResp = await reqEnc("/big", "identity")
+    assert.equal(idResp.ce, null)
+    assert.match(idResp.vary ?? "", /accept-encoding/i)
+
+    const varyOrigin = await reqEnc("/vary-origin", "gzip")
+    assert.equal(varyOrigin.ce, "gzip")
+    assert.match(varyOrigin.vary ?? "", /origin/i)
+    assert.match(varyOrigin.vary ?? "", /accept-encoding/i)
+
+    assert.equal((await reqEnc("/small", "br, gzip")).ce, null)
+    assert.equal((await reqEnc("/pre", "br, gzip")).ce, "identity")
+    assert.equal((await reqEnc("/img", "br, gzip")).ce, null)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("static and fastResponse parity with @nifrajs/node", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nifra-static-"))
+  await writeFile(join(dir, "hello.txt"), "from-disk")
+  await writeFile(join(dir, ".secret"), "nope")
+  const app = server()
+    .get("/hello.txt", () => ({ shadowed: true }))
+    .get("/fast", () => new Response("fast-ok"))
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    static: serveStatic({ dir, prefix: "/", fallthrough: true }),
+    fastResponse: true,
+  })
+  try {
+    const fileRes = await fetch(`http://127.0.0.1:${running.port}/hello.txt`)
+    assert.equal(fileRes.status, 200)
+    assert.equal(await fileRes.text(), "from-disk")
+
+    const dotRes = await fetch(`http://127.0.0.1:${running.port}/.secret`)
+    assert.equal(dotRes.status, 404)
+
+    const fastRes = await fetch(`http://127.0.0.1:${running.port}/fast`)
+    assert.equal(fastRes.status, 200)
+    assert.equal(await fastRes.text(), "fast-ok")
+  } finally {
+    await running.stop({ drainMs: 50 })
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("streaming HTTP/1.1 and HTTP/2 request bodies deliver chunks before upload finishes", async () => {
+  let releaseSecondChunk: (() => void) | undefined
+  let firstChunkArrived = new Promise<void>((resolve) => {
+    releaseSecondChunk = resolve
+  })
+  const app = server()
+    .post("/stream", async (c) => {
+      const stream = c.req.body
+      assert.ok(stream !== null)
+      const reader = stream.getReader()
+      const first = await reader.read()
+      assert.equal(first.done, false)
+      const firstText = new TextDecoder().decode(first.value)
+      releaseSecondChunk?.()
+      const rest: Uint8Array[] = []
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) break
+        rest.push(next.value)
+      }
+      return { first: firstText, rest: Buffer.concat(rest).toString("utf8") }
+    })
+    .post("/json-stream", async (c) => ({ parsed: await c.req.json() }))
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    http2: true,
+    engine: { streamRequestBodies: true },
+  })
+  try {
+    // HTTP/1.1 chunked upload pausing between chunk 1 arrival in handler and chunk 2
+    const h1Body = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+        sock.write(
+          "POST /stream HTTP/1.1\r\nHost: x\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n",
+        )
+        void firstChunkArrived.then(() => {
+          sock.write("6\r\n-world\r\n0\r\n\r\n")
+        })
+      })
+      const chunks: Buffer[] = []
+      sock.on("data", (c) => chunks.push(c))
+      sock.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      sock.on("error", reject)
+    })
+    assert.match(h1Body, /"first":"hello"/)
+    assert.match(h1Body, /"rest":"-world"/)
+
+    // Reset barrier for HTTP/2 streaming upload
+    firstChunkArrived = new Promise<void>((resolve) => {
+      releaseSecondChunk = resolve
+    })
+    const h2 = http2Connect(`http://127.0.0.1:${running.port}`)
+    const h2Body = await new Promise<string>((resolve, reject) => {
+      const req = h2.request({ ":method": "POST", ":path": "/stream" })
+      const chunks: Buffer[] = []
+      req.on("data", (c) => chunks.push(c))
+      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+      req.on("error", reject)
+      req.write("part1-")
+      void firstChunkArrived.then(() => req.end("part2"))
+    })
+    h2.close()
+    assert.deepEqual(JSON.parse(h2Body), { first: "part1-", rest: "part2" })
+
+    const jsonRes = await fetch(`http://127.0.0.1:${running.port}/json-stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ streamed: true }),
+    })
+    assert.equal(jsonRes.status, 200)
+    assert.deepEqual(await jsonRes.json(), { parsed: { streamed: true } })
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("route deflate: false overrides global wsDeflate: true", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/no-deflate", {
+      deflate: false,
+      message(ws, data) {
+        ws.send(data)
+      },
+    })
+    .ws("/with-deflate", {
+      message(ws, data) {
+        ws.send(data)
+      },
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", wsDeflate: true })
+  try {
+    const offClient = new WsClient(`ws://127.0.0.1:${running.port}/no-deflate`, {
+      perMessageDeflate: true,
+    })
+    let offExt = ""
+    offClient.on("upgrade", (res) => {
+      offExt = String(res.headers["sec-websocket-extensions"] ?? "")
+    })
+    await new Promise<void>((r) => offClient.once("open", () => r()))
+    assert.equal(offExt, "")
+    offClient.close()
+
+    const onClient = new WsClient(`ws://127.0.0.1:${running.port}/with-deflate`, {
+      perMessageDeflate: true,
+    })
+    let onExt = ""
+    onClient.on("upgrade", (res) => {
+      onExt = String(res.headers["sec-websocket-extensions"] ?? "")
+    })
+    await new Promise<void>((r) => onClient.once("open", () => r()))
+    assert.match(onExt, /permessage-deflate/)
+    onClient.close()
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("WebSocket peer close reason, native bufferedAmount, per-route deflate, and RFC 8441 H2 WS", async () => {
+  let closeObserved: { code: number; reason: string; buffered: number } | undefined
+  const app = server()
+    .use(websocket())
+    .ws("/plain", {
+      open(ws) {
+        closeObserved = { code: 0, reason: "", buffered: ws.getBufferedAmount?.() ?? -1 }
+      },
+      message(ws, data) {
+        ws.send(data)
+      },
+      close(_ws, code, reason) {
+        if (closeObserved !== undefined) closeObserved = { ...closeObserved, code, reason }
+      },
+    })
+    .ws("/compressed", {
+      deflate: true,
+      message(ws, data) {
+        ws.send(data)
+      },
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1", http2: true })
+  try {
+    // 1. Peer close reason + bufferedAmount
+    const client = new WsClient(`ws://127.0.0.1:${running.port}/plain`, {
+      perMessageDeflate: false,
+    })
+    await new Promise<void>((r) => client.once("open", () => r()))
+    client.close(4002, "bye-from-peer")
+    await new Promise((r) => setTimeout(r, 40))
+    assert.equal(closeObserved?.buffered, 0)
+    assert.equal(closeObserved?.code, 4002)
+    assert.equal(closeObserved?.reason, "bye-from-peer")
+
+    // 2. Per-route permessage-deflate negotiation
+    const deflated = new WsClient(`ws://127.0.0.1:${running.port}/compressed`, {
+      perMessageDeflate: true,
+    })
+    let negotiatedExt = ""
+    deflated.on("upgrade", (res) => {
+      negotiatedExt = String(res.headers["sec-websocket-extensions"] ?? "")
+    })
+    await new Promise<void>((r) => deflated.once("open", () => r()))
+    assert.match(negotiatedExt, /permessage-deflate/)
+    const echoed = new Promise<string>((r) => deflated.once("message", (d) => r(d.toString())))
+    deflated.send("compressed-hello")
+    assert.equal(await echoed, "compressed-hello")
+    deflated.close()
+
+    // 3. RFC 8441 Extended CONNECT WebSocket over HTTP/2
+    const h2 = http2Connect(`http://127.0.0.1:${running.port}`)
+    await new Promise<void>((resolve, reject) => {
+      h2.once("remoteSettings", (settings) => {
+        assert.equal(settings.enableConnectProtocol, true)
+        resolve()
+      })
+      h2.once("error", reject)
+    })
+    const h2Echo = await new Promise<string>((resolve, reject) => {
+      const stream = h2.request({
+        ":method": "CONNECT",
+        ":protocol": "websocket",
+        ":path": "/plain",
+      })
+      stream.on("error", reject)
+      stream.once("response", (headers) => {
+        assert.equal(headers[":status"], 200)
+        stream.write(encodeClientWsFrame(0x1, Buffer.from("hello-h2-ws")))
+      })
+      let acc = Buffer.alloc(0)
+      stream.on("data", (chunk: Buffer) => {
+        acc = Buffer.concat([acc, chunk])
+        const frame = decodeServerWsFrame(acc)
+        if (frame !== null && frame.opcode === 0x1) {
+          stream.end(encodeClientWsFrame(0x8, Buffer.from([0x03, 0xe8])))
+          resolve(frame.payload.toString("utf8"))
+        }
+      })
+    })
+    h2.close()
+    assert.equal(h2Echo, "hello-h2-ws")
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("WebSocket wsMaxBackpressure + wsCloseOnBackpressureLimit closes stalled sockets", async () => {
+  const closedCodes: number[] = []
+  const app = server()
+    .use(websocket())
+    .ws("/flood", {
+      open(ws) {
+        const big = Buffer.alloc(128 * 1024, 0x61)
+        for (let i = 0; i < 64; i++) {
+          if (ws.readyState !== 1) break
+          ws.send(big)
+        }
+      },
+      close(_ws, code) {
+        closedCodes.push(code)
+      },
+    })
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    engine: {
+      wsMaxBackpressure: 1024,
+      wsCloseOnBackpressureLimit: true,
+    },
+  })
+  try {
+    const client = new WsClient(`ws://127.0.0.1:${running.port}/flood`)
+    client.on("error", () => {})
+    await new Promise<void>((resolve) => {
+      client.once("open", () => client.pause())
+      client.once("close", () => resolve())
+      setTimeout(resolve, 1000)
+    })
+    assert.ok(closedCodes.length >= 1)
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
+test("releasing an unconsumed streaming request body terminates detached readers", async () => {
+  let pipeResult: Promise<void> | undefined
+  const app = server().post("/early-return", (c) => {
+    const body = c.req.body
+    assert.ok(body !== null)
+    pipeResult = body.pipeTo(new WritableStream())
+    // Attach a no-op rejection handler in the handler turn because `release()` runs before the client receives the TCP response.
+    void pipeResult.catch(() => {})
+    return { ok: true }
+  })
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    engine: { streamRequestBodies: true },
+  })
+  const sock = createConnection({ port: running.port, host: "127.0.0.1" }, () => {
+    // Send only the first chunk and keep the TCP connection open until pipeTo rejects.
+    sock.write(
+      "POST /early-return HTTP/1.1\r\nHost: x\r\ntransfer-encoding: chunked\r\nconnection: keep-alive\r\n\r\n5\r\nhello\r\n",
+    )
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let buf = ""
+      sock.on("data", (chunk) => {
+        buf += chunk.toString("utf8")
+        if (buf.includes('"ok":true')) resolve()
+      })
+      sock.on("error", reject)
+    })
+    assert.ok(pipeResult !== undefined)
+    await assert.rejects(pipeResult, /released/i)
+  } finally {
+    sock.destroy()
+    await running.stop({ drainMs: 50 })
+  }
+})

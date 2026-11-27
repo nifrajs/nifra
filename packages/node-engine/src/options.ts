@@ -19,6 +19,33 @@ export interface EngineSocket {
   query(): string
   /** The peer's address, once the socket is open. */
   remoteAddress(): string | undefined
+  /** Queued outbound socket bytes currently waiting for the peer to read. */
+  getBufferedAmount(): number
+}
+
+/** Per-hostname certificate entry for TLS Server Name Indication (SNI), matching exact or single-level wildcard (`*.example.com`). */
+export interface TlsSniEntry {
+  readonly serverName: string
+  readonly cert?: string | ArrayBuffer | Uint8Array
+  readonly key?: string | ArrayBuffer | Uint8Array
+  readonly cert_file_name?: string
+  readonly key_file_name?: string
+  /** Passphrase protecting an encrypted private key PEM (`key` or `key_file_name`). */
+  readonly passphrase?: string
+}
+
+/** Native HTTP response compression (`br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+export interface CompressionOptions {
+  /** Enable or disable compression. Default `true` when an options object is passed. */
+  readonly enabled?: boolean
+  /** Allow Brotli (`br`). Default `true`. */
+  readonly brotli?: boolean
+  /** Allow Gzip (`gzip`). Default `true`. */
+  readonly gzip?: boolean
+  /** Allow Deflate (`deflate`). Default `true`. */
+  readonly deflate?: boolean
+  /** Minimum uncompressed body length in bytes before compressing. Default `1024`. */
+  readonly minBytes?: number
 }
 
 /** In-process TLS: inline PEM or file names, encrypted key passphrase, mTLS & TLS policy. */
@@ -51,6 +78,8 @@ export interface TlsOptions {
   readonly ciphersuites?: string
   /** Colon-separated ECDH/KEM key exchange group list (e.g. `"X25519:P-256:P-384"`). */
   readonly ecdhCurve?: string
+  /** Additional SNI certificates keyed by hostname or single-level `*.domain` wildcard. */
+  readonly serverNames?: readonly TlsSniEntry[]
   /**
    * Session-ticket keys: one or more 48-byte entries (16-byte name, 16-byte HMAC secret, 16-byte AES
    * key), newest first, so a rotation keeps resuming sessions. Share them across workers.
@@ -113,6 +142,12 @@ export interface EngineTuning {
   readonly writeHighWaterMark?: number
   /** Optional maximum lifetime in ms for any WebSocket connection. 0 disables. */
   readonly wsMaxLifetimeMs?: number
+  /** Per-socket queued outbound byte threshold at which `ws.send()` rejects backpressured sends (0 = unlimited). */
+  readonly wsMaxBackpressure?: number
+  /** Close the WebSocket connection when queued bytes hit `wsMaxBackpressure`. */
+  readonly wsCloseOnBackpressureLimit?: boolean
+  /** Stream HTTP/1.1 & HTTP/2 request bodies incrementally to `req.body` instead of buffering whole payloads. */
+  readonly streamRequestBodies?: boolean
   /** Bind with `SO_REUSEPORT` so several processes share the port. Off by default; `serveCluster` sets it. */
   readonly reusePort?: boolean
 }
@@ -137,12 +172,21 @@ export interface FetchHandler {
 }
 
 export interface ServeOptions extends HostPolicyOptions {
-  readonly port: number
+  /** TCP port to bind (`0` for ephemeral). Omit when binding a Unix domain socket via {@link path}. */
+  readonly port?: number
   readonly hostname?: string
+  /** Unix domain socket path to listen on (mutually exclusive with a TCP `hostname`/`port` bind). */
+  readonly path?: string
   /** The scheme `Request.url` carries. `"https"` by default when {@link tls} is set, else `"http"`. */
   readonly protocol?: "http" | "https"
   /** In-process TLS, inline PEM or file names. */
   readonly tls?: TlsOptions
+  /** Static file handler (`serveStatic(...)`) or custom middleware consulted before routes on GET/HEAD. */
+  readonly static?: (request: Request) => Response | undefined | Promise<Response | undefined>
+  /** Replace `globalThis.Response` with the lazy direct-write response wrapper to skip stream drains. */
+  readonly fastResponse?: boolean
+  /** Native HTTP response compression (`br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */
+  readonly compression?: boolean | CompressionOptions
   /**
    * Largest request body the engine accepts, 413 beyond it. The engine buffers a body whole before
    * the app runs, so this bounds the memory one request can hold. Default: 1 MiB, or the largest
@@ -189,8 +233,10 @@ export interface ServeOptions extends HostPolicyOptions {
 }
 
 export interface EngineServer {
-  /** The bound port (resolved when `port: 0` is requested). */
+  /** The bound port (resolved when `port: 0` is requested, or `0` for Unix domain sockets). */
   readonly port: number
+  /** Bound Unix domain socket path when started with `ServeOptions.path`. */
+  readonly path?: string
   /**
    * Run the app's `onStopping` hooks, keep serving for `delayMs`, stop accepting connections, let
    * in-flight requests finish for up to `drainMs`, then close what is left and run `onStop`.
@@ -205,6 +251,10 @@ export interface EngineServer {
    * when the server has no TLS or has stopped.
    */
   reloadTls(tls?: NonNullable<ServeOptions["tls"]>): void
+  /** Add or replace an SNI certificate entry at runtime without restarting the listener. */
+  addServerName(entry: TlsSniEntry): void
+  /** Remove an SNI certificate entry at runtime. Returns `true` if one was removed. */
+  removeServerName(serverName: string): boolean
   [Symbol.asyncDispose](): Promise<void>
 }
 
