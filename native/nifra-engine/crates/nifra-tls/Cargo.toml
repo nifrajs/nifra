@@ -10,4 +10,3 @@ description = "Sans-I/O rustls + aws-lc-rs TLS layer with atomic hot reload and 
 arc-swap.workspace = true
 aws-lc-rs.workspace = true
 rustls.workspace = true
-rustls-pemfile.workspace = true

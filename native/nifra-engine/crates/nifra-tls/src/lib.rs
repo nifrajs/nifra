@@ -2,7 +2,7 @@
 //! and session-ticket preservation across reloads.
 
 use std::fs;
-use std::io::{self, BufReader, Cursor, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
@@ -10,6 +10,7 @@ use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use aws_lc_rs::digest::{Context, SHA256};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rustls::crypto::{aws_lc_rs as tls_aws_lc_rs, CryptoProvider, SupportedKxGroup};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
 use rustls::server::danger::ClientCertVerifier;
 use rustls::server::{ProducesTickets, WebPkiClientVerifier};
@@ -630,8 +631,7 @@ fn resolve_kx_groups(
 }
 
 fn parse_ca_store(ca_pem: &[u8]) -> Result<RootCertStore, TlsError> {
-    let mut reader = Cursor::new(ca_pem);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(ca_pem)
         .collect::<Result<_, _>>()
         .map_err(|_| TlsError::InvalidCaCerts)?;
     if certs.is_empty() {
@@ -645,15 +645,10 @@ fn parse_ca_store(ca_pem: &[u8]) -> Result<RootCertStore, TlsError> {
 }
 
 fn parse_crls(crl_pem: &[u8]) -> Result<Vec<CertificateRevocationListDer<'static>>, TlsError> {
-    let mut reader = BufReader::new(Cursor::new(crl_pem));
-    let mut crls = Vec::new();
-    for item in rustls_pemfile::read_all(&mut reader) {
-        match item {
-            Ok(rustls_pemfile::Item::Crl(crl)) => crls.push(crl),
-            Ok(_) => {}
-            Err(_) => return Err(TlsError::InvalidCrl),
-        }
-    }
+    let crls: Vec<CertificateRevocationListDer<'static>> =
+        CertificateRevocationListDer::pem_slice_iter(crl_pem)
+            .collect::<Result<_, _>>()
+            .map_err(|_| TlsError::InvalidCrl)?;
     if crls.is_empty() {
         return Err(TlsError::InvalidCrl);
     }
@@ -696,18 +691,15 @@ fn build_config(
     mat: &ResolvedMaterial,
     ticketer: Arc<dyn ProducesTickets>,
 ) -> Result<ServerConfig, TlsError> {
-    let mut cert_reader = Cursor::new(&mat.cert);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&mat.cert)
         .collect::<Result<_, _>>()
         .map_err(|_| TlsError::InvalidCertChain)?;
     if certs.is_empty() {
         return Err(TlsError::InvalidCertChain);
     }
 
-    let mut key_reader = Cursor::new(&mat.key);
-    let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|_| TlsError::InvalidPrivateKey)?
-        .ok_or(TlsError::InvalidPrivateKey)?;
+    let key: PrivateKeyDer<'static> =
+        PrivateKeyDer::from_pem_slice(&mat.key).map_err(|_| TlsError::InvalidPrivateKey)?;
 
     let versions =
         resolve_protocol_versions(input.min_version.as_deref(), input.max_version.as_deref())?;
@@ -1011,5 +1003,27 @@ mod tests {
         assert_eq!(next.ecdh_curve, base.ecdh_curve);
         assert_eq!(next.ticket_keys, base.ticket_keys);
         assert_eq!(next.alpn_protocols, vec![b"http/1.1".to_vec()]);
+    }
+
+    #[test]
+    fn pem_object_parsing_handles_mixed_sections_and_malformed_inputs() {
+        // `parse_crls` skips non-CRL PEM blocks and decodes `X509 CRL` sections.
+        let mixed = b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n\
+-----BEGIN X509 CRL-----\nBAUG\n-----END X509 CRL-----\n";
+        let crls = parse_crls(mixed).unwrap();
+        assert_eq!(crls.len(), 1);
+        assert_eq!(crls[0].as_ref(), &[4, 5, 6]);
+
+        // Only non-CRL PEM blocks -> still rejected as missing CRL.
+        let cert_only = b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n";
+        assert!(matches!(parse_crls(cert_only), Err(TlsError::InvalidCrl)));
+
+        // Truncated PEM section (missing END marker) -> rejected cleanly.
+        let truncated = b"-----BEGIN X509 CRL-----\nBAUG\n";
+        assert!(matches!(parse_crls(truncated), Err(TlsError::InvalidCrl)));
+        assert!(matches!(
+            parse_ca_store(b"-----BEGIN CERTIFICATE-----\nAQID\n"),
+            Err(TlsError::InvalidCaCerts)
+        ));
     }
 }
