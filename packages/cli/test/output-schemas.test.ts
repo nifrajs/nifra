@@ -335,7 +335,7 @@ describe("a generated schema over time", () => {
     expect((await outputSchemas(root)).entries.map((e) => e.status)).toEqual(["current"])
   }, 90_000)
 
-  test("reordering fields stays current when it also reorders union members", async () => {
+  test("reordering fields keeps a union current and hand-editing union order is stale", async () => {
     const file = "routes/pick.backend.ts"
     const root = project({
       [file]: [
@@ -352,8 +352,8 @@ describe("a generated schema over time", () => {
     const branchB = "t.object({\n  m: t.boolean(),\n  n: t.number(),\n})"
     const branchA = "t.object({\n  z: t.string(),\n  a: t.number(),\n})"
     const reorderedSchema = generated.replace(
-      `t.union([${branchB}, ${branchA}])`,
       `t.union([${branchA}, ${branchB}])`,
+      `t.union([${branchB}, ${branchA}])`,
     )
     expect(reorderedSchema).not.toBe(generated)
     writeFileSync(join(root, file), reorderedSchema)
@@ -425,11 +425,11 @@ describe("a generated schema over time", () => {
     const generated = read(root, file)
     const stringBranch = "t.object({\n  at: t.string(),\n})"
     const dateBranch = "t.object({\n  z: t.optional(t.number()),\n  at: t.date(),\n})"
-    const original = `t.union([${stringBranch}, ${dateBranch}])`
+    const original = `t.union([${dateBranch}, ${stringBranch}])`
     expect(generated).toContain(original)
     writeFileSync(
       join(root, file),
-      generated.replace(original, `t.union([${dateBranch}, ${stringBranch}])`),
+      generated.replace(original, `t.union([${stringBranch}, ${dateBranch}])`),
     )
     expect((await outputSchemas(root)).entries).toEqual([
       expect.objectContaining({ status: "stale", edited: true }),
@@ -439,9 +439,27 @@ describe("a generated schema over time", () => {
       join(root, file),
       generated.replace("z?: number; at: Date", "at: Date; z?: number"),
     )
-    expect((await outputSchemas(root)).entries).toEqual([
-      expect.objectContaining({ status: "stale" }),
-    ])
+    expect((await outputSchemas(root)).entries.map((entry) => entry.status)).toEqual(["current"])
+  }, 60_000)
+
+  test("TypeScript 5, 6 and 7 agree on the order of branches that can decode dates", async () => {
+    const file = "routes/pick.backend.ts"
+    const source = [
+      'type A = Pick<{ z?: number; at: Date }, "at" | "z">',
+      "type B = { at: string }",
+      "export function loader(): A | B { return { at: new Date(0) } }",
+      "",
+    ].join("\n")
+    const legacy = project({ [file]: source }, "typescript5")
+    expect((await outputSchemas(legacy, { write: true })).written).toEqual([file])
+    const generated = read(legacy, file)
+
+    for (const typescript of ["typescript", "typescript7"]) {
+      const root = project({ [file]: generated }, typescript)
+      expect(
+        (await outputSchemas(root, { check: true })).entries.map((entry) => entry.status),
+      ).toEqual(["current"])
+    }
   }, 60_000)
 
   test("formatting the generated schema by hand keeps it current; deleting the marker hands it over", async () => {

@@ -156,6 +156,13 @@ const TYPED_ARRAY = /^(?:Big)?(?:Int|Uint|Float)(?:8|16|32|64)(?:Clamped)?Array$
 
 const sameShape = (a: Shape, b: Shape): boolean => JSON.stringify(a) === JSON.stringify(b)
 
+// Only object shapes have a fields array. Sort it at every depth for ranking, leaving the field
+// order in the generated declaration intact.
+const orderFieldsForRank = (key: string, value: unknown): unknown =>
+  key === "fields" && Array.isArray(value)
+    ? [...value].sort((a: Field, b: Field) => codeUnitOrder(a.name, b.name))
+    : value
+
 function unionOf(input: readonly Shape[]): Shape {
   const flat = input
     .flatMap((member) => (member.kind === "union" ? member.members : [member]))
@@ -174,11 +181,14 @@ function unionOf(input: readonly Shape[]): Shape {
   }
   if (members.length === 0) return { kind: "never" }
   if (members.length === 1 && members[0] !== undefined) return members[0]
-  // TypeScript versions order union members differently; a canonical order keeps the generated text,
-  // and the hash in its marker, the same under each. `null` reads best last.
-  const rank = (shape: Shape): string =>
-    `${shape.kind === "null" || shape.kind === "undefined" ? 1 : 0}${JSON.stringify(shape)}`
-  return { kind: "union", members: members.sort((a, b) => codeUnitOrder(rank(a), rank(b))) }
+  // Checker enumeration order must not decide which matching union branch decodes a value.
+  // Keep null and undefined last as before.
+  const ranked = members.map((member) => ({
+    member,
+    key: `${member.kind === "null" || member.kind === "undefined" ? 1 : 0}${JSON.stringify(member, orderFieldsForRank)}`,
+  }))
+  ranked.sort((a, b) => codeUnitOrder(a.key, b.key))
+  return { kind: "union", members: ranked.map(({ member }) => member) }
 }
 
 function withoutUndefined(shape: Shape): Shape {
@@ -500,8 +510,8 @@ function schemaTokens(text: string, keepDraftNotes = false): string {
 }
 
 /**
- * Sort object fields after normalizing their contents. Compiler property order can also change
- * union order because the generator ranks members by their full shapes. A union containing a date
+ * Sort object fields after normalizing their contents. Older drafts can also differ in union order
+ * because the generator ranked members using checker property order. A union containing a date
  * keeps its order because the first matching branch decides whether a string becomes a Date.
  */
 function schemaIgnoringOrder(text: string, sortUnions: boolean): string {
