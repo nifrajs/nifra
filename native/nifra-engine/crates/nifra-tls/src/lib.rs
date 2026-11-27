@@ -1,14 +1,13 @@
 //! Sans-I/O `rustls` + `aws-lc-rs` TLS termination with lock-free hot certificate reload
 //! and session-ticket preservation across reloads.
 
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{self, BufReader, Cursor, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use aws_lc_rs::digest::{Context, SHA256};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rustls::crypto::{aws_lc_rs as tls_aws_lc_rs, CryptoProvider, SupportedKxGroup};
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
@@ -136,15 +135,15 @@ pub struct TlsStore {
 
 struct TicketState {
     ticketer: Arc<dyn ProducesTickets>,
-    policy_fingerprint: u64,
-    has_shared_keys: bool,
+    policy_digest: [u8; 32],
+    shared_keys: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for TicketState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TicketState")
-            .field("policy_fingerprint", &self.policy_fingerprint)
-            .field("has_shared_keys", &self.has_shared_keys)
+            .field("policy_digest", &self.policy_digest)
+            .field("has_shared_keys", &self.shared_keys.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -153,6 +152,8 @@ impl std::fmt::Debug for TicketState {
 struct SharedKeyTicketer {
     /// Newest first; the first seals, all open.
     keys: Vec<TicketKey>,
+    /// Deterministic SHA-256 digest of TLS authentication & security policy (bound via AEAD AAD).
+    policy_digest: [u8; 32],
     rng: SystemRandom,
 }
 
@@ -175,6 +176,14 @@ impl std::fmt::Debug for SharedKeyTicketer {
     }
 }
 
+#[inline]
+fn ticket_aad(key_name: &[u8; 16], policy_digest: &[u8; 32]) -> [u8; 48] {
+    let mut aad = [0u8; 48];
+    aad[..16].copy_from_slice(key_name);
+    aad[16..].copy_from_slice(policy_digest);
+    aad
+}
+
 impl SharedKeyTicketer {
     /// Seal `plain` under the newest key, stamped with the time it was issued.
     ///
@@ -188,8 +197,9 @@ impl SharedKeyTicketer {
         let mut in_out = Vec::with_capacity(8 + plain.len() + 16);
         in_out.extend_from_slice(&issued.to_be_bytes());
         in_out.extend_from_slice(plain);
+        let aad = ticket_aad(&key.name, &self.policy_digest);
         key.aead
-            .seal_in_place_append_tag(nonce, Aad::from(&key.name), &mut in_out)
+            .seal_in_place_append_tag(nonce, Aad::from(&aad), &mut in_out)
             .ok()?;
         let mut ticket = Vec::with_capacity(16 + 12 + in_out.len());
         ticket.extend_from_slice(&key.name);
@@ -198,7 +208,7 @@ impl SharedKeyTicketer {
         Some(ticket)
     }
 
-    fn from_bytes(raw: &[u8]) -> Result<Self, TlsError> {
+    fn from_bytes_with_policy(raw: &[u8], policy_digest: [u8; 32]) -> Result<Self, TlsError> {
         if raw.is_empty() || raw.len() % 48 != 0 {
             return Err(TlsError::InvalidTicketKeys);
         }
@@ -219,8 +229,14 @@ impl SharedKeyTicketer {
         }
         Ok(Self {
             keys,
+            policy_digest,
             rng: SystemRandom::new(),
         })
+    }
+
+    #[cfg(test)]
+    fn from_bytes(raw: &[u8]) -> Result<Self, TlsError> {
+        Self::from_bytes_with_policy(raw, [0u8; 32])
     }
 }
 
@@ -246,9 +262,10 @@ impl ProducesTickets for SharedKeyTicketer {
         nonce_bytes.copy_from_slice(&cipher[16..28]);
         let nonce = Nonce::assume_unique_for_key(nonce_bytes);
         let mut buf = cipher[28..].to_vec();
+        let aad = ticket_aad(&key.name, &self.policy_digest);
         let plain = key
             .aead
-            .open_in_place(nonce, Aad::from(&key.name), &mut buf)
+            .open_in_place(nonce, Aad::from(&aad), &mut buf)
             .ok()?;
         let (issued, rest) = plain.split_first_chunk::<8>()?;
         let age = unix_secs().saturating_sub(u64::from_be_bytes(*issued));
@@ -259,18 +276,25 @@ impl ProducesTickets for SharedKeyTicketer {
 impl TlsStore {
     pub fn from_input(input: &TlsInput) -> Result<Self, TlsError> {
         let mat = input.resolve_pem()?;
-        let fp = policy_fingerprint(input, &mat);
-        let ticketer: Arc<dyn ProducesTickets> = match &input.ticket_keys {
-            Some(bytes) => Arc::new(SharedKeyTicketer::from_bytes(bytes)?),
-            None => tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
-        };
+        let fp = policy_digest(input, &mat);
+        let (ticketer, shared_keys): (Arc<dyn ProducesTickets>, Option<Vec<u8>>) =
+            match &input.ticket_keys {
+                Some(bytes) => (
+                    Arc::new(SharedKeyTicketer::from_bytes_with_policy(bytes, fp)?),
+                    Some(bytes.clone()),
+                ),
+                None => (
+                    tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
+                    None,
+                ),
+            };
         let cfg = build_config(input, &mat, Arc::clone(&ticketer))?;
         Ok(Self {
             config: ArcSwap::from_pointee(cfg),
             ticket_state: Mutex::new(TicketState {
                 ticketer,
-                policy_fingerprint: fp,
-                has_shared_keys: input.ticket_keys.is_some(),
+                policy_digest: fp,
+                shared_keys,
             }),
         })
     }
@@ -294,34 +318,42 @@ impl TlsStore {
     /// cannot resume under loosened assumptions. Leaves the previous config intact on any error.
     pub fn reload_input(&self, input: &TlsInput) -> Result<(), TlsError> {
         let mat = input.resolve_pem()?;
-        let fp = policy_fingerprint(input, &mat);
+        let fp = policy_digest(input, &mat);
         let mut guard = self.ticket_state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Validate/construct replacement ticketer before storing `ServerConfig` so failures leave
         // both the active config and active ticketer untouched.
-        let (next_ticketer, next_shared) = if let Some(ref bytes) = input.ticket_keys {
-            if guard.has_shared_keys && guard.policy_fingerprint == fp {
-                (Arc::clone(&guard.ticketer), true)
-            } else {
-                (
-                    Arc::new(SharedKeyTicketer::from_bytes(bytes)?) as Arc<dyn ProducesTickets>,
-                    true,
-                )
+        let (next_ticketer, next_shared) = match &input.ticket_keys {
+            Some(bytes) => {
+                if guard.policy_digest == fp
+                    && guard.shared_keys.as_deref() == Some(bytes.as_slice())
+                {
+                    (Arc::clone(&guard.ticketer), Some(bytes.clone()))
+                } else {
+                    (
+                        Arc::new(SharedKeyTicketer::from_bytes_with_policy(bytes, fp)?)
+                            as Arc<dyn ProducesTickets>,
+                        Some(bytes.clone()),
+                    )
+                }
             }
-        } else if !guard.has_shared_keys && guard.policy_fingerprint == fp {
-            (Arc::clone(&guard.ticketer), false)
-        } else {
-            (
-                tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
-                false,
-            )
+            None => {
+                if guard.shared_keys.is_none() && guard.policy_digest == fp {
+                    (Arc::clone(&guard.ticketer), None)
+                } else {
+                    (
+                        tls_aws_lc_rs::Ticketer::new().map_err(TlsError::Rustls)?,
+                        None,
+                    )
+                }
+            }
         };
 
         let cfg = build_config(input, &mat, Arc::clone(&next_ticketer))?;
         self.config.store(Arc::new(cfg));
         guard.ticketer = next_ticketer;
-        guard.policy_fingerprint = fp;
-        guard.has_shared_keys = next_shared;
+        guard.policy_digest = fp;
+        guard.shared_keys = next_shared;
         Ok(())
     }
 
@@ -346,19 +378,37 @@ impl TlsStore {
     }
 }
 
-fn policy_fingerprint(input: &TlsInput, mat: &ResolvedMaterial) -> u64 {
-    let mut h = DefaultHasher::new();
-    mat.ca.hash(&mut h);
-    mat.crl.hash(&mut h);
-    input.request_cert.hash(&mut h);
-    input.reject_unauthorized.hash(&mut h);
-    input.min_version.hash(&mut h);
-    input.max_version.hash(&mut h);
-    input.ciphers.hash(&mut h);
-    input.ciphersuites.hash(&mut h);
-    input.ecdh_curve.hash(&mut h);
-    input.ticket_keys.hash(&mut h);
-    h.finish()
+fn feed_opt_bytes(ctx: &mut Context, bytes: Option<&[u8]>) {
+    match bytes {
+        Some(slice) => {
+            ctx.update(&[1]);
+            ctx.update(&(slice.len() as u64).to_be_bytes());
+            ctx.update(slice);
+        }
+        None => ctx.update(&[0]),
+    }
+}
+
+/// Deterministic SHA-256 digest of TLS authentication & security policy (excludes leaf cert/key and
+/// `ticket_keys` so cert-only renewals and ticket-key rotations preserve sessions under equal policy).
+fn policy_digest(input: &TlsInput, mat: &ResolvedMaterial) -> [u8; 32] {
+    let mut ctx = Context::new(&SHA256);
+    ctx.update(b"nifra-tls-policy-v1");
+    feed_opt_bytes(&mut ctx, mat.ca.as_deref());
+    feed_opt_bytes(&mut ctx, mat.crl.as_deref());
+    ctx.update(&[
+        u8::from(input.request_cert),
+        u8::from(input.reject_unauthorized),
+    ]);
+    feed_opt_bytes(&mut ctx, input.min_version.as_deref().map(str::as_bytes));
+    feed_opt_bytes(&mut ctx, input.max_version.as_deref().map(str::as_bytes));
+    feed_opt_bytes(&mut ctx, input.ciphers.as_deref().map(str::as_bytes));
+    feed_opt_bytes(&mut ctx, input.ciphersuites.as_deref().map(str::as_bytes));
+    feed_opt_bytes(&mut ctx, input.ecdh_curve.as_deref().map(str::as_bytes));
+    let digest = ctx.finish();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_ref());
+    out
 }
 
 fn parse_tls_version(raw: &str) -> Result<u8, TlsError> {
@@ -438,6 +488,45 @@ fn push_unique_suite(out: &mut Vec<SupportedCipherSuite>, suite: SupportedCipher
     }
 }
 
+fn expand_cipher_selector(
+    token: &str,
+    out: &mut Vec<SupportedCipherSuite>,
+) -> Result<(), TlsError> {
+    if token.eq_ignore_ascii_case("HIGH") || token.eq_ignore_ascii_case("DEFAULT") {
+        for &suite in tls_aws_lc_rs::DEFAULT_CIPHER_SUITES {
+            push_unique_suite(out, suite);
+        }
+        return Ok(());
+    }
+    if token.eq_ignore_ascii_case("TLSv1.3") {
+        for suite in [
+            tls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384,
+            tls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256,
+            tls_aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+        ] {
+            push_unique_suite(out, suite);
+        }
+        return Ok(());
+    }
+    if token.eq_ignore_ascii_case("TLSv1.2") {
+        for suite in [
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+        ] {
+            push_unique_suite(out, suite);
+        }
+        return Ok(());
+    }
+    let suite =
+        match_cipher_suite(token).ok_or_else(|| TlsError::InvalidCipherSuite(token.to_owned()))?;
+    push_unique_suite(out, suite);
+    Ok(())
+}
+
 fn resolve_cipher_suites(
     ciphers: Option<&str>,
     ciphersuites: Option<&str>,
@@ -456,44 +545,15 @@ fn resolve_cipher_suites(
                 continue;
             }
             if let Some(neg) = token.strip_prefix('!') {
-                if let Some(suite) = match_cipher_suite(neg) {
-                    push_unique_suite(&mut excluded, suite);
+                if neg.is_empty() {
+                    return Err(TlsError::InvalidCipherSuite(token.to_owned()));
                 }
+                expand_cipher_selector(neg, &mut excluded)
+                    .map_err(|_| TlsError::InvalidCipherSuite(token.to_owned()))?;
                 continue;
             }
             saw_positive = true;
-            if token.eq_ignore_ascii_case("HIGH") || token.eq_ignore_ascii_case("DEFAULT") {
-                for &suite in tls_aws_lc_rs::DEFAULT_CIPHER_SUITES {
-                    push_unique_suite(&mut selected, suite);
-                }
-                continue;
-            }
-            if token.eq_ignore_ascii_case("TLSv1.3") {
-                for suite in [
-                    tls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384,
-                    tls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256,
-                    tls_aws_lc_rs::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-                ] {
-                    push_unique_suite(&mut selected, suite);
-                }
-                continue;
-            }
-            if token.eq_ignore_ascii_case("TLSv1.2") {
-                for suite in [
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-                    tls_aws_lc_rs::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-                ] {
-                    push_unique_suite(&mut selected, suite);
-                }
-                continue;
-            }
-            let suite = match_cipher_suite(token)
-                .ok_or_else(|| TlsError::InvalidCipherSuite(token.to_owned()))?;
-            push_unique_suite(&mut selected, suite);
+            expand_cipher_selector(token, &mut selected)?;
         }
     }
 
@@ -863,6 +923,41 @@ mod tests {
         assert!(matches!(
             parse_crls(b"not a crl"),
             Err(TlsError::InvalidCrl)
+        ));
+    }
+
+    #[test]
+    fn shared_ticket_keys_are_bound_to_security_policy() {
+        let key = [0x55u8; 48];
+        let policy_a = [0x01u8; 32];
+        let policy_b = [0x02u8; 32];
+        let a1 = SharedKeyTicketer::from_bytes_with_policy(&key, policy_a).unwrap();
+        let a2 = SharedKeyTicketer::from_bytes_with_policy(&key, policy_a).unwrap();
+        let b1 = SharedKeyTicketer::from_bytes_with_policy(&key, policy_b).unwrap();
+
+        let ticket = a1.encrypt(b"session-state").unwrap();
+        assert_eq!(a2.decrypt(&ticket).as_deref(), Some(&b"session-state"[..]));
+        // Same key bytes under a different auth/CRL policy must reject the old ticket.
+        assert!(b1.decrypt(&ticket).is_none());
+    }
+
+    #[test]
+    fn cipher_exclusions_expand_group_selectors_and_reject_unknown() {
+        let tls13_only = resolve_cipher_suites(Some("TLSv1.3:TLSv1.2:!TLSv1.2"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tls13_only.len(), 3);
+        assert!(tls13_only.iter().all(|s| {
+            matches!(
+                s.suite(),
+                rustls::CipherSuite::TLS13_AES_256_GCM_SHA384
+                    | rustls::CipherSuite::TLS13_AES_128_GCM_SHA256
+                    | rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256
+            )
+        }));
+        assert!(matches!(
+            resolve_cipher_suites(Some("DEFAULT:!UNKNOWN"), None),
+            Err(TlsError::InvalidCipherSuite(_))
         ));
     }
 }

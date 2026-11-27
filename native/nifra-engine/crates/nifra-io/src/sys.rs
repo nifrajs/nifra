@@ -643,6 +643,17 @@ fn compact_sent_prefix(core: &mut ConnCore) {
 /// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
 /// falling back to buffering the tail only on partial writes, backpressure, or TLS.
 #[inline]
+pub(crate) fn write_buf_limit(cfg: SocketConfig) -> usize {
+    if cfg.max_write_buf_bytes > 0 {
+        cfg.max_write_buf_bytes
+    } else {
+        MAX_WRITE_BUF_BYTES
+    }
+}
+
+/// Write `bytes` synchronously via `send_nonblock` when plaintext and queue-empty,
+/// falling back to buffering the tail only on partial writes, backpressure, or TLS.
+#[inline]
 pub(crate) fn write_bytes_or_queue(core: &mut ConnCore, bytes: &[u8]) -> FlushAction {
     if core.tls.is_none() && core.write_pos == core.write_buf.len() && !bytes.is_empty() {
         match send_nonblock(core.fd, bytes) {

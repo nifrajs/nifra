@@ -17,9 +17,9 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { test } from "node:test"
 import { connect as tlsConnect } from "node:tls"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
-import { deflateRawSync } from "node:zlib"
+import { constants, deflateRawSync, inflateRawSync } from "node:zlib"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
 import { WebSocket as WsClient } from "ws"
@@ -432,6 +432,61 @@ test("mTLS verifies client certs, rejects revoked CRL serials, and respects reje
   } finally {
     await running.stop({ drainMs: 50 })
   }
+
+  // Same explicit shared ticketKeys must NOT let a newly revoked client resume across CRL reload.
+  const sharedKeys = randomBytes(48)
+  const ticketed = await serve(
+    server().get("/ping", () => ({ ok: true })),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: {
+        cert: serverLeaf.cert,
+        key: serverLeaf.key,
+        ca: clientCa.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+        ticketKeys: sharedKeys,
+      },
+    },
+  )
+  try {
+    const first = await httpsGet(ticketed.port, {
+      ca: serverCa.cert,
+      cert: clientGood.cert,
+      key: clientGood.key,
+    })
+    assert.equal(first.status, 200)
+    assert.ok(first.ticket)
+    const resumed = await httpsGet(ticketed.port, {
+      ca: serverCa.cert,
+      cert: clientGood.cert,
+      key: clientGood.key,
+      session: first.ticket,
+    })
+    assert.equal(resumed.status, 200)
+    assert.equal(resumed.reused, true)
+
+    ticketed.reloadTls({
+      cert: serverLeaf.cert,
+      key: serverLeaf.key,
+      ca: clientCa.cert,
+      crl: createCrl(clientCa, [clientGood.serial]),
+      requestCert: true,
+      rejectUnauthorized: true,
+      ticketKeys: sharedKeys,
+    })
+    await assert.rejects(
+      httpsGet(ticketed.port, {
+        ca: serverCa.cert,
+        cert: clientGood.cert,
+        key: clientGood.key,
+        session: first.ticket,
+      }),
+    )
+  } finally {
+    await ticketed.stop({ drainMs: 50 })
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -484,7 +539,7 @@ test("TLS policy enforces minVersion, ciphers, ecdhCurve, and rotates tickets wh
       }),
     )
 
-    // Capture a TLS 1.2 session ticket before tightening security policy.
+    // Capture a TLS 1.2 session ticket and prove it resumes under unchanged policy.
     const t12 = await httpsGet(running.port, {
       ca: leaf.cert,
       minVersion: "TLSv1.2",
@@ -494,13 +549,44 @@ test("TLS policy enforces minVersion, ciphers, ecdhCurve, and rotates tickets wh
     })
     assert.equal(t12.protocol, "TLSv1.2")
     assert.ok(t12.ticket)
+    const beforePolicyChange = await httpsGet(running.port, {
+      ca: leaf.cert,
+      minVersion: "TLSv1.2",
+      maxVersion: "TLSv1.2",
+      ciphers: "ECDHE-ECDSA-AES256-GCM-SHA384",
+      ecdhCurve: "P-256",
+      session: t12.ticket,
+    })
+    assert.equal(beforePolicyChange.reused, true)
 
-    // Tightening minVersion to TLSv1.3 rejects TLSv1.2 clients AND invalidates pre-reload tickets.
+    // Change auth policy while keeping TLS 1.2 + cipher + P-256 compatible: old ticket must NOT resume.
+    running.reloadTls({
+      cert: leaf.cert,
+      key: leaf.key,
+      ca: leaf.cert,
+      requestCert: true,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.2",
+      ciphers: "TLS_AES_256_GCM_SHA384:ECDHE-ECDSA-AES256-GCM-SHA384",
+      ecdhCurve: "P-256:P-384",
+    })
+    const afterAuthChange = await httpsGet(running.port, {
+      ca: leaf.cert,
+      minVersion: "TLSv1.2",
+      maxVersion: "TLSv1.2",
+      ciphers: "ECDHE-ECDSA-AES256-GCM-SHA384",
+      ecdhCurve: "P-256",
+      session: t12.ticket,
+    })
+    assert.equal(afterAuthChange.status, 200)
+    assert.equal(afterAuthChange.reused, false)
+
+    // Excluding TLSv1.2 via `!TLSv1.2` + minVersion TLSv1.3 rejects TLS 1.2 handshakes.
     running.reloadTls({
       cert: leaf.cert,
       key: leaf.key,
       minVersion: "TLSv1.3",
-      ciphers: "TLS_AES_256_GCM_SHA384",
+      ciphers: "TLSv1.3:TLSv1.2:!TLSv1.2",
       ecdhCurve: "P-384",
     })
     await assert.rejects(
@@ -511,13 +597,6 @@ test("TLS policy enforces minVersion, ciphers, ecdhCurve, and rotates tickets wh
         ecdhCurve: "P-256",
       }),
     )
-    const afterTighten = await httpsGet(running.port, {
-      ca: leaf.cert,
-      ciphers: "TLS_AES_256_GCM_SHA384",
-      ecdhCurve: "P-384",
-      session: t12.ticket,
-    })
-    assert.equal(afterTighten.reused, false)
   } finally {
     await running.stop({ drainMs: 50 })
   }
@@ -630,6 +709,175 @@ test("wsDeflate negotiates RFC 7692 permessage-deflate, shares compressors, and 
     await running.stop({ drainMs: 50 })
   }
 
+  // Shared compressor honors client-lowered server_max_window_bits=10, declines 8-bit server window,
+  // and enforces wsMaxMessageSize on inflated payloads even when maxDecompressedSize is larger.
+  const sharedDefaultWindow = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    wsMaxMessageSize: 512,
+    wsDeflate: {
+      maxDecompressedSize: 4096,
+      sharedCompressor: true,
+    },
+  })
+  try {
+    const ws10 = new WsClient(`ws://127.0.0.1:${sharedDefaultWindow.port}/echo`, {
+      perMessageDeflate: { serverMaxWindowBits: 10 },
+    })
+    await new Promise<void>((resolvePromise, reject) => {
+      ws10.once("open", () => resolvePromise())
+      ws10.once("error", reject)
+    })
+    assert.ok(ws10.extensions.includes("permessage-deflate"))
+    // Use a <= 512 byte repeating message containing patterns >512B apart vs <=1024B window so
+    // window=10 compression + client inflate round-trips cleanly.
+    const msg = "w10-check-".repeat(48)
+    const got = await new Promise<string>((resolvePromise, reject) => {
+      ws10.once("message", (d) => resolvePromise(d.toString("utf8")))
+      ws10.once("error", reject)
+      ws10.send(msg)
+    })
+    assert.equal(got, msg)
+    ws10.close(1000, "done")
+    await sleep(20)
+
+    // Verify wire negotiation advertises `server_max_window_bits=10` and raw frame inflates at windowBits=10.
+    const wire10 = await new Promise<string>((resolvePromise, reject) => {
+      const sock = netConnect(sharedDefaultWindow.port, "127.0.0.1", () => {
+        sock.write(
+          "GET /echo HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Version: 13\r\n" +
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+            "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=10; client_max_window_bits\r\n\r\n",
+        )
+      })
+      let upgraded = false
+      let head = ""
+      let acc = Buffer.alloc(0)
+      const failWire = (err: unknown): void => {
+        sock.destroy()
+        reject(err)
+      }
+      sock.on("data", (chunk) => {
+        try {
+          acc = Buffer.concat([acc, chunk])
+          if (!upgraded) {
+            const end = acc.indexOf("\r\n\r\n")
+            if (end === -1) return
+            head = acc.subarray(0, end).toString("latin1")
+            upgraded = true
+            acc = acc.subarray(end + 4)
+            const rawMsg = Buffer.from("shared-w10-".repeat(40))
+            const mask = Buffer.from([1, 2, 3, 4])
+            const hdr = Buffer.alloc(8)
+            hdr[0] = 0x81
+            hdr[1] = 0x80 | 126
+            hdr.writeUInt16BE(rawMsg.length, 2)
+            mask.copy(hdr, 4)
+            const masked = Buffer.from(rawMsg)
+            for (let i = 0; i < masked.length; i++)
+              masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
+            sock.write(Buffer.concat([hdr, masked]))
+          }
+          if (upgraded && acc.length >= 4) {
+            const len7 = acc[1] & 0x7f
+            const hdrLen = len7 === 126 ? 4 : 2
+            const plen = len7 === 126 && acc.length >= 4 ? acc.readUInt16BE(2) : len7
+            if (acc.length >= hdrLen + plen) {
+              assert.notEqual(acc[0] & 0x40, 0, "RSV1 set for compressed frame")
+              const payload = acc.subarray(hdrLen, hdrLen + plen)
+              const inflated = inflateRawSync(
+                Buffer.concat([payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]),
+                { windowBits: 10, finishFlush: constants.Z_SYNC_FLUSH },
+              )
+              assert.equal(inflated.toString("utf8"), "shared-w10-".repeat(40))
+              sock.destroy()
+              resolvePromise(head)
+            }
+          }
+        } catch (err) {
+          failWire(err)
+        }
+      })
+      sock.on("error", failWire)
+    })
+    assert.ok(wire10.toLowerCase().includes("server_max_window_bits=10"))
+
+    // Offering only server_max_window_bits=8 must be declined rather than promising 8 and using 9.
+    const rawEight = await raw(
+      sharedDefaultWindow.port,
+      "GET /echo HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=8\r\n\r\n",
+      (received) => received.includes("\r\n\r\n"),
+    )
+    assert.ok(rawEight.includes("101 Switching Protocols"))
+    assert.ok(!rawEight.toLowerCase().includes("sec-websocket-extensions"))
+
+    // Wire compressed frame <512 B inflating to 1024 B must fail with 1009 due to wsMaxMessageSize=512
+    // even though maxDecompressedSize=4096.
+    const cappedInflate = deflateRawSync(Buffer.alloc(1024, 0x43))
+    const cappedTrimmed = cappedInflate.subarray(0, cappedInflate.length - 4)
+    assert.ok(cappedTrimmed.length < 126)
+    const wsCapClose = await new Promise<number>((resolvePromise, reject) => {
+      const sock = netConnect(sharedDefaultWindow.port, "127.0.0.1", () => {
+        sock.write(
+          "GET /echo HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Version: 13\r\n" +
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+            "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+        )
+      })
+      const failSock = (err: unknown): void => {
+        sock.destroy()
+        reject(err)
+      }
+      let upgraded = false
+      let acc = Buffer.alloc(0)
+      sock.on("data", (chunk) => {
+        try {
+          acc = Buffer.concat([acc, chunk])
+          if (!upgraded) {
+            const end = acc.indexOf("\r\n\r\n")
+            if (end === -1) return
+            upgraded = true
+            acc = acc.subarray(end + 4)
+            const mask = Buffer.from([5, 6, 7, 8])
+            const hdr = Buffer.alloc(6)
+            hdr[0] = 0xc2
+            hdr[1] = 0x80 | cappedTrimmed.length
+            mask.copy(hdr, 2)
+            const masked = Buffer.from(cappedTrimmed)
+            for (let i = 0; i < masked.length; i++)
+              masked[i] = (masked[i] ?? 0) ^ (mask[i & 3] ?? 0)
+            sock.write(Buffer.concat([hdr, masked]))
+          }
+          if (upgraded && acc.length >= 4 && (acc[0] & 0x0f) === 0x08) {
+            const closeCode = acc.readUInt16BE(2)
+            sock.destroy()
+            resolvePromise(closeCode)
+          }
+        } catch (err) {
+          failSock(err)
+        }
+      })
+      sock.on("error", failSock)
+    })
+    assert.equal(wsCapClose, 1009)
+  } finally {
+    await sharedDefaultWindow.stop({ drainMs: 50 })
+  }
+
   // wsMaxLifetimeMs closes idle/open WebSockets past configured lifetime.
   const timed = await serve(app, {
     port: 0,
@@ -725,7 +973,6 @@ test("enforces maxUriSize (414) and maxHeaders / maxHeadSize (431) in HTTP/1.1 a
         new Promise((resolvePromise, reject) => {
           const req = client.request(headers)
           req.once("response", (res) => {
-            res
             req.resume()
             req.once("end", () => resolvePromise(Number(res[":status"])))
           })
@@ -752,6 +999,51 @@ test("enforces maxUriSize (414) and maxHeaders / maxHeadSize (431) in HTTP/1.1 a
     }
   } finally {
     await Promise.all([running.stop({ drainMs: 50 }), plain.stop({ drainMs: 50 })])
+  }
+
+  // Coordinated writeHighWaterMark + responseBackpressureLimit + maxConnections=0 serve healthy readers.
+  const largePayload = "a".repeat(128 * 1024)
+  const bpSrv = await serve(
+    server()
+      .get("/large-json", () => ({ payload: largePayload }))
+      .get("/large-text", () => new Response(largePayload)),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+      engine: {
+        maxConnections: 0,
+        writeHighWaterMark: 4096,
+        responseBackpressureLimit: 65_536,
+      },
+    },
+  )
+  try {
+    const jsonRes = await fetch(`http://127.0.0.1:${bpSrv.port}/large-json`)
+    assert.equal(jsonRes.status, 200)
+    assert.deepEqual(await jsonRes.json(), { payload: largePayload })
+
+    const textRes = await fetch(`http://127.0.0.1:${bpSrv.port}/large-text`)
+    assert.equal(textRes.status, 200)
+    assert.equal((await textRes.text()).length, largePayload.length)
+  } finally {
+    await bpSrv.stop({ drainMs: 50 })
+  }
+
+  // Healthy reader receiving 128 KiB with small responseBackpressureLimit and default writeHighWaterMark.
+  const smallBpOnly = await serve(
+    server().get("/big-str", () => largePayload),
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+      engine: { responseBackpressureLimit: 65_536 },
+    },
+  )
+  try {
+    const r = await fetch(`http://127.0.0.1:${smallBpOnly.port}/big-str`)
+    assert.equal(r.status, 200)
+    assert.equal(await r.json(), largePayload)
+  } finally {
+    await smallBpOnly.stop({ drainMs: 50 })
   }
 })
 
@@ -890,34 +1182,21 @@ test("idleTimeoutMs spares healthy slow drains while responseTimeoutMs closes st
 // ---------------------------------------------------------------------------
 
 test("terminating a worker_threads worker closes its engine server via env cleanup hook", async () => {
-  const distUrl = pathToFileURL(
-    resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js"),
-  ).href
-  const coreDist = pathToFileURL(
-    resolve(dirname(fileURLToPath(import.meta.url)), "../../core/dist/index.js"),
-  ).href
+  const worker = new Worker(new URL("./fixtures/worker-server.ts", import.meta.url))
+  let port = 0
+  let exitCode: number
+  try {
+    port = await new Promise<number>((resolvePromise, reject) => {
+      worker.once("message", (msg: { port: number }) => resolvePromise(msg.port))
+      worker.once("error", reject)
+    })
 
-  const workerCode = `
-    import { parentPort } from "node:worker_threads";
-    import { server } from ${JSON.stringify(coreDist)};
-    import { serve } from ${JSON.stringify(distUrl)};
-    const running = await serve(server().get("/ping", () => ({ worker: true })), {
-      port: 0,
-      hostname: "127.0.0.1",
-    });
-    parentPort.postMessage({ port: running.port });
-  `
-  const worker = new Worker(workerCode, { eval: true })
-  const port = await new Promise<number>((resolvePromise, reject) => {
-    worker.once("message", (msg: { port: number }) => resolvePromise(msg.port))
-    worker.once("error", reject)
-  })
-
-  const liveRes = await fetch(`http://127.0.0.1:${port}/ping`)
-  assert.equal(liveRes.status, 200)
-  await liveRes.body?.cancel()
-
-  const exitCode = await worker.terminate()
+    const liveRes = await fetch(`http://127.0.0.1:${port}/ping`)
+    assert.equal(liveRes.status, 200)
+    await liveRes.body?.cancel()
+  } finally {
+    exitCode = await worker.terminate()
+  }
   assert.equal(exitCode, 1)
 
   // Port must be completely free and re-bindable after worker termination.

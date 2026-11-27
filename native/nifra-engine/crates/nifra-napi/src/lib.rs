@@ -33,9 +33,9 @@ use nifra_io::uv::{UvCallbacks, UvServer, WriteResult};
 use nifra_tls::{TlsInput, TlsStore};
 #[cfg(unix)]
 use nifra_ws::{
-    compute_accept_key, negotiate_permessage_deflate, new_shared_compressor,
-    validate_upgrade_headers, write_close_frame, write_upgrade_response_with_extensions, Compress,
-    WsConfig, WsConn, WsDeflateConfig, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
+    compute_accept_key, negotiate_permessage_deflate, validate_upgrade_headers, write_close_frame,
+    write_upgrade_response_with_extensions, SharedCompressorPool, WsConfig, WsConn,
+    WsDeflateConfig, WsEvent, OPCODE_BINARY, OPCODE_TEXT,
 };
 
 const DEFAULT_IN_SLOTS: usize = 256;
@@ -1179,7 +1179,7 @@ struct UvHttpShared {
     on_ws_close_ref: sys::napi_ref,
     ws_max_message_size: usize,
     ws_deflate_cfg: WsDeflateConfig,
-    ws_shared_compressor: Option<Compress>,
+    ws_shared_pool: Option<SharedCompressorPool>,
     http2_enabled: bool,
     h2_cfg: H2Config,
     routes: FastRoutes,
@@ -3115,7 +3115,7 @@ fn send_ws_frame(
     let mut st = shared.borrow_mut();
     let UvHttpShared {
         ref mut conn_meta,
-        ref mut ws_shared_compressor,
+        ref mut ws_shared_pool,
         ref mut scratch_frame,
         ..
     } = *st;
@@ -3126,9 +3126,13 @@ fn send_ws_frame(
     else {
         return false;
     };
+    let shared_comp = ws
+        .conn
+        .deflate_server_window_bits()
+        .and_then(|bits| ws_shared_pool.as_mut().map(|pool| pool.get_mut(bits)));
     scratch_frame.clear();
     ws.conn
-        .encode_server_message(opcode, bytes, ws_shared_compressor.as_mut(), scratch_frame);
+        .encode_server_message(opcode, bytes, shared_comp, scratch_frame);
     server.write_to_conn(socket_id, scratch_frame, false) != WriteResult::Closed
 }
 
@@ -3232,7 +3236,7 @@ pub fn create_uv_server(
                 ws_deflate_cfg.client_no_context_takeover = v;
             }
             if let Some(v) = def.server_max_window_bits {
-                ws_deflate_cfg.server_max_window_bits = (v as u8).clamp(8, 15);
+                ws_deflate_cfg.server_max_window_bits = (v as u8).clamp(9, 15);
             }
             if let Some(v) = def.client_max_window_bits {
                 ws_deflate_cfg.client_max_window_bits = (v as u8).clamp(8, 15);
@@ -3269,10 +3273,11 @@ pub fn create_uv_server(
     h2_cfg.request_timeout = (sock_cfg.request_timeout_ms > 0)
         .then(|| std::time::Duration::from_millis(sock_cfg.request_timeout_ms));
 
-    let ws_shared_compressor =
-        (ws_deflate_cfg.enabled && ws_deflate_cfg.shared_compressor).then(|| {
-            new_shared_compressor(ws_deflate_cfg.level, ws_deflate_cfg.server_max_window_bits)
-        });
+    let ws_shared_pool = (ws_deflate_cfg.enabled && ws_deflate_cfg.shared_compressor).then(|| {
+        let mut pool = SharedCompressorPool::new(ws_deflate_cfg.level);
+        let _ = pool.get_mut(ws_deflate_cfg.server_max_window_bits);
+        pool
+    });
 
     let (listener, local_addr) = bind_tcp_listener(&host, port, sock_cfg)
         .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
@@ -3320,7 +3325,7 @@ pub fn create_uv_server(
         on_ws_close_ref: std::ptr::null_mut(),
         ws_max_message_size,
         ws_deflate_cfg,
-        ws_shared_compressor,
+        ws_shared_pool,
         http2_enabled,
         h2_cfg,
         routes: FastRoutes::default(),

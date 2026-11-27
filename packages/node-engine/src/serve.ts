@@ -69,6 +69,7 @@ const MAX_NATIVE_LENGTH = 0xffff_ffff
 const DEFAULT_MAX_BODY_SIZE = 1_048_576
 const MAX_BUFFERED_RESPONSE_BYTES = 2 * 1024 * 1024
 const STREAM_CHUNK_BYTES = 256 * 1024
+const CHUNK_FRAMING_HEADROOM = 64
 const DEFAULT_OVERSIZE_WINDOW = 1_048_576
 const PAYLOAD_TOO_LARGE_BODY = '{"ok":false,"error":"payload_too_large"}'
 const WEBSOCKET_REFUSAL = '{"ok":false,"error":"websocket_unsupported"}'
@@ -408,6 +409,21 @@ function optionalPositiveCap(name: string, value: number | undefined): number | 
   if (!(isCap(value) && value <= MAX_NATIVE_LENGTH)) {
     throw new TypeError(
       `@nifrajs/node-engine: \`engine.${name}\` must be a positive integer below 2^32`,
+    )
+  }
+  return value
+}
+
+function optionalNonNegCap(name: string, value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_NATIVE_LENGTH
+  ) {
+    throw new TypeError(
+      `@nifrajs/node-engine: \`engine.${name}\` must be a non-negative integer below 2^32`,
     )
   }
   return value
@@ -848,7 +864,22 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     "writeHighWaterMark",
     options.engine?.writeHighWaterMark,
   )
-  const bufferedResponseLimit = writeHighWaterMark ?? MAX_BUFFERED_RESPONSE_BYTES
+  const responseBackpressureLimit = optionalPositiveCap(
+    "responseBackpressureLimit",
+    options.engine?.responseBackpressureLimit,
+  )
+  const nativeWriteBudget =
+    responseBackpressureLimit === undefined
+      ? MAX_NATIVE_LENGTH
+      : Math.max(
+          1,
+          responseBackpressureLimit -
+            Math.min(CHUNK_FRAMING_HEADROOM, Math.floor(responseBackpressureLimit / 2)),
+        )
+  const bufferedResponseLimit = Math.min(
+    writeHighWaterMark ?? MAX_BUFFERED_RESPONSE_BYTES,
+    nativeWriteBudget,
+  )
   const streamChunkBytes = Math.min(STREAM_CHUNK_BYTES, bufferedResponseLimit)
 
   let uvServer: RustUvServer
@@ -957,11 +988,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     let unblock: (() => void) | undefined
     source.onAbort = () => unblock?.()
     source.onWritable = () => unblock?.()
-    uvServer.writeHead(source.requestId, status, flat, len)
+    if (!uvServer.writeHead(source.requestId, status, flat, len)) return
     source.headWritten = true
 
-    for (let offset = 0; offset < len && !source.aborted; offset += STREAM_CHUNK_BYTES) {
-      const chunkLen = Math.min(STREAM_CHUNK_BYTES, len - offset)
+    for (let offset = 0; offset < len && !source.aborted; offset += streamChunkBytes) {
+      const chunkLen = Math.min(streamChunkBytes, len - offset)
       const buf = Buffer.from(bytes.buffer, bytes.byteOffset + offset, chunkLen)
       if (offset + chunkLen === len) {
         uvServer.end(source.requestId, buf)
@@ -1029,7 +1060,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       void reader.cancel().catch(() => {})
       throw new RangeError(`Content-Length ${declared} is larger than the engine can frame`)
     }
-    uvServer.writeHead(source.requestId, status, flat, declared ?? null)
+    if (!uvServer.writeHead(source.requestId, status, flat, declared ?? null)) {
+      void reader.cancel().catch(() => {})
+      return
+    }
     source.headWritten = true
 
     let sent = 0
@@ -1253,17 +1287,24 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     })
   }
 
+  const outcomeBodyBytes = (body: string | Uint8Array | null | undefined): number => {
+    if (body === null || body === undefined) return 0
+    if (typeof body === "string") {
+      return body.length * 3 <= bufferedResponseLimit ? body.length * 3 : Buffer.byteLength(body)
+    }
+    return body.byteLength
+  }
+
   /** Queues a plain json or text outcome into the out slab; `false` when it needs the full writer. */
   const queueOutcome = (reqId: number, outcome: NodeServeOutcome, isHead: boolean): boolean => {
     if (isHead || outcome.kind === "response") return false
     if (outcome.headers !== undefined || isBodyless(outcome.status)) return false
+    const body = outcome.body ?? ""
+    if (outcomeBodyBytes(body) > bufferedResponseLimit) return false
     if (outcome.kind === "json") {
-      return (
-        outcome.cookies === undefined &&
-        queueSync(reqId, jsonTemplate(outcome.status), outcome.body ?? "")
-      )
+      return outcome.cookies === undefined && queueSync(reqId, jsonTemplate(outcome.status), body)
     }
-    return queueSync(reqId, textTemplate(outcome.status), outcome.body ?? "")
+    return queueSync(reqId, textTemplate(outcome.status), body)
   }
 
   const settleOutcome = (
@@ -1600,7 +1641,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   const responseTimeoutMs = optionalNonNegMs("responseTimeoutMs", options.engine?.responseTimeoutMs)
   const requestTimeoutMs = optionalNonNegMs("requestTimeoutMs", options.engine?.requestTimeoutMs)
   const wsMaxLifetimeMs = optionalNonNegMs("wsMaxLifetimeMs", options.engine?.wsMaxLifetimeMs)
-  const maxConnections = optionalPositiveCap("maxConnections", options.engine?.maxConnections)
+  const maxConnections = optionalNonNegCap("maxConnections", options.engine?.maxConnections)
   const headersTimeoutMs = nativeMs(options.engine?.headersTimeoutMs)
   const maxHeaderBytes =
     optionalPositiveCap("maxHeaderBytes", options.engine?.maxHeaderBytes) ??
@@ -1608,10 +1649,6 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   const maxHeaders = optionalPositiveCap("maxHeaders", options.engine?.maxHeaders)
   const maxUriSize = optionalPositiveCap("maxUriSize", options.engine?.maxUriSize)
   const maxPendingBytes = optionalPositiveCap("maxPendingBytes", options.engine?.maxPendingBytes)
-  const responseBackpressureLimit = optionalPositiveCap(
-    "responseBackpressureLimit",
-    options.engine?.responseBackpressureLimit,
-  )
   const backlog =
     options.engine?.backlog === undefined
       ? undefined

@@ -225,7 +225,8 @@ pub fn negotiate_permessage_deflate(
         return None;
     }
     let header = header?;
-    let cfg_server_bits = cfg.server_max_window_bits.clamp(8, 15);
+    // Raw deflate in zlib/flate2 cannot compress with an 8-bit (256-byte) window; floor to 9.
+    let cfg_server_bits = cfg.server_max_window_bits.clamp(9, 15);
     let cfg_client_bits = cfg.client_max_window_bits.clamp(8, 15);
 
     for offer in header.split(',') {
@@ -311,6 +312,8 @@ pub fn negotiate_permessage_deflate(
             Some(Some(bits)) => cfg_client_bits.min(bits),
         };
         let server_bits = match req_smwb {
+            // The server cannot honor a 256-byte compression window with raw deflate; decline.
+            Some(bits) if bits < 9 => continue,
             Some(bits) => cfg_server_bits.min(bits),
             None => cfg_server_bits,
         };
@@ -400,6 +403,7 @@ pub struct WsFeedResult {
 pub struct WsDeflateState {
     compress: Option<Compress>,
     decompress: Decompress,
+    server_max_window_bits: u8,
     server_no_context_takeover: bool,
     client_no_context_takeover: bool,
     threshold: usize,
@@ -410,6 +414,7 @@ pub struct WsDeflateState {
 impl std::fmt::Debug for WsDeflateState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WsDeflateState")
+            .field("server_max_window_bits", &self.server_max_window_bits)
             .field(
                 "server_no_context_takeover",
                 &self.server_no_context_takeover,
@@ -422,6 +427,28 @@ impl std::fmt::Debug for WsDeflateState {
             .field("max_decompressed_size", &self.max_decompressed_size)
             .field("shared_compressor", &self.shared_compressor)
             .finish_non_exhaustive()
+    }
+}
+
+/// Pool of shared stateless raw-deflate compressors keyed by negotiated `server_max_window_bits`
+/// (`9..=15`) so connections lowering the window never receive back-references past their limit.
+pub struct SharedCompressorPool {
+    level: u8,
+    slots: [Option<Compress>; 7],
+}
+
+impl SharedCompressorPool {
+    pub fn new(level: u8) -> Self {
+        Self {
+            level: level.clamp(1, 9),
+            slots: std::array::from_fn(|_| None),
+        }
+    }
+
+    pub fn get_mut(&mut self, window_bits: u8) -> &mut Compress {
+        let bits = window_bits.clamp(9, 15);
+        let idx = usize::from(bits - 9);
+        self.slots[idx].get_or_insert_with(|| new_shared_compressor(self.level, bits))
     }
 }
 
@@ -543,26 +570,33 @@ impl WsConn {
     }
 
     pub fn with_deflate(max_message_size: usize, negotiated: Option<&NegotiatedDeflate>) -> Self {
-        let deflate = negotiated.map(|n| WsDeflateState {
-            compress: if n.shared_compressor {
-                None
-            } else {
-                Some(Compress::new_with_window_bits(
-                    Compression::new(u32::from(n.level)),
+        let deflate = negotiated.map(|n| {
+            let server_bits = n.server_max_window_bits.clamp(9, 15);
+            WsDeflateState {
+                compress: if n.shared_compressor {
+                    None
+                } else {
+                    Some(Compress::new_with_window_bits(
+                        Compression::new(u32::from(n.level)),
+                        false,
+                        server_bits,
+                    ))
+                },
+                decompress: Decompress::new_with_window_bits(
                     false,
-                    n.server_max_window_bits.max(9),
-                ))
-            },
-            decompress: Decompress::new_with_window_bits(false, n.client_max_window_bits.max(9)),
-            server_no_context_takeover: n.server_no_context_takeover,
-            client_no_context_takeover: n.client_no_context_takeover,
-            threshold: n.threshold,
-            max_decompressed_size: if n.max_decompressed_size > 0 {
-                n.max_decompressed_size
-            } else {
-                max_message_size
-            },
-            shared_compressor: n.shared_compressor,
+                    n.client_max_window_bits.clamp(9, 15),
+                ),
+                server_max_window_bits: server_bits,
+                server_no_context_takeover: n.server_no_context_takeover,
+                client_no_context_takeover: n.client_no_context_takeover,
+                threshold: n.threshold,
+                max_decompressed_size: if n.max_decompressed_size > 0 {
+                    n.max_decompressed_size.min(max_message_size)
+                } else {
+                    max_message_size
+                },
+                shared_compressor: n.shared_compressor,
+            }
         });
         Self {
             max_message_size,
@@ -573,6 +607,14 @@ impl WsConn {
             close_sent: false,
             closed: false,
         }
+    }
+
+    /// Negotiated `server_max_window_bits` (`9..=15`) when `shared_compressor` is active.
+    pub fn deflate_server_window_bits(&self) -> Option<u8> {
+        self.deflate
+            .as_ref()
+            .filter(|d| d.shared_compressor)
+            .map(|d| d.server_max_window_bits)
     }
 
     /// Encode an outgoing text/binary message, applying RFC 7692 compression when negotiated and
@@ -1336,5 +1378,50 @@ mod tests {
                 reason: "protocol error".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn declines_eight_bit_server_window_and_caps_inflation_by_max_message_size() {
+        let mut cfg = WsDeflateConfig {
+            enabled: true,
+            server_max_window_bits: 8,
+            max_decompressed_size: 4096,
+            ..WsDeflateConfig::default()
+        };
+        let negotiated = negotiate_permessage_deflate(Some("permessage-deflate"), cfg).unwrap();
+        assert_eq!(negotiated.server_max_window_bits, 9);
+        assert!(negotiated.header_value.contains("server_max_window_bits=9"));
+
+        cfg.server_max_window_bits = 15;
+        assert!(negotiate_permessage_deflate(
+            Some("permessage-deflate; server_max_window_bits=8"),
+            cfg
+        )
+        .is_none());
+
+        // `max_message_size` = 128 must still block a 256-byte inflation even when
+        // `max_decompressed_size` = 4096.
+        let mut comp = Compress::new_with_window_bits(Compression::best(), false, 15);
+        let mut compressed = Vec::new();
+        compress_deflate_payload(&mut comp, &[b'B'; 256], &mut compressed);
+        assert!(compressed.len() < 128);
+        let mut frame = make_client_frame(true, OPCODE_BINARY, &compressed, [1, 2, 3, 4]);
+        frame[0] |= 0x40;
+        let offer = negotiate_permessage_deflate(Some("permessage-deflate"), cfg).unwrap();
+        let mut ws = WsConn::with_deflate(128, Some(&offer));
+        let mut out = Vec::new();
+        let res = ws.feed(&frame, &mut out);
+        assert!(res.close_after_write);
+        assert_eq!(
+            res.events,
+            vec![WsEvent::Close {
+                code: 1009,
+                reason: "message too large".to_owned(),
+            }]
+        );
+
+        let mut pool = SharedCompressorPool::new(6);
+        let _ = pool.get_mut(10);
+        let _ = pool.get_mut(15);
     }
 }

@@ -115,6 +115,21 @@ const isNonIpcTlsValue = (value: unknown): boolean =>
   ArrayBuffer.isView(value) ||
   (Array.isArray(value) ? value.some(isNonIpcTlsValue) : isObject(value))
 
+function snapshotIpcTls(tls: NonNullable<ServeOptions["tls"]>): NonNullable<ServeOptions["tls"]> {
+  if (Object.values(tls).some((value) => isNonIpcTlsValue(value))) {
+    throw new TypeError(
+      "@nifrajs/node-engine: give the certificate as PEM text or file names; it crosses a process boundary",
+    )
+  }
+  const ca = Array.isArray(tls.ca) ? tls.ca.map((item) => String(item)) : tls.ca
+  const crl = Array.isArray(tls.crl) ? tls.crl.map((item) => String(item)) : tls.crl
+  return {
+    ...tls,
+    ...(ca === undefined ? {} : { ca }),
+    ...(crl === undefined ? {} : { crl }),
+  }
+}
+
 function isToWorker(message: unknown): message is ToWorker {
   return (
     isObject(message) &&
@@ -202,6 +217,8 @@ async function runWorker(
   const hex = process.env[TICKET_ENV]
   // The ticket key decrypts resumed sessions: a process the app spawns must not inherit it.
   delete process.env[TICKET_ENV]
+  const autoTicketKeys =
+    options.tls?.ticketKeys === undefined && hex !== undefined ? Buffer.from(hex, "hex") : undefined
   const reloaded = await askForTls()
   const current =
     reloaded === undefined
@@ -210,9 +227,9 @@ async function runWorker(
         ? reloaded
         : { ticketKeys: options.tls.ticketKeys, ...reloaded }
   const tls =
-    current === undefined || current.ticketKeys !== undefined || hex === undefined
+    current === undefined || current.ticketKeys !== undefined || autoTicketKeys === undefined
       ? current
-      : { ...current, ticketKeys: Buffer.from(hex, "hex") }
+      : { ...current, ticketKeys: autoTicketKeys }
   let server: EngineServer
   try {
     server = await serve(await app(), {
@@ -247,7 +264,13 @@ async function runWorker(
     if (message.nifra !== "reloadTls") return
     let error: string | undefined
     try {
-      server.reloadTls(message.tls)
+      const nextTls =
+        message.tls === undefined
+          ? undefined
+          : message.tls.ticketKeys === undefined && autoTicketKeys !== undefined
+            ? { ...message.tls, ticketKeys: autoTicketKeys }
+            : message.tls
+      server.reloadTls(nextTls)
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause)
     }
@@ -481,11 +504,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     if (options.tls === undefined) {
       throw new Error("@nifrajs/node-engine: reloadTls requires a cluster started with `tls`")
     }
-    if (tls !== undefined && Object.values(tls).some((value) => isNonIpcTlsValue(value))) {
-      throw new TypeError(
-        "@nifrajs/node-engine: give the certificate as PEM text or file names; it crosses a process boundary",
-      )
-    }
+    const snapshot = tls === undefined ? undefined : snapshotIpcTls(tls)
     // Every worker that holds a certificate, the ones still starting included.
     const targets = [...slots.values()].filter((slot) => slot.started)
     const failures: string[] = []
@@ -508,7 +527,9 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
           const timer = setTimeout(() => done(slot.worker.id, "no answer"), ACK_TIMEOUT_MS)
           acks.set(id, done)
           const message: ToWorker =
-            tls === undefined ? { nifra: "reloadTls", id } : { nifra: "reloadTls", id, tls }
+            snapshot === undefined
+              ? { nifra: "reloadTls", id }
+              : { nifra: "reloadTls", id, tls: snapshot }
           // A send to a worker that has gone fails through the callback; without one it would be
           // an `error` event nobody listens to, which ends the primary.
           slot.worker.send(message, (error) => {
@@ -520,7 +541,7 @@ async function runPrimary(options: ClusterOptions, count: number): Promise<Clust
     if (failures.length > 0) {
       throw new Error(`@nifrajs/node-engine: reloadTls is not applied by ${failures.join("; ")}`)
     }
-    if (tls !== undefined) currentTls = tls
+    if (snapshot !== undefined) currentTls = snapshot
   }
 
   // One at a time, in call order: a worker that starts during one waits to be told its result.

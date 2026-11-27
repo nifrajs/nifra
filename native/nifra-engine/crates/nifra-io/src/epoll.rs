@@ -22,9 +22,9 @@ use nifra_tls::{feed_ciphertext, TlsError, TlsInput, TlsStore};
 use crate::sys::{
     alloc_handle, alloc_read_scratch, collect_timeouts, ensure_read_scratch, flush_write_buf_core,
     free_handle, open_spare_fd, peer_ip_from_storage, recv_nonblock, set_tcp_nodelay,
-    socket_incoming_cpu, uv_api, write_bytes_or_queue, ConnCore, ConnSlab, FlushAction, LoopClock,
-    UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES, READ_SCRATCH_SIZE,
-    SHRINK_THRESHOLD, UV_READABLE, WS_PING_FRAME,
+    socket_incoming_cpu, uv_api, write_buf_limit, write_bytes_or_queue, ConnCore, ConnSlab,
+    FlushAction, LoopClock, UvApi, DATE_TICK_INTERVAL_MS, MAX_READ_PER_EVENT, MAX_WRITE_BUF_BYTES,
+    READ_SCRATCH_SIZE, SHRINK_THRESHOLD, UV_READABLE, WS_PING_FRAME,
 };
 use crate::uv::{UvCallbacks, WriteResult};
 use crate::{ConnAction, SocketConfig};
@@ -154,6 +154,7 @@ struct EpollState {
     dispatching: Option<u32>,
     deferred: Vec<u8>,
     deferred_close: bool,
+    deferred_bp: bool,
     flush_chunk: usize,
     max_drain_rounds: usize,
     cpu_order: bool,
@@ -307,6 +308,7 @@ impl EpollServer {
             dispatching: None,
             deferred: Vec::new(),
             deferred_close: false,
+            deferred_bp: false,
             flush_chunk,
             max_drain_rounds,
             cpu_order,
@@ -412,21 +414,22 @@ impl EpollServer {
             let uv_ms = unsafe { (uv.now)(st.uv_loop) };
             st.clock.tick(uv_ms)
         };
-        let max_write = if st.cfg.max_write_buf_bytes > 0 {
-            st.cfg.max_write_buf_bytes
-        } else {
-            MAX_WRITE_BUF_BYTES
-        };
+        let max_write = write_buf_limit(st.cfg);
         if st.dispatching == Some(conn_id) {
             if let Some(conn) = st.conns.get(conn_id) {
                 let effective_close =
                     close_after || (close_if_read_ended && conn.read_ended && !conn.dispatching);
-                if st.deferred.len().saturating_add(bytes.len()) > max_write {
+                let next_len = st.deferred.len().saturating_add(bytes.len());
+                if next_len > max_write.max(MAX_WRITE_BUF_BYTES) {
                     st.remove_and_close_conn(conn_id);
                     return WriteResult::Closed;
                 }
                 st.deferred.extend_from_slice(bytes);
                 st.deferred_close |= effective_close;
+                if next_len > (max_write / 2).max(1) {
+                    st.deferred_bp = true;
+                    return WriteResult::Backpressured;
+                }
                 return WriteResult::Written;
             }
         }
@@ -438,7 +441,7 @@ impl EpollServer {
         let read_ended = conn.read_ended;
         let effective_close =
             close_after || (close_if_read_ended && read_ended && !conn.dispatching);
-        if conn.queued_bytes().saturating_add(bytes.len()) > max_write {
+        if conn.queued_bytes() >= max_write {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
@@ -446,12 +449,12 @@ impl EpollServer {
             conn.close_after_write = true;
         }
         let fa = write_bytes_or_queue(conn, bytes);
-        let armed = conn.writable_armed;
-        apply_epoll_flush_action(epfd, conn, conn_id, fa);
-        if fa == FlushAction::Close {
+        if fa == FlushAction::Close || conn.queued_bytes() > max_write {
             st.remove_and_close_conn(conn_id);
             return WriteResult::Closed;
         }
+        let armed = conn.writable_armed;
+        apply_epoll_flush_action(epfd, conn, conn_id, fa);
         if fa == FlushAction::DisarmWritable {
             // A producer waiting for the queue to drain is woken at the turn's end.
             st.pending_writable.push(conn_id);
@@ -877,6 +880,7 @@ unsafe fn handle_client_readable(
     st.dispatching = None;
     let mut deferred = std::mem::take(&mut st.deferred);
     let deferred_close = std::mem::take(&mut st.deferred_close);
+    let deferred_bp = std::mem::take(&mut st.deferred_bp);
     if st.closed {
         return false;
     }
@@ -893,6 +897,7 @@ unsafe fn handle_client_readable(
     st.turn_dirty = true;
 
     let epfd = st.epfd;
+    let max_write = write_buf_limit(st.cfg);
     let mut drained_from_bp = false;
     if let Some(conn) = st.conns.get_mut(conn_id) {
         conn.dispatching = false;
@@ -955,7 +960,7 @@ unsafe fn handle_client_readable(
         }
         if !remove && !cleartext_write.is_empty() {
             let fa = write_bytes_or_queue(conn, &cleartext_write);
-            if fa == FlushAction::Close || conn.queued_bytes() > MAX_WRITE_BUF_BYTES {
+            if fa == FlushAction::Close || conn.queued_bytes() > max_write {
                 remove = true;
             } else if fa != FlushAction::None {
                 apply_epoll_flush_action(epfd, conn, conn_id, fa);
@@ -978,6 +983,9 @@ unsafe fn handle_client_readable(
                     drained_from_bp = true;
                 }
             }
+        }
+        if !remove && deferred_bp && !conn.writable_armed {
+            drained_from_bp = true;
         }
     }
     if drained_from_bp {

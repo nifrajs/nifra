@@ -64,7 +64,7 @@ export interface WsDeflateOptions {
   readonly serverNoContextTakeover?: boolean
   /** Request client to reset its LZ77 window per message (`client_no_context_takeover`). */
   readonly clientNoContextTakeover?: boolean
-  /** Server deflate LZ77 window bits (8..15). Default 15. */
+  /** Server deflate LZ77 window bits (9..15; 8 is clamped/declined since raw deflate requires >= 9). Default 15. */
   readonly serverMaxWindowBits?: number
   /** Client deflate LZ77 window bits (8..15). Default 15. */
   readonly clientMaxWindowBits?: number
