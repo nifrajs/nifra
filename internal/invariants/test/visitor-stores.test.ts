@@ -1533,10 +1533,6 @@ const STORES: Readonly<Record<string, Readonly<Record<string, Entry>>>> = {
     "nested@prepare": ONE_CALL,
     "next@NativeRange": ONE_CALL,
   },
-  "packages/web/src/server-components/scheduler.ts": {
-    "#queue@BoundedComponentTasks":
-      "pending admission callbacks for their original callers, removed on start or abort; no results are cached",
-  },
   "packages/web/src/server-components/registry.ts": {
     componentControllers: "the page's component controllers, for dev reload",
   },

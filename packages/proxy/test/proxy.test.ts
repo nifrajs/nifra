@@ -82,6 +82,25 @@ describe("createProxy()", () => {
     expect(targets.map((url) => url.href)).toEqual([`${ORIGIN}/a%2Fb?q=%2B&x=`, `${ORIGIN}/a`])
   })
 
+  test("stripPrefix matches the parsed path of a request URL that is not normalized", async () => {
+    const paths: string[] = []
+    const proxy = createProxy({
+      upstream: ORIGIN,
+      stripPrefix: "/api",
+      transport: async (target) => {
+        paths.push(target.pathname)
+        return { status: 200, statusText: "OK", headers: new Headers(), body: null }
+      },
+    })
+    for (const path of ["/./api/foo", "/x/../api/foo", "/%2e/api/foo", "/api\\foo"]) {
+      const request = new Request("http://edge.test/")
+      // `new Request` normalizes; `@nifrajs/node` hands over the target as it arrived.
+      Object.defineProperty(request, "url", { value: `http://edge.test${path}` })
+      await proxy(request)
+    }
+    expect(paths).toEqual(["/foo", "/foo", "/foo", "/foo"])
+  })
+
   // The prefix is a path segment, not a string prefix. Matching it as a substring rewrote sibling
   // routes that merely start with the same characters - `/apidocs` was forwarded as `docs`.
   test("stripPrefix matches whole segments, not a leading substring", async () => {

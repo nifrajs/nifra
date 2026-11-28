@@ -143,6 +143,9 @@ export interface MountAgUIOptions<
    * the request subject, and the run context carrying the turn id and the shared UI state channel.
    * Throw a `Response` (a 401 with its challenge, a 403) to answer the request with it; any other
    * throw is a fault and reaches the app's error handling.
+   *
+   * Also runs on a `Last-Event-ID` reconnect, before anything is replayed, although no turn starts:
+   * a budget or rate-limit charge made here is made again.
    */
   readonly ports: (c: AgUIRouteContext, run: AgUIRunContext) => AgentPorts | Promise<AgentPorts>
   /**
