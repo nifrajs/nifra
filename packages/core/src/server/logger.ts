@@ -59,16 +59,11 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 interface RedactConfig {
-  readonly extraKeyParts: readonly string[] | undefined
+  readonly keyParts: readonly string[] | undefined
   readonly maxScanLength: number
-  readonly minScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
 }
-
-// Shortest possible match in `commonSecretPatterns` is a minimal email (`a@b.cd`, 6 chars).
-const COMMON_SECRET_MIN_LENGTH = 6
-const KNOWN_SECRET_PATTERNS = new Set(commonSecretPatterns)
 
 // `String.replace` with a global regex replaces every match and is stateless across calls; a
 // non-global pattern would only scrub the first occurrence, so normalize to global once up front.
@@ -80,31 +75,16 @@ function buildConfig(
   defaultPatterns: ReadonlyArray<RegExp> = [],
   maxScanLength = Infinity,
 ): RedactConfig {
-  const rawPatterns = options?.valuePatterns ?? defaultPatterns
   return {
-    extraKeyParts: options?.keyParts?.map((part) => part.toLowerCase()),
+    keyParts: options?.keyParts?.map((part) => part.toLowerCase()),
     maxScanLength,
-    minScanLength:
-      rawPatterns === commonSecretPatterns &&
-      rawPatterns.every((pattern) => KNOWN_SECRET_PATTERNS.has(pattern))
-        ? COMMON_SECRET_MIN_LENGTH
-        : 0,
-    valuePatterns: rawPatterns.map(ensureGlobal),
+    valuePatterns: (options?.valuePatterns ?? defaultPatterns).map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
   }
 }
 
-function isSensitiveKey(key: string, config: RedactConfig): boolean {
-  // Lowercasing preserves the original Unicode matching. Custom fragments stay literal.
-  const lower = key.toLowerCase()
-  return (
-    SENSITIVE_KEY_PATTERN.test(lower) ||
-    config.extraKeyParts?.some((part) => lower.includes(part)) === true
-  )
-}
-
 function redactString(value: string, config: RedactConfig): string {
-  if (config.valuePatterns.length === 0 || value.length < config.minScanLength) return value
+  if (config.valuePatterns.length === 0) return value
   if (value.length > config.maxScanLength) return config.placeholder
   let out = value
   for (const pattern of config.valuePatterns) out = out.replace(pattern, () => config.placeholder)
@@ -120,21 +100,16 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   seen.add(value)
   if (Array.isArray(value)) return value.map((item) => redactValue(item, seen, config))
   const out: Record<string, unknown> = Object.create(null)
+  const entries = Object.entries(value)
   // An Error's own name and message are not enumerable.
-  if (value instanceof Error) {
-    out.name = isSensitiveKey("name", config)
-      ? config.placeholder
-      : redactValue(value.name, seen, config)
-    out.message = isSensitiveKey("message", config)
-      ? config.placeholder
-      : redactValue(value.message, seen, config)
-  }
-  for (const key in value) {
-    if (!Object.hasOwn(value, key)) continue
-    // A sensitive key wins outright (don't scan it) - the whole value is replaced.
-    out[key] = isSensitiveKey(key, config)
-      ? config.placeholder
-      : redactValue(Reflect.get(value, key), seen, config)
+  if (value instanceof Error) entries.unshift(["name", value.name], ["message", value.message])
+  for (const [key, field] of entries) {
+    // Lowercasing preserves Unicode matching. Custom fragments stay literal.
+    const lower = key.toLowerCase()
+    out[key] =
+      SENSITIVE_KEY_PATTERN.test(lower) || config.keyParts?.some((part) => lower.includes(part))
+        ? config.placeholder
+        : redactValue(field, seen, config)
   }
   return out
 }
