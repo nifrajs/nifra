@@ -20,19 +20,8 @@ const MAX_SCAN_LENGTH = 8192
  * Field-name fragments whose values are replaced with `[REDACTED]` (case-insensitive
  * substring match). Key-name redaction is the default + always on.
  */
-const SENSITIVE_KEY_PARTS: ReadonlyArray<string> = [
-  "authorization",
-  "cookie",
-  "password",
-  "passwd",
-  "secret",
-  "token",
-  "apikey",
-  "api_key",
-  "api-key",
-  "credential",
-  "ssn",
-]
+const SENSITIVE_KEY_PATTERN =
+  /authorization|cookie|password|passwd|secret|token|apikey|api_key|api-key|credential|ssn/
 
 /**
  * Tunes redaction. Key-name redaction always runs.
@@ -70,7 +59,7 @@ export const commonSecretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 interface RedactConfig {
-  readonly keyParts: readonly string[]
+  readonly keyParts: readonly string[] | undefined
   readonly maxScanLength: number
   readonly valuePatterns: readonly RegExp[]
   readonly placeholder: string
@@ -86,12 +75,8 @@ function buildConfig(
   defaultPatterns: ReadonlyArray<RegExp> = [],
   maxScanLength = Infinity,
 ): RedactConfig {
-  const extra = options?.keyParts
   return {
-    keyParts:
-      extra === undefined
-        ? SENSITIVE_KEY_PARTS
-        : [...SENSITIVE_KEY_PARTS, ...extra.map((part) => part.toLowerCase())],
+    keyParts: options?.keyParts?.map((part) => part.toLowerCase()),
     maxScanLength,
     valuePatterns: (options?.valuePatterns ?? defaultPatterns).map(ensureGlobal),
     placeholder: options?.placeholder ?? REDACTED,
@@ -118,12 +103,13 @@ function redactValue(value: unknown, seen: WeakSet<object>, config: RedactConfig
   const entries = Object.entries(value)
   // An Error's own name and message are not enumerable.
   if (value instanceof Error) entries.unshift(["name", value.name], ["message", value.message])
-  for (const [key, val] of entries) {
-    // A sensitive key wins outright (don't scan it) - the whole value is replaced.
+  for (const [key, field] of entries) {
+    // Lowercasing preserves Unicode matching. Custom fragments stay literal.
     const lower = key.toLowerCase()
-    out[key] = config.keyParts.some((part) => lower.includes(part))
-      ? config.placeholder
-      : redactValue(val, seen, config)
+    out[key] =
+      SENSITIVE_KEY_PATTERN.test(lower) || config.keyParts?.some((part) => lower.includes(part))
+        ? config.placeholder
+        : redactValue(field, seen, config)
   }
   return out
 }

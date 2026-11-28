@@ -173,7 +173,6 @@ export async function* parseEventStream(
   assertResponseLimit(maxFrameBytes)
   const reader = body.getReader()
   const decoder = new TextDecoder()
-  const encoder = new TextEncoder()
   const frameParts: string[] = []
   const appendFramePart = (text: string): void => {
     if (text.length === 0) return
@@ -192,14 +191,14 @@ export async function* parseEventStream(
       const chunk = await reader.read()
       reachedEof = chunk.done
       const decoded = chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true })
-      frameBytes += encoder.encode(decoded).byteLength
+      frameBytes += UTF8_ENCODER.encode(decoded).byteLength
       buffer += decoded
       let boundary = sseBoundary(buffer)
       while (boundary !== undefined) {
         appendFramePart(buffer.slice(0, boundary.index))
         const frame = frameParts.join("")
         frameParts.length = 0
-        const completedBytes = encoder.encode(frame).byteLength
+        const completedBytes = UTF8_ENCODER.encode(frame).byteLength
         // Delimiters contain only CR/LF, so their code-unit and UTF-8 byte lengths are equal.
         frameBytes -= completedBytes + boundary.end - boundary.index
         buffer = buffer.slice(boundary.end)
@@ -293,6 +292,8 @@ function lineEndingLength(value: string, index: number): number | undefined {
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 const MAX_RESPONSE_BYTES = MAX_TRANSPORT_BYTES
+const UTF8_ENCODER = new TextEncoder()
+const UTF8_DECODER = new TextDecoder()
 
 function assertResponseLimit(value: number): void {
   assertTransportByteLimit(value, {
@@ -326,7 +327,7 @@ async function readResponseText(
         : describe(read.error),
     )
   }
-  return new TextDecoder().decode(read.bytes)
+  return UTF8_DECODER.decode(read.bytes)
 }
 
 function serialize(request: AgentTransportRequest): string {

@@ -25,6 +25,11 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./internal/fifo": {
+      "bun": "./src/internal/fifo.ts",
+      "types": "./dist/internal/fifo.d.ts",
+      "default": "./dist/internal/fifo.js"
+    },
     ".": {
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",

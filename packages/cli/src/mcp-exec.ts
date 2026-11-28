@@ -781,7 +781,7 @@ export async function spawnChild(
   } catch {
     return `${label} input is not serializable.`
   }
-  if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+  if (Buffer.byteLength(encodedInput, "utf8") > CHILD_INPUT_MAX_BYTES)
     return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
   const proc = Bun.spawn([process.execPath, childPath(child), cwd], {
@@ -851,9 +851,11 @@ const WARM_RUN_SOURCE = /\.(?:[cm]?[jt]sx?|json)$/
 const WARM_RUN_SKIPPED_DIR = /^(?:\..*|node_modules|dist(?:-[a-z0-9]+)?|build|coverage)$/
 const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
 const MAX_WARM_PENDING = 64
+const WARM_RUN_STAT_CONCURRENCY = 32
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
+  const pending = [{ path: "", directory: true }]
   const walk = async (dir: string): Promise<void> => {
     let entries: Dirent[]
     try {
@@ -863,23 +865,36 @@ async function warmRunFingerprint(cwd: string): Promise<string> {
     }
     for (const entry of entries) {
       const rel = dir === "" ? entry.name : `${dir}/${entry.name}`
-      if (entry.isDirectory()) {
-        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) await walk(rel)
+      const directory = entry.isDirectory()
+      if (
+        directory
+          ? WARM_RUN_SKIPPED_DIR.test(entry.name)
+          : entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)
+      )
         continue
-      }
-      if (entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)) continue
-      try {
-        const s = await stat(resolve(cwd, rel))
-        if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
-      } catch {
-        // A file can disappear while an agent is editing. The next call will rescan the settled tree.
-      }
+      pending.push({ path: rel, directory })
     }
   }
-  await walk("")
-  for (const rel of WARM_RUN_EXTRA_FILES) {
-    parts.push(`${rel}:${await fileFingerprint(resolve(cwd, rel))}`)
+  // Share a bound across the whole tree so a wide workspace cannot enqueue every stat at once.
+  for (let start = 0; start < pending.length; ) {
+    const batch = pending.slice(start, start + WARM_RUN_STAT_CONCURRENCY)
+    start += batch.length
+    await Promise.all(
+      batch.map(async ({ path, directory }) => {
+        if (directory) return walk(path)
+        try {
+          const info = await stat(resolve(cwd, path))
+          if (info.isFile()) parts.push(`${path}:${info.mtimeMs}:${info.size}`)
+        } catch {
+          // A file can disappear while an agent is editing. The next call scans the settled tree.
+        }
+      }),
+    )
   }
+  const extra = await Promise.all(
+    WARM_RUN_EXTRA_FILES.map(async (rel) => `${rel}:${await fileFingerprint(resolve(cwd, rel))}`),
+  )
+  parts.push(...extra)
   return cacheToken(parts.sort().join("|"))
 }
 
@@ -983,7 +998,7 @@ export class WarmWorker {
     } catch {
       throw new Error(`warm ${this.label} input is not serializable`)
     }
-    if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+    if (Buffer.byteLength(encodedInput, "utf8") > CHILD_INPUT_MAX_BYTES)
       throw new Error(`warm ${this.label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes`)
     if (signal?.aborted) return `${this.label} cancelled${cancellationSuffix(signal)}.`
     return new Promise((resolve, reject) => {
@@ -1046,7 +1061,7 @@ export class WarmWorker {
       }
       const text = decoder.decode(value, { stream: true })
       this.stdoutBuffer += text
-      this.stdoutBufferBytes += new TextEncoder().encode(text).byteLength
+      this.stdoutBufferBytes += Buffer.byteLength(text, "utf8")
       if (this.stdoutBufferBytes > CHILD_OUTPUT_MAX_BYTES) {
         this.stderrBuffer = boundedAppend(
           this.stderrBuffer,
@@ -1055,13 +1070,19 @@ export class WarmWorker {
         this.stop()
         return
       }
-      let nl = this.stdoutBuffer.indexOf("\n")
+      let start = 0
+      let nl = this.stdoutBuffer.indexOf("\n", start)
       while (nl !== -1) {
-        const line = this.stdoutBuffer.slice(0, nl).trim()
-        this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1)
-        this.stdoutBufferBytes = new TextEncoder().encode(this.stdoutBuffer).byteLength
-        nl = this.stdoutBuffer.indexOf("\n")
+        const rawLine = this.stdoutBuffer.slice(start, nl)
+        start = nl + 1
+        this.stdoutBufferBytes -= Buffer.byteLength(rawLine, "utf8") + 1
+        const line = rawLine.trim()
+        nl = this.stdoutBuffer.indexOf("\n", start)
         if (line !== "") this.handleLine(line)
+      }
+      if (start > 0) {
+        this.stdoutBuffer = this.stdoutBuffer.slice(start)
+        if (this.stdoutBuffer.length === 0) this.stdoutBufferBytes = 0
       }
     }
   }
@@ -1122,7 +1143,7 @@ export class WarmWorker {
       this.stop()
       return
     }
-    if (new TextEncoder().encode(output).byteLength > CHILD_OUTPUT_MAX_BYTES) {
+    if (Buffer.byteLength(output, "utf8") > CHILD_OUTPUT_MAX_BYTES) {
       this.pending.delete(response.id)
       pending.cleanup()
       pending.reject(new Error(`warm ${this.label} worker response exceeded the size limit`))

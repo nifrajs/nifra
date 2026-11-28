@@ -155,6 +155,30 @@ const snapshot = (data: unknown): string | undefined => {
 // but it cannot overwrite a key it never writes. `.` is outside the base64url id alphabet.
 const revokedKey = (id: string): string => `${id}${REVOKED_SUFFIX}`
 
+function revocationKeys(id: string): string[] {
+  const family = sessionFamily(id)
+  const keys = [revokedKey(id), `${id}${ROTATED_SUFFIX}`]
+  if (family !== id) keys.push(revokedKey(family))
+  return keys
+}
+
+async function readStore(store: SessionStore, keys: readonly string[]) {
+  if (store.getMany === undefined) return Promise.all(keys.map((key) => store.get(key)))
+  const records = await store.getMany(keys)
+  if (records.length !== keys.length)
+    throw new TypeError("SessionStore.getMany returned the wrong number of records")
+  return records
+}
+
+async function rotatedSessionExists(store: SessionStore, id: string): Promise<boolean> {
+  const familyRevocation = revokedKey(sessionFamily(id))
+  if (store.getMany === undefined) {
+    return (await store.get(id)) !== undefined && (await store.get(familyRevocation)) === undefined
+  }
+  const [record, marker] = await readStore(store, [id, familyRevocation])
+  return record !== undefined && marker === undefined
+}
+
 // A superseded cookie is still the user's own while the rotating response is on its way to the
 // browser. Past that it is a copy someone else kept (a planted pre-login cookie), and it must not end
 // the session that replaced it.
@@ -320,12 +344,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       const id = tagged?.[1] ?? unsigned
       // Only reachable with a value the app signed itself (legacy mode): never read a marker as a session.
       if (isSessionMarker(id)) return make({})
-      const family = sessionFamily(id)
-      const [record, revoked, rotated, familyRevoked] = await Promise.all([
-        store.get(id),
-        store.get(revokedKey(id)),
-        store.get(`${id}${ROTATED_SUFFIX}`),
-        family === id ? undefined : store.get(revokedKey(family)),
+      const [record, revoked, rotated, familyRevoked] = await readStore(store, [
+        id,
+        ...revocationKeys(id),
       ])
       if (record === undefined) return make({})
       if (revoked !== undefined || rotated !== undefined || familyRevoked !== undefined) {
@@ -389,12 +410,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       if (state.id !== undefined) {
         // A loaded session commits only while its record exists and no logout has marked it. The
         // record covers a marker already evicted; the marker covers a logout between its two writes.
-        const family = sessionFamily(state.id)
-        const [current, revoked, rotated, familyRevoked] = await Promise.all([
-          store.get(state.id),
-          store.get(revokedKey(state.id)),
-          store.get(`${state.id}${ROTATED_SUFFIX}`),
-          family === state.id ? undefined : store.get(revokedKey(family)),
+        const [current, revoked, rotated, familyRevoked] = await readStore(store, [
+          state.id,
+          ...revocationKeys(state.id),
         ])
         // Check again after the reads: a delayed store operation can outlive both session and marker.
         if (
@@ -444,24 +462,14 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       // newer session by now, and this response must not replace or clear it.
       if (
         loaded &&
-        (
-          await Promise.all([
-            store.get(revokedKey(state.id)),
-            store.get(`${state.id}${ROTATED_SUFFIX}`),
-            store.get(revokedKey(sessionFamily(state.id))),
-          ])
-        ).some((marker) => marker !== undefined)
+        (await readStore(store, revocationKeys(state.id))).some((marker) => marker !== undefined)
       ) {
         await store.delete(state.id)
         return
       }
       const tag = tagFor(state, visitor)
       const signed = await sign(tag === undefined ? state.id : `${state.id}*${tag}`)
-      if (
-        previousId !== undefined &&
-        ((await store.get(state.id)) === undefined ||
-          (await store.get(revokedKey(sessionFamily(state.id)))) !== undefined)
-      ) {
+      if (previousId !== undefined && !(await rotatedSessionExists(store, state.id))) {
         await store.delete(state.id)
         return
       }

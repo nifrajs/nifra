@@ -222,6 +222,28 @@ describe("mountAgent resumable streams", () => {
     expect(new TextDecoder().decode(replay)).toContain('"output_limit"')
   })
 
+  test("a reconnect honors a refusal from the request's ports factory", async () => {
+    const { app, call } = captureApp()
+    const allowedPorts = ports(outputModel({ answer: "allowed" }))
+    mountAgent(app, {
+      agent: definition,
+      ports: (c) => {
+        if (c.req.headers.has("last-event-id")) throw new Response(null, { status: 401 })
+        return allowedPorts(c)
+      },
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+    const turn = (headers: Record<string, string>) =>
+      call(
+        post(
+          { input: { prompt: "hey" }, turnId: "guarded" },
+          { accept: "text/event-stream", ...headers },
+        ),
+      )
+    expect(await (await turn({})).text()).toContain("allowed")
+    expect((await turn({ "last-event-id": "0" })).status).toBe(401)
+  })
+
   test("refuses an output cap it cannot enforce", () => {
     for (const maxOutputBytes of [0, 1023, Number.NaN, 64 * 1024 * 1024 + 1])
       expect(() =>

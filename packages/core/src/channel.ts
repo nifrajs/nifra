@@ -1,3 +1,5 @@
+import { Fifo } from "./internal/fifo.ts"
+
 /** Typed, runtime-neutral channel contracts. Durable replay, presence, fan-out, and tenant-aware
  * routing belong in an adapter; the bundled hub provides only bounded process-local replay for tests
  * and local development. */
@@ -84,8 +86,8 @@ class MemorySubscription<Message> implements ChannelSubscription<Message> {
   readonly channel: string
   private readonly maxQueue: number
   private readonly remove: () => void
-  private readonly queue: ChannelEvent<Message>[] = []
-  private readonly waiters: Waiter<Message>[] = []
+  private readonly queue = new Fifo<ChannelEvent<Message>>()
+  private readonly waiters = new Fifo<Waiter<Message>>()
   private isClosed = false
   private reason: ChannelCloseReason | undefined
   private lastToken: string | undefined
@@ -102,7 +104,7 @@ class MemorySubscription<Message> implements ChannelSubscription<Message> {
     if (events.length > this.maxQueue) {
       throw new RangeError("channel: resume history exceeds subscriber queue bound")
     }
-    this.queue.push(...events)
+    for (const event of events) this.queue.push(event)
   }
 
   attachSignal(signal: AbortSignal | undefined): void {
@@ -162,14 +164,16 @@ class MemorySubscription<Message> implements ChannelSubscription<Message> {
     if (this.isClosed) return
     this.isClosed = true
     this.reason = reason
-    this.queue.length = 0
+    this.queue.clear()
     if (this.abortSignal !== undefined && this.abortHandler !== undefined) {
       this.abortSignal.removeEventListener("abort", this.abortHandler)
       this.abortSignal = undefined
       this.abortHandler = undefined
     }
     this.remove()
-    for (const waiter of this.waiters.splice(0)) waiter({ done: true, value: undefined })
+    for (let waiter = this.waiters.shift(); waiter !== undefined; waiter = this.waiters.shift()) {
+      waiter({ done: true, value: undefined })
+    }
   }
 
   [Symbol.asyncIterator](): AsyncIterableIterator<ChannelEvent<Message>> {
@@ -193,7 +197,7 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
   }
   const subscribers = new Map<string, Set<MemorySubscription<unknown>>>()
   const sequences = new Map<string, number>()
-  const history = new Map<string, ChannelEvent<unknown>[]>()
+  const history = new Map<string, Map<number, ChannelEvent<unknown>>>()
   const idle = new Set<string>()
 
   // Highest sequence given up with an evicted channel. A channel that returns starts above it, so
@@ -238,15 +242,16 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
       let replay: readonly ChannelEvent<unknown>[] = []
       if (resumeFrom !== undefined) {
         const requestedSequence = sequenceOf(channel.name, resumeFrom)
-        const channelHistory = history.get(channel.name) ?? []
-        const oldest = channelHistory[0]?.sequence
+        const channelHistory = history.get(channel.name)
+        const oldest = channelHistory?.keys().next().value
         const known =
           requestedSequence !== undefined &&
           requestedSequence <= currentSequence &&
-          (requestedSequence === currentSequence ||
-            channelHistory.some((event) => event.sequence === requestedSequence))
+          (requestedSequence === currentSequence || channelHistory?.has(requestedSequence) === true)
         if (!known) throw new ChannelResumeUnavailableError(channel.name, resumeFrom)
-        replay = channelHistory.filter((event) => event.sequence > requestedSequence)
+        replay = Array.from(channelHistory?.values() ?? []).filter(
+          (event) => event.sequence > requestedSequence,
+        )
         // Keep this explicit so a future history representation cannot silently truncate a resume.
         if (oldest !== undefined && requestedSequence < oldest && replay.length === 0) {
           throw new ChannelResumeUnavailableError(channel.name, resumeFrom)
@@ -292,9 +297,9 @@ export function memoryChannelHub(options: MemoryChannelHubOptions = {}): Channel
         data,
       }
       if (historySize > 0) {
-        const channelHistory = history.get(channel.name) ?? []
-        channelHistory.push(event as ChannelEvent<unknown>)
-        if (channelHistory.length > historySize) channelHistory.shift()
+        const channelHistory = history.get(channel.name) ?? new Map<number, ChannelEvent<unknown>>()
+        channelHistory.set(sequence, event as ChannelEvent<unknown>)
+        if (channelHistory.size > historySize) channelHistory.delete(sequence - historySize)
         history.set(channel.name, channelHistory)
       }
       for (const subscriber of subscribers.get(channel.name) ?? []) {

@@ -18,6 +18,19 @@ afterEach(() => {
   else Bun.env.PORT = savedPort
 })
 
+test("the default help is short and the complete catalog is discoverable", () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const run = (...args: string[]) =>
+    Bun.spawnSync([process.execPath, "--no-env-file", cli, ...args], { timeout: 3000 })
+  const brief = run("--help")
+  expect(brief.exitCode).toBe(0)
+  expect(brief.stdout.toString()).toContain("nifra help --all")
+  expect(brief.stdout.toString().split("\n").length).toBeLessThan(20)
+  const full = run("help", "--all")
+  expect(full.exitCode).toBe(0)
+  expect(full.stdout.toString()).toContain("Stable project command catalog")
+})
+
 test("manual command help prints usage before dispatching", () => {
   const cwd = mkdtempSync(join(tmpdir(), "nifra-cli-help-"))
   try {

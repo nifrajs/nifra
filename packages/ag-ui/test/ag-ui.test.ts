@@ -519,6 +519,21 @@ describe("mountAgUI resumable streams", () => {
     expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
   })
 
+  test("a reconnect honors a refusal from the request's ports factory", async () => {
+    const { app, call } = captureApp()
+    const allowedPorts = ports()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (c) => {
+        if (c.req.headers.has("last-event-id")) throw new Response(null, { status: 401 })
+        return allowedPorts(c)
+      },
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+    expect(await (await call(replayInput({}))).text()).toContain("RUN_FINISHED")
+    expect((await call(replayInput({ "last-event-id": "0" }))).status).toBe(401)
+  })
+
   test("a client that disconnects mid-run can still replay the run's real result", async () => {
     const { app, call } = captureApp()
     let release!: () => void

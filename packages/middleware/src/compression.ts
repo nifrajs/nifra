@@ -214,6 +214,7 @@ async function compressRawBody(
         })
       }
       if (value === undefined) return replayRawResponse(response, buffered, reader)
+      if (value.byteLength === 0) continue
       buffered.push(value)
       total += value.byteLength
     }
@@ -221,9 +222,11 @@ async function compressRawBody(
     return replayRawResponse(response, buffered, reader)
   }
 
+  let nextBuffered = 0
   const replaying: RawReader = {
     read: () => {
-      const value = buffered.shift()
+      const value = buffered[nextBuffered]
+      if (value !== undefined && ++nextBuffered === buffered.length) buffered.length = 0
       return value === undefined ? reader.read() : Promise.resolve({ done: false, value })
     },
     cancel: (reason) => reader.cancel(reason),

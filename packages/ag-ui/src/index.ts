@@ -94,6 +94,7 @@ import {
 import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 
 const DEFAULT_PATH = "/agui"
+const FRAME_ENCODER = new TextEncoder()
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -216,30 +217,29 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const resume = parseAgentResume(forwarded.resume) ?? entry?.resume
   let log = options.evidenceLog
   if (log !== undefined && options.evidenceOwner !== undefined) {
-    let owner: string
     try {
-      owner = await options.evidenceOwner(c)
+      log = scopeAgentEvidenceLog(log, await options.evidenceOwner(c))
     } catch (err) {
       if (err instanceof Response) return err
       return jsonResponse(403, { error: "forbidden" })
     }
-    log = scopeAgentEvidenceLog(log, owner)
   }
   const identity: RunIdentity = { threadId, runId, turnId }
+  const lastEventId = c.req.headers.get("last-event-id")
+  if (log !== undefined && lastEventId !== null && !LAST_EVENT_ID_PATTERN.test(lastEventId)) {
+    return jsonResponse(400, { error: "invalid_last_event_id" })
+  }
+  // `body.state` seeds the run's shared UI state document; patches stream as STATE_DELTA.
+  const sharedState = createAgentSharedState<unknown>(body.state === undefined ? {} : body.state)
+  // The application can reject a request in ports(), including a reconnect.
+  const basePorts = await options.ports(c, { turnId, sharedState })
 
   // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.
-  const lastEventId = c.req.headers.get("last-event-id")
   if (log !== undefined && lastEventId !== null) {
-    if (!LAST_EVENT_ID_PATTERN.test(lastEventId))
-      return jsonResponse(400, { error: "invalid_last_event_id" })
     const replay = await log.replay(turnId, Number(lastEventId))
     if (replay === undefined) return jsonResponse(409, { error: "replay_unavailable" })
     return sseReplayResponse(identity, replay, maxOutputBytes)
   }
-
-  // `body.state` seeds the run's shared UI state document; patches stream as STATE_DELTA.
-  const sharedState = createAgentSharedState<unknown>(body.state === undefined ? {} : body.state)
-  const basePorts = await options.ports(c, { turnId, sharedState })
 
   const start = (
     telemetry: AgentPorts["telemetry"],
@@ -466,11 +466,10 @@ function sseSender(
   controller: ReadableStreamDefaultController<Uint8Array>,
   maxOutputBytes: number,
 ): SseSend {
-  const encoder = new TextEncoder()
   let emittedBytes = 0
   return (event, id) => {
     const head = id === undefined ? "" : `id: ${id}\n`
-    const frame = encoder.encode(`${head}data: ${JSON.stringify(event)}\n\n`)
+    const frame = FRAME_ENCODER.encode(`${head}data: ${JSON.stringify(event)}\n\n`)
     if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
       throw new SseOutputLimitError("AG-UI SSE output limit exceeded")
     emittedBytes += frame.byteLength

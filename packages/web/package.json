@@ -32,6 +32,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./internal/runtime-contract": {
+      "bun": "./src/internal/runtime-contract.ts",
+      "types": "./dist/internal/runtime-contract.d.ts",
+      "default": "./dist/internal/runtime-contract.js"
+    },
     "./fs": {
       "bun": "./src/fs.ts",
       "types": "./dist/fs.d.ts",

@@ -14,6 +14,7 @@ import {
   AgentResumeMismatchError,
   type AgentStatePatchOp,
   type AgentStepEvidence,
+  type AgentToolDescriptor,
   combineAgentDeltaSinks,
   combineAgentTelemetry,
   createAgentSharedState,
@@ -91,6 +92,39 @@ describe("agent turns", () => {
     expect(result.status).toBe("completed")
     if (result.status === "completed") expect(result.output).toEqual({ answer: "hello" })
     expect(calls.count).toBe(1)
+  })
+
+  test("reuses the model's tool catalog across turns when the tools are frozen", async () => {
+    const tool = defineTool({
+      name: "reference.lookup",
+      description: "Look up a reference value.",
+      input: t.object({ id: t.string() }),
+      output: t.object({ found: t.boolean() }),
+      capability: "reference.lookup",
+      execute: () => ({ found: true }),
+    })
+    const agent = { ...definition(tool), tools: Object.freeze([tool]) }
+    const catalogs: (readonly AgentToolDescriptor[])[] = []
+    const model: AgentModelPort = {
+      complete(request) {
+        catalogs.push(request.tools)
+        return { kind: "output", value: { answer: "done" } }
+      },
+    }
+    for (const id of ["catalog-first", "catalog-second"]) {
+      const result = await turn(
+        agent,
+        createAgentState(id),
+        { value: { prompt: "hello" } },
+        {
+          model,
+          capabilities: [],
+        },
+      )
+      expect(result.status).toBe("completed")
+    }
+    expect(catalogs[0]).toMatchObject([{ name: tool.name, capability: tool.capability }])
+    expect(catalogs[1]).toBe(catalogs[0])
   })
 
   test("returns a typed capability error without executing a denied tool", async () => {

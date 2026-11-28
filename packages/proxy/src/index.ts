@@ -617,17 +617,10 @@ function nativeRequestHeaders(
   options: ProxyOptions,
 ): string[] {
   const nominated = parseConnectionNominated(nativeHeaderValue(request.headers, "connection"))
-  const entries: string[] = []
-  for (const [name, raw] of Object.entries(request.headers)) {
-    if (raw === undefined) continue
-    if (isDroppedRequestHeader(name, nominated)) continue
-    for (const value of nativeHeaderValues(raw)) entries.push(name, value)
-  }
+  const overrides = new Map<string, string>()
   const replace = (name: string, value: string): void => {
-    for (let i = entries.length - 2; i >= 0; i -= 2) {
-      if (entries[i] === name) entries.splice(i, 2)
-    }
-    entries.push(name, value)
+    overrides.delete(name)
+    overrides.set(name, value)
   }
   if (options.forwardClientIp === true && clientIp !== undefined) {
     for (const [name, value] of forwardedClientHeaders(
@@ -643,6 +636,13 @@ function nativeRequestHeaders(
   if (options.headers !== undefined) {
     for (const [name, value] of Object.entries(options.headers)) replace(name.toLowerCase(), value)
   }
+  const entries: string[] = []
+  for (const [name, raw] of Object.entries(request.headers)) {
+    if (raw === undefined || overrides.has(name) || isDroppedRequestHeader(name, nominated))
+      continue
+    for (const value of nativeHeaderValues(raw)) entries.push(name, value)
+  }
+  for (const [name, value] of overrides) entries.push(name, value)
   return entries
 }
 
@@ -761,6 +761,16 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
   if (stripPrefix !== undefined && (!stripPrefix.startsWith("/") || stripPrefix.endsWith("/"))) {
     throw new Error('[nifra/proxy] stripPrefix must start with "/" and not end with one')
   }
+  const upstreamUrl = (pathname: string, search: string): URL => {
+    const target = new URL(base)
+    target.pathname =
+      stripPrefix !== undefined &&
+      (pathname === stripPrefix || pathname.startsWith(`${stripPrefix}/`))
+        ? pathname.slice(stripPrefix.length) || "/"
+        : pathname
+    target.search = search
+    return target
+  }
   if (options.trustForwardedFor === true && options.forwardClientIp !== true) {
     throw new Error("[nifra/proxy] trustForwardedFor requires forwardClientIp: true")
   }
@@ -840,17 +850,26 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
     const callerSignal =
       input instanceof Request ? input.signal : (input.signal ?? input.req.signal)
 
-    const incoming = new URL(req.url)
-    let path = incoming.pathname
-    if (stripPrefix !== undefined && (path === stripPrefix || path.startsWith(`${stripPrefix}/`))) {
-      const rest = path.slice(stripPrefix.length)
-      path = rest === "" || !rest.startsWith("/") ? `/${rest}` : rest
+    // A Web Request already holds a serialized URL. Keep the parser for other URL schemes.
+    const url = req.url
+    const pathStart = url.startsWith("https://")
+      ? url.indexOf("/", 8)
+      : url.startsWith("http://")
+        ? url.indexOf("/", 7)
+        : -1
+    let target: URL
+    if (pathStart === -1) {
+      const { pathname, search } = new URL(url)
+      target = upstreamUrl(pathname, search)
+    } else {
+      const hash = url.indexOf("#", pathStart)
+      const end = hash === -1 ? url.length : hash
+      const query = url.indexOf("?", pathStart)
+      target =
+        query !== -1 && query < end
+          ? upstreamUrl(url.slice(pathStart, query), query + 1 === end ? "" : url.slice(query, end))
+          : upstreamUrl(url.slice(pathStart, end), "")
     }
-    // Mutating a clone of the configured origin - never URL-resolving a request-derived string -
-    // means no path (e.g. `//evil.example/x`) can change the host being dialed.
-    const target = new URL(base)
-    target.pathname = path
-    target.search = incoming.search
 
     // One AbortController instead of `AbortSignal.timeout` + `AbortSignal.any`: that pair costs
     // ~12x more per request on Node, and its timer is only reclaimed once GC gets to the signal.
@@ -948,16 +967,7 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
       controller.abort()
     }, timeoutMs)
     const incoming = new URL(input.url)
-    let path = incoming.pathname
-    if (stripPrefix !== undefined && (path === stripPrefix || path.startsWith(`${stripPrefix}/`))) {
-      const rest = path.slice(stripPrefix.length)
-      path = rest === "" || !rest.startsWith("/") ? `/${rest}` : rest
-    }
-    // As in the Web path, mutate only a clone of the fixed origin. The Node adapter's URL is used
-    // for path/query and never as a URL base, so a request path cannot redirect the dialed host.
-    const target = new URL(base)
-    target.pathname = path
-    target.search = incoming.search
+    const target = upstreamUrl(incoming.pathname, incoming.search)
 
     try {
       const upstream = await transport(target, {

@@ -611,6 +611,22 @@ export function createAgentState(turnId: string): AgentTurnState {
 
 const AGENT_SETTLE_RESERVE_MS = 5
 
+const TOOL_CATALOG_CACHE = new WeakMap<
+  readonly AgentToolContract[],
+  readonly AgentToolDescriptor[]
+>()
+
+function toolCatalogOf(tools: readonly AgentToolContract[]): readonly AgentToolDescriptor[] {
+  let cached = TOOL_CATALOG_CACHE.get(tools)
+  if (cached === undefined) {
+    const entries = tools.map((tool) => toCatalogEntry(tool))
+    if (!Object.isFrozen(tools) || !tools.every((tool) => Object.isFrozen(tool))) return entries
+    cached = Object.freeze(entries)
+    TOOL_CATALOG_CACHE.set(tools, cached)
+  }
+  return cached
+}
+
 function costMilliseconds(cost: EffectCost | undefined): number {
   const value = cost?.ms
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0
@@ -751,7 +767,7 @@ export async function turn<
       instruction: definition.instruction,
       input: inputResult.value,
       state,
-      tools: definition.tools.map((tool) => toCatalogEntry(tool)),
+      tools: toolCatalogOf(definition.tools),
       ...(input.toolResult === undefined ? {} : { toolResult: input.toolResult }),
       ...(input.previousOutput === undefined ? {} : { previousOutput: input.previousOutput }),
       signal,
@@ -1160,13 +1176,16 @@ function completedError(
 }
 
 function parseModelResponse(value: unknown): AgentModelResponse | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
-  const record = Object.fromEntries(Object.entries(value))
-  if (record.kind === "output" && Object.hasOwn(record, "value")) {
+  const record = asRecord(value)
+  const enumerable = Object.prototype.propertyIsEnumerable
+  if (record === undefined || !enumerable.call(record, "kind")) return undefined
+  const kind = record.kind
+  if (kind === "output" && enumerable.call(record, "value")) {
     return Object.freeze({ kind: "output", value: record.value })
   }
-  if (record.kind === "tool" && typeof record.name === "string" && Object.hasOwn(record, "input")) {
-    return Object.freeze({ kind: "tool", name: record.name, input: record.input })
+  if (kind === "tool" && enumerable.call(record, "name") && enumerable.call(record, "input")) {
+    const name = record.name
+    if (typeof name === "string") return Object.freeze({ kind: "tool", name, input: record.input })
   }
   return undefined
 }

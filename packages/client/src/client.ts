@@ -597,20 +597,32 @@ function assignHeaders(
   source: Record<string, string> | undefined,
 ): Record<string, string> {
   if (source === undefined) return target
+  const replacements = new Map<string, [string, string]>()
   for (const [name, value] of Object.entries(source)) {
-    deleteHeader(target, name)
-    target[name] = value
+    const lower = name.toLowerCase()
+    replacements.delete(lower)
+    replacements.set(lower, [name, value])
   }
+  if (replacements.size === 0) return target
+  for (const key in target) {
+    if (Object.hasOwn(target, key) && replacements.has(key.toLowerCase())) delete target[key]
+  }
+  for (const [name, value] of replacements.values()) target[name] = value
   return target
 }
 
 function deleteHeader(headers: Record<string, string>, name: string): void {
   const lower = name.toLowerCase()
-  for (const key of Object.keys(headers)) if (key.toLowerCase() === lower) delete headers[key]
+  for (const key in headers) {
+    if (Object.hasOwn(headers, key) && key.toLowerCase() === lower) delete headers[key]
+  }
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
-  return Object.keys(headers).some((key) => key.toLowerCase() === name)
+  for (const key in headers) {
+    if (Object.hasOwn(headers, key) && key.toLowerCase() === name) return true
+  }
+  return false
 }
 
 /** Encode a typed call, negotiate its response codec, and execute it under timeout/retry policy. */
@@ -869,7 +881,7 @@ async function readSseStream(
 function lastEventIdHeader(id: string): string {
   if (/^[\x20-\x7e]*$/.test(id)) return id
   let bytes = ""
-  for (const byte of new TextEncoder().encode(id)) bytes += String.fromCharCode(byte)
+  for (const byte of utf8.encode(id)) bytes += String.fromCharCode(byte)
   return bytes
 }
 

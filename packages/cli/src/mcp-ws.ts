@@ -16,6 +16,7 @@ const MAX_MESSAGES = 50
 const MAX_MESSAGE_BYTES = 64 * 1024
 const MAX_PATH_LENGTH = 2_048
 const ENCODER = new TextEncoder()
+const DECODER = new TextDecoder()
 
 interface RunningServerLike {
   readonly port: number
@@ -153,9 +154,9 @@ function normalizeInput(args: unknown): NormalizedInput | { error: string; path:
 
 async function dataToString(data: unknown): Promise<string> {
   if (typeof data === "string") return data
-  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data)
+  if (data instanceof ArrayBuffer) return DECODER.decode(data)
   if (ArrayBuffer.isView(data)) {
-    return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+    return DECODER.decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
   }
   if (typeof Blob !== "undefined" && data instanceof Blob) return data.text()
   return String(data)
