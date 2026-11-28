@@ -762,6 +762,8 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
     throw new Error('[nifra/proxy] stripPrefix must start with "/" and not end with one')
   }
   const upstreamUrl = (pathname: string, search: string): URL => {
+    // Mutating a clone of the configured origin, never URL-resolving a request-derived string, keeps
+    // a path such as `//evil.example/x` from changing the host being dialed.
     const target = new URL(base)
     target.pathname =
       stripPrefix !== undefined &&
@@ -850,26 +852,9 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
     const callerSignal =
       input instanceof Request ? input.signal : (input.signal ?? input.req.signal)
 
-    // A Web Request already holds a serialized URL. Keep the parser for other URL schemes.
-    const url = req.url
-    const pathStart = url.startsWith("https://")
-      ? url.indexOf("/", 8)
-      : url.startsWith("http://")
-        ? url.indexOf("/", 7)
-        : -1
-    let target: URL
-    if (pathStart === -1) {
-      const { pathname, search } = new URL(url)
-      target = upstreamUrl(pathname, search)
-    } else {
-      const hash = url.indexOf("#", pathStart)
-      const end = hash === -1 ? url.length : hash
-      const query = url.indexOf("?", pathStart)
-      target =
-        query !== -1 && query < end
-          ? upstreamUrl(url.slice(pathStart, query), query + 1 === end ? "" : url.slice(query, end))
-          : upstreamUrl(url.slice(pathStart, end), "")
-    }
+    // Parse before matching stripPrefix: a server may hand over the request target with dot segments.
+    const incoming = new URL(req.url)
+    const target = upstreamUrl(incoming.pathname, incoming.search)
 
     // One AbortController instead of `AbortSignal.timeout` + `AbortSignal.any`: that pair costs
     // ~12x more per request on Node, and its timer is only reclaimed once GC gets to the signal.
