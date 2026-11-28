@@ -1,7 +1,9 @@
 //! Sans-I/O RFC 9113 HTTP/2 + RFC 7541 HPACK server engine with full Huffman decoding,
 //! multiplexed streams, flow control, graceful GOAWAY, and rapid-reset (CVE-2023-44487) guards.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::{is_valid_header_name, is_valid_host, method_to_idx};
@@ -95,6 +97,10 @@ impl Default for H2Config {
     }
 }
 
+/// A field name or value, shared with the HPACK table so that a repeated field is not copied. The
+/// text is the wire bytes read as latin-1, one `char` per byte.
+pub type HeaderStr = Arc<str>;
+
 #[derive(Debug, Clone)]
 pub struct H2Request {
     pub stream_id: u32,
@@ -108,7 +114,7 @@ pub struct H2Request {
     pub over_max_body: bool,
     pub is_ws_upgrade: bool,
     pub streaming_body: bool,
-    pub headers: Vec<(String, String)>,
+    pub headers: Vec<(HeaderStr, HeaderStr)>,
     pub trailers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
@@ -143,7 +149,7 @@ struct InStream {
     path: String,
     query: String,
     authority: Option<String>,
-    headers: Vec<(String, String)>,
+    headers: Vec<(HeaderStr, HeaderStr)>,
     trailers: Vec<(String, String)>,
     is_json_ct: bool,
     body: Vec<u8>,
@@ -1115,26 +1121,6 @@ impl H2Conn {
             return Ok(());
         }
         self.note_opened(stream_id);
-        // The table is now in step with the peer's whatever the bytes were. A target or name that is
-        // not UTF-8 fails this request, not the connection and its streams.
-        let decoded: Option<Vec<(String, String)>> = decoded
-            .into_iter()
-            .map(|(name, value)| {
-                let name = String::from_utf8(name).ok()?;
-                let value = if name.starts_with(':') {
-                    String::from_utf8(value).ok()?
-                } else {
-                    crate::latin1(&value)
-                };
-                Some((name, value))
-            })
-            .collect();
-        let Some(decoded) = decoded else {
-            self.last_stream_id = self.last_stream_id.max(stream_id);
-            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
-            return Ok(());
-        };
-
         // Check if this is trailing headers on an already-open stream.
         if let Some(st) = self.active_streams.get_mut(&stream_id) {
             if st.headers_done && end_stream && !st.is_ws_connect {
@@ -1165,7 +1151,7 @@ impl H2Conn {
                             if !decoded.is_empty() {
                                 res.events.push(H2Event::StreamTrailers {
                                     stream_id,
-                                    trailers: decoded,
+                                    trailers: owned_fields(&decoded),
                                 });
                             }
                             res.events.push(H2Event::StreamData {
@@ -1177,7 +1163,7 @@ impl H2Conn {
                     } else if st.declared_cl.is_some_and(|cl| cl != st.body.len() as u64) {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
-                        st.trailers = decoded;
+                        st.trailers = owned_fields(&decoded);
                         self.finalize_request(stream_id, st, write_buf, res);
                     }
                 }
@@ -1235,11 +1221,16 @@ impl H2Conn {
                 return Ok(());
             }
             if name.starts_with(':') {
+                // A pseudo-header's value is UTF-8; a regular field's stays latin-1.
+                let Some(val) = utf8_of(&val) else {
+                    self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    return Ok(());
+                };
                 if seen_regular {
                     self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     return Ok(());
                 }
-                match name.as_str() {
+                match &*name {
                     ":method" => {
                         if method.is_some() || !is_valid_header_name(&val) {
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
@@ -1293,23 +1284,23 @@ impl H2Conn {
                 self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                 return Ok(());
             }
-            if name == "host" {
+            if &*name == "host" {
                 if has_host {
                     self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     return Ok(());
                 }
                 has_host = true;
                 if authority.is_none() {
-                    authority = Some(val.clone());
+                    authority = Some(val.to_string());
                 }
-            } else if name == "content-type" {
+            } else if &*name == "content-type" {
                 // First occurrence wins, matching the HTTP/1 parser.
                 if !seen_content_type {
                     seen_content_type = true;
-                    let essence = val.split_once(';').map_or(val.as_str(), |(e, _)| e).trim();
+                    let essence = val.split_once(';').map_or(&*val, |(e, _)| e).trim();
                     is_json_ct = essence.eq_ignore_ascii_case("application/json");
                 }
-            } else if name == "content-length" {
+            } else if &*name == "content-length" {
                 let digits = val.trim();
                 let parsed = if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                     None
@@ -1360,7 +1351,7 @@ impl H2Conn {
         }
         if !has_host {
             if let Some(ref auth) = authority {
-                headers.push(("host".to_owned(), auth.clone()));
+                headers.push(("host".into(), auth.as_str().into()));
             }
         }
 
@@ -1421,7 +1412,7 @@ impl H2Conn {
             let host_valid = st
                 .headers
                 .iter()
-                .find(|(name, _)| name == "host")
+                .find(|(name, _)| &**name == "host")
                 .is_some_and(|(_, value)| is_valid_host(value));
             let method_idx = if is_ws_connect {
                 0
@@ -1475,7 +1466,7 @@ impl H2Conn {
         let host_valid = st
             .headers
             .iter()
-            .find(|(name, _)| name == "host")
+            .find(|(name, _)| &**name == "host")
             .is_some_and(|(_, value)| is_valid_host(value));
         let method_idx = method_to_idx(&st.method);
         res.events.push(H2Event::Request(H2Request {
@@ -1985,13 +1976,47 @@ fn encode_hpack_str(bytes: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(bytes);
 }
 
-/// One decoded header as raw bytes: `(name, value)`.
-type HeaderBytes = (Vec<u8>, Vec<u8>);
+/// One decoded header: `(name, value)`.
+type Field = (HeaderStr, HeaderStr);
+
+fn header_str(bytes: &[u8]) -> HeaderStr {
+    match std::str::from_utf8(bytes) {
+        Ok(text) if text.is_ascii() => text.into(),
+        _ => crate::latin1(bytes).into(),
+    }
+}
+
+/// How many bytes `text` took on the wire, which is what HPACK sizes count.
+fn wire_len(text: &str) -> usize {
+    text.chars().count()
+}
+
+/// The UTF-8 reading of the bytes `text` holds as latin-1.
+fn utf8_of(text: &str) -> Option<String> {
+    if text.is_ascii() {
+        return Some(text.to_owned());
+    }
+    String::from_utf8(text.chars().map(|c| c as u8).collect()).ok()
+}
+
+fn owned_fields(fields: &[Field]) -> Vec<(String, String)> {
+    fields
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+thread_local! {
+    static STATIC_FIELDS: Vec<Field> = STATIC_TABLE
+        .iter()
+        .map(|&(name, value)| (name.into(), value.into()))
+        .collect();
+}
 
 struct HpackDecoder {
-    // Bytes, not text: a header value is only required to be bytes, and the table must stay in step
-    // with the peer's whatever they hold.
-    dynamic: VecDeque<(Vec<u8>, Vec<u8>)>,
+    // Latin-1 holds any bytes: a header value is only required to be bytes, and the table must stay
+    // in step with the peer's whatever they hold.
+    dynamic: VecDeque<Field>,
     dynamic_size: usize,
     max_dynamic_size: usize,
     max_header_list_size: usize,
@@ -2015,7 +2040,9 @@ impl HpackDecoder {
     fn evict(&mut self) {
         while self.dynamic_size > self.max_dynamic_size {
             if let Some((k, v)) = self.dynamic.pop_back() {
-                self.dynamic_size = self.dynamic_size.saturating_sub(k.len() + v.len() + 32);
+                self.dynamic_size = self
+                    .dynamic_size
+                    .saturating_sub(wire_len(&k) + wire_len(&v) + 32);
             } else {
                 self.dynamic_size = 0;
                 break;
@@ -2023,8 +2050,8 @@ impl HpackDecoder {
         }
     }
 
-    fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) {
-        let entry_size = name.len() + value.len() + 32;
+    fn insert(&mut self, name: HeaderStr, value: HeaderStr) {
+        let entry_size = wire_len(&name) + wire_len(&value) + 32;
         if entry_size > self.max_dynamic_size {
             self.dynamic.clear();
             self.dynamic_size = 0;
@@ -2035,20 +2062,18 @@ impl HpackDecoder {
         self.evict();
     }
 
-    fn get(&self, index: usize) -> Result<(&[u8], &[u8]), ()> {
+    fn get(&self, index: usize) -> Result<Field, ()> {
         if index == 0 {
             return Err(());
         }
         if index <= STATIC_TABLE.len() {
-            let (k, v) = STATIC_TABLE[index - 1];
-            return Ok((k.as_bytes(), v.as_bytes()));
+            return Ok(STATIC_FIELDS.with(|fields| fields[index - 1].clone()));
         }
         let dyn_idx = index - STATIC_TABLE.len() - 1;
-        let (k, v) = self.dynamic.get(dyn_idx).ok_or(())?;
-        Ok((k.as_slice(), v.as_slice()))
+        self.dynamic.get(dyn_idx).cloned().ok_or(())
     }
 
-    fn decode(&mut self, buf: &[u8]) -> Result<Vec<HeaderBytes>, ()> {
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<Field>, ()> {
         let mut out = Vec::with_capacity(16);
         let mut total_size = 0usize;
         let mut pos = 0usize;
@@ -2060,11 +2085,11 @@ impl HpackDecoder {
                 let (idx, used) = decode_hpack_int(&buf[pos..], 7)?;
                 pos += used;
                 let (k, v) = self.get(idx)?;
-                total_size += k.len() + v.len() + 32;
+                total_size += wire_len(&k) + wire_len(&v) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
-                out.push((k.to_owned(), v.to_owned()));
+                out.push((k, v));
             } else if (b & 0x40) != 0 {
                 // Literal with Incremental Indexing (RFC 7541 §6.2.1)
                 let (idx, used) = decode_hpack_int(&buf[pos..], 6)?;
@@ -2072,13 +2097,14 @@ impl HpackDecoder {
                 let name = if idx == 0 {
                     let (s, u) = decode_hpack_str(&buf[pos..])?;
                     pos += u;
-                    s
+                    header_str(&s)
                 } else {
-                    self.get(idx)?.0.to_owned()
+                    self.get(idx)?.0
                 };
                 let (val, u) = decode_hpack_str(&buf[pos..])?;
+                let val = header_str(&val);
                 pos += u;
-                total_size += name.len() + val.len() + 32;
+                total_size += wire_len(&name) + wire_len(&val) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
@@ -2102,13 +2128,14 @@ impl HpackDecoder {
                 let name = if idx == 0 {
                     let (s, u) = decode_hpack_str(&buf[pos..])?;
                     pos += u;
-                    s
+                    header_str(&s)
                 } else {
-                    self.get(idx)?.0.to_owned()
+                    self.get(idx)?.0
                 };
                 let (val, u) = decode_hpack_str(&buf[pos..])?;
+                let val = header_str(&val);
                 pos += u;
-                total_size += name.len() + val.len() + 32;
+                total_size += wire_len(&name) + wire_len(&val) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
@@ -2145,7 +2172,7 @@ fn decode_hpack_int(buf: &[u8], prefix_bits: u8) -> Result<(usize, usize), ()> {
     }
 }
 
-fn decode_hpack_str(buf: &[u8]) -> Result<(Vec<u8>, usize), ()> {
+fn decode_hpack_str(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), ()> {
     if buf.is_empty() {
         return Err(());
     }
@@ -2157,9 +2184,9 @@ fn decode_hpack_str(buf: &[u8]) -> Result<(Vec<u8>, usize), ()> {
     }
     let raw = &buf[used..end];
     let bytes = if huffman {
-        huffman_decode(raw)?
+        Cow::Owned(huffman_decode(raw)?)
     } else {
-        raw.to_vec()
+        Cow::Borrowed(raw)
     };
     Ok((bytes, end))
 }
@@ -2932,7 +2959,7 @@ mod tests {
         assert!(requests[1]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-token" && v == "v"));
+            .any(|(k, v)| &**k == "x-token" && &**v == "v"));
         assert!(!res.close_after_write);
 
         // A size update above what the server advertised is a compression error.
@@ -3007,7 +3034,7 @@ mod tests {
         assert!(served[0]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-ok" && v == "1"));
+            .any(|(k, v)| &**k == "x-ok" && &**v == "1"));
     }
 
     /// A `GET` header block with literal, unindexed fields after the pseudo-headers.
@@ -3044,6 +3071,35 @@ mod tests {
 
     const WHOLE: u8 = FLAG_END_HEADERS | FLAG_END_STREAM;
 
+    /// A literal with incremental indexing and a new name (RFC 7541 section 6.2.1).
+    fn indexed_literal(name: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut block = vec![0x40];
+        encode_hpack_str(name, &mut block);
+        encode_hpack_str(value, &mut block);
+        block
+    }
+
+    #[test]
+    fn hpack_shares_a_repeated_field_with_its_table_entry() {
+        let mut decoder = HpackDecoder::new(4096, 64 * 1024);
+        let first = decoder.decode(&indexed_literal(b"x-a", b"one")).unwrap();
+        let again = decoder.decode(&[0xbe]).unwrap();
+        assert!(Arc::ptr_eq(&first[0].0, &again[0].0));
+        assert!(Arc::ptr_eq(&first[0].1, &again[0].1));
+    }
+
+    #[test]
+    fn hpack_sizes_count_wire_bytes_not_the_bytes_of_the_text() {
+        // 3 + 4 + 32 octets on the wire; the value's text is 8 bytes of UTF-8.
+        let mut decoder = HpackDecoder::new(39, 39);
+        let literal = indexed_literal(b"x-a", &[0xe9; 4]);
+        assert_eq!(
+            &*decoder.decode(&literal).unwrap()[0].1,
+            "\u{e9}\u{e9}\u{e9}\u{e9}"
+        );
+        assert_eq!(&*decoder.decode(&[0xbe]).unwrap()[0].0, "x-a");
+    }
+
     #[test]
     fn h2_header_values_are_latin1() {
         let (mut conn, mut wire) = open_wire();
@@ -3057,7 +3113,7 @@ mod tests {
         assert!(requests(&res)[0]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-raw" && v == "\u{e9}\u{ff}"));
+            .any(|(k, v)| &**k == "x-raw" && &**v == "\u{e9}\u{ff}"));
     }
 
     #[test]

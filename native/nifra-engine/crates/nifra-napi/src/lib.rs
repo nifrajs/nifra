@@ -14,7 +14,8 @@ use napi_derive::napi;
 
 use nifra_http::abi::{IN_SLOT_U32S, OUT_SLOT_U32S};
 use nifra_http::h2::{
-    H2Config, H2Conn, H2Event, H2Request, CLIENT_PREFACE, ERR_INTERNAL_ERROR, ERR_NO_ERROR,
+    H2Config, H2Conn, H2Event, H2Request, HeaderStr, CLIENT_PREFACE, ERR_INTERNAL_ERROR,
+    ERR_NO_ERROR,
 };
 use nifra_http::{
     awaits_continue, collect_headers_in_head, parse_http1, parse_http1_resume,
@@ -656,7 +657,7 @@ struct PendingCold {
     parsed_head: OnceCell<Vec<String>>,
     custom_method: Option<Box<str>>,
     h2_stream_id: Option<u32>,
-    h2_headers: Option<Vec<(String, String)>>,
+    h2_headers: Option<Vec<(HeaderStr, HeaderStr)>>,
     trailers: Option<Vec<(String, String)>>,
     query: Option<Box<str>>,
     body: Option<Vec<u8>>,
@@ -738,7 +739,7 @@ impl PendingReq {
     }
 
     #[inline]
-    fn h2_headers(&self) -> Option<&Vec<(String, String)>> {
+    fn h2_headers(&self) -> Option<&Vec<(HeaderStr, HeaderStr)>> {
         self.cold.as_ref().and_then(|c| c.h2_headers.as_ref())
     }
 
@@ -1540,8 +1541,8 @@ fn pending_accept_encoding(pending: &mut PendingReq, batch_heads: &[u8]) -> Opti
     if let Some(hdrs) = pending.h2_headers() {
         return hdrs
             .iter()
-            .find(|(name, _)| name == "accept-encoding")
-            .map(|(_, v)| v.clone());
+            .find(|(name, _)| &**name == "accept-encoding")
+            .map(|(_, v)| v.to_string());
     }
     let head = pending.parsed_head(batch_heads);
     header_from_head(head, "accept-encoding")
@@ -2846,8 +2847,8 @@ fn pack_into_shared(
 fn h2_content_type(req: &H2Request) -> Option<&str> {
     req.headers
         .iter()
-        .find(|(name, _)| name == "content-type")
-        .map(|(_, value)| value.as_str())
+        .find(|(name, _)| &**name == "content-type")
+        .map(|(_, value)| &**value)
 }
 
 fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> bool {
@@ -3375,9 +3376,9 @@ impl UvHttpServer {
                     match &mut found {
                         None => {
                             if first_only {
-                                return Some(v.clone());
+                                return Some(v.to_string());
                             }
-                            found = Some(v.clone());
+                            found = Some(v.to_string());
                         }
                         Some(existing) => {
                             existing.push_str(field_separator(&name));
@@ -3406,8 +3407,8 @@ impl UvHttpServer {
         if let Some(h2_hdrs) = pending.h2_headers() {
             let mut out = Vec::with_capacity(h2_hdrs.len() * 2);
             for (k, v) in h2_hdrs {
-                out.push(k.clone());
-                out.push(v.clone());
+                out.push(k.to_string());
+                out.push(v.to_string());
             }
             return out;
         }
@@ -4087,8 +4088,8 @@ impl UvHttpServer {
             if let Some(stream_id) = pending.h2_stream_id() {
                 let ext_hdr = pending.h2_headers().and_then(|hdrs| {
                     hdrs.iter()
-                        .find(|(k, _)| k == "sec-websocket-extensions")
-                        .map(|(_, v)| v.as_str())
+                        .find(|(k, _)| &**k == "sec-websocket-extensions")
+                        .map(|(_, v)| &**v)
                 });
                 let negotiated = negotiate_permessage_deflate(ext_hdr, ws_deflate_cfg);
                 UpgradeKind::H2 {
