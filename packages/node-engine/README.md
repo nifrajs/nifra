@@ -32,6 +32,18 @@ On Linux, use `libnifra_napi.so`.
 Set `NIFRA_ENGINE_TEST_DENO=1` with Deno on `PATH` to include the live adapter comparison in
 `parity.test.ts`. CI enables this comparison.
 
+## Robustness checks
+
+- Parser fuzzing: `cargo test --manifest-path native/nifra-engine/Cargo.toml -p nifra-http -p nifra-ws --test fuzz`; `NIFRA_FUZZ_CASES` lengthens it.
+- WebSocket conformance (Docker): `node packages/node-engine/conformance/autobahn.mjs`.
+- HTTP/2 conformance: `H2SPEC=/path/to/h2spec node packages/node-engine/conformance/h2spec.mjs`.
+- Soak: `SOAK_SECONDS=600 node packages/node-engine/conformance/soak.mjs`. Run it on Linux; macOS
+  runs short of client ports at this connection rate.
+
+Each takes the addon from `NIFRA_RUST_ENGINE_PATH` and the package's built `dist`. A panic in the
+engine closes the connection or fails the request that raised it; an out-of-memory abort or a stack
+overflow still ends the process.
+
 ## `serve(app, options)`
 
 Resolves to an `EngineServer` once the port is bound. Invalid options throw before anything is started.

@@ -243,6 +243,7 @@ pub(crate) fn uv_api() -> io::Result<&'static UvApi> {
 }
 
 pub(crate) unsafe fn alloc_handle(size: usize) -> *mut c_void {
+    #[allow(clippy::expect_used)] // `size` is libuv's own handle size
     let layout = Layout::from_size_align(size, HANDLE_ALIGN).expect("valid handle layout");
     let ptr = alloc_zeroed(layout);
     if ptr.is_null() {
@@ -252,6 +253,7 @@ pub(crate) unsafe fn alloc_handle(size: usize) -> *mut c_void {
 }
 
 pub(crate) unsafe fn free_handle(ptr: *mut c_void, size: usize) {
+    #[allow(clippy::expect_used)] // `size` is libuv's own handle size
     let layout = Layout::from_size_align(size, HANDLE_ALIGN).expect("valid handle layout");
     dealloc(ptr.cast(), layout);
 }
@@ -954,6 +956,12 @@ impl ConnCore {
             0
         };
         socket_backlog + if deferred_bp { deferred } else { 0 }
+    }
+
+    pub fn negotiated_h2(&self) -> bool {
+        self.tls
+            .as_ref()
+            .is_some_and(|t| t.alpn_protocol() == Some(b"h2".as_slice()))
     }
 
     pub fn alpn_protocol(&self) -> Option<Vec<u8>> {

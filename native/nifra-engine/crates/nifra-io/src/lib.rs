@@ -5,6 +5,7 @@
 //! - Exposes transport detection and Linux 6.1+ `io_uring` probing hooks for the
 //!   `libuv` (`napi_get_uv_event_loop`) integration layer.
 
+mod contain;
 #[cfg(target_os = "linux")]
 pub mod epoll;
 #[cfg(any(unix, windows))]
@@ -228,6 +229,8 @@ fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, 
         SocketAddr::V6(_) => Domain::IPV6,
     };
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    // Unix only: on Windows this lets a second socket take a port that is already being served.
+    #[cfg(unix)]
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     if cfg.reuse_port {

@@ -1,0 +1,264 @@
+name: Engine
+
+# The Rust engine behind @nifrajs/node-engine on each platform and transport it claims. CI's `node`
+# job covers Linux/epoll through Node; only this runs the crate tests and the other legs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - "packages/node-engine/**"
+      - "packages/node/**"
+      - "packages/core/**"
+      - "bun.lock"
+      - ".github/workflows/engine.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - "packages/node-engine/**"
+      - "packages/node/**"
+      - "packages/core/**"
+      - "bun.lock"
+      - ".github/workflows/engine.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  engine:
+    name: engine (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: linux-epoll, os: ubuntu-26.04, transport: epoll }
+          - { leg: linux-uring, os: ubuntu-26.04, transport: uring }
+          - { leg: linux-uv, os: ubuntu-26.04, transport: uv }
+          - { leg: macos, os: macos-latest, transport: "" }
+          - { leg: windows, os: windows-latest, transport: "" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Read on Linux only. The probe test fails when `uring` falls back to epoll.
+      NIFRA_ENGINE_TRANSPORT: ${{ matrix.transport }}
+      # aws-lc-sys otherwise needs NASM installed to build on Windows.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # The root build leaves out the private engine package, whose dist rust-runtime.test.mjs imports.
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+
+      # A panic site in code a peer can reach is a request that fails; keep them out.
+      - name: Refuse panicking calls
+        if: matrix.leg == 'linux-epoll'
+        run: >-
+          cargo clippy --workspace --lib --locked -- -A warnings -D clippy::unwrap_used
+          -D clippy::expect_used -D clippy::panic -D clippy::unreachable
+        working-directory: native/nifra-engine
+
+      - name: Test the crates
+        run: cargo test --workspace --locked
+        working-directory: native/nifra-engine
+
+      # The crate tests run a short pass; this one is long, with overflow checks on.
+      - name: Fuzz the parsers
+        if: matrix.leg == 'linux-epoll'
+        env:
+          NIFRA_FUZZ_CASES: "3000000"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+        run: cargo test --release --locked -p nifra-http -p nifra-ws --test fuzz
+        working-directory: native/nifra-engine
+
+      # The fault-injection build panics on a marked request, to prove the panic stays contained.
+      - name: Build the addons
+        run: |
+          case "$RUNNER_OS" in
+            Linux) library=libnifra_napi.so ;;
+            macOS) library=libnifra_napi.dylib ;;
+            Windows) library=nifra_napi.dll ;;
+          esac
+          build() {
+            cargo build --release --locked -p nifra-napi --manifest-path native/nifra-engine/Cargo.toml "$@"
+          }
+          build --features fault-injection
+          cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi_fault.node"
+          echo "NIFRA_ENGINE_FAULT_ADDON=$RUNNER_TEMP/nifra_napi_fault.node" >> "$GITHUB_ENV"
+          build
+          cp "native/nifra-engine/target/release/$library" "$RUNNER_TEMP/nifra_napi.node"
+          echo "NIFRA_RUST_ENGINE_PATH=$RUNNER_TEMP/nifra_napi.node" >> "$GITHUB_ENV"
+
+      # One file at a time under a process deadline: an engine that blocks the event loop outlasts
+      # Node's own test timeout, and this names the file that did.
+      - name: Test the engine on Node
+        run: |
+          bun run scripts/link-for-node.ts
+          limit=timeout
+          command -v timeout >/dev/null || limit=gtimeout
+          command -v "$limit" >/dev/null || limit=""
+          failed=""
+          for file in packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs; do
+            echo "::group::$file"
+            ${limit:+$limit -k 10 240} node --test --test-timeout=120000 "$file" || failed="$failed $file"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+  # Memory errors in the engine's `unsafe` code that no assertion would see.
+  address-sanitizer:
+    name: engine (address sanitizer)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+
+      # RUSTC_BOOTSTRAP lets the stable toolchain take the unstable sanitizer flag.
+      - name: Build the addon with AddressSanitizer
+        env:
+          CC: clang
+          RUSTC_BOOTSTRAP: "1"
+          RUSTFLAGS: "-Zsanitizer=address -Clinker=clang"
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_STRIP: none
+        run: cargo build --release --locked -p nifra-napi --target x86_64-unknown-linux-gnu
+        working-directory: native/nifra-engine
+
+      - name: Test the engine under AddressSanitizer
+        run: |
+          bun run scripts/link-for-node.ts
+          addon="$PWD/native/nifra-engine/target/x86_64-unknown-linux-gnu/release/libnifra_napi.so"
+          cp "$addon" "$RUNNER_TEMP/nifra_napi.node"
+          for transport in epoll uring uv; do
+            echo "::group::$transport"
+            LD_PRELOAD="$(gcc -print-file-name=libasan.so)" ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 \
+              NIFRA_ENGINE_TRANSPORT="$transport" NIFRA_RUST_ENGINE_PATH="$RUNNER_TEMP/nifra_napi.node" \
+              node --test --test-timeout=180000 packages/node-engine/test-node/*.test.ts packages/node-engine/test/rust-runtime.test.mjs
+            echo "::endgroup::"
+          done
+
+  websocket-conformance:
+    name: engine (Autobahn)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+          bun run scripts/link-for-node.ts
+
+      - name: Build the addon
+        run: cargo build --release --locked -p nifra-napi
+        working-directory: native/nifra-engine
+
+      - name: Run the Autobahn fuzzing client
+        run: node packages/node-engine/conformance/autobahn.mjs
+
+  http2-conformance:
+    name: engine (h2spec)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+          bun run scripts/link-for-node.ts
+
+      - name: Build the addon
+        run: cargo build --release --locked -p nifra-napi
+        working-directory: native/nifra-engine
+
+      - name: Fetch h2spec 2.6.0
+        run: |
+          archive="$RUNNER_TEMP/h2spec.tar.gz"
+          curl -fsSL -o "$archive" \
+            https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz
+          echo "157ee0de702e01ad40e752dbf074b366027e550c8e7504f9450da2809e279318  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" h2spec
+
+      - name: Run h2spec
+        run: H2SPEC="$RUNNER_TEMP/h2spec" node packages/node-engine/conformance/h2spec.mjs

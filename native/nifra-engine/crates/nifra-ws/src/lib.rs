@@ -762,7 +762,11 @@ impl WsConn {
                     }
                     (raw64 as usize, 10usize)
                 }
-                _ => unreachable!(),
+                // `len7` is seven bits, so nothing else reaches here.
+                _ => {
+                    self.fail_protocol(1002, "protocol error", write_buf, &mut res, buf.len());
+                    return res;
+                }
             };
 
             // Enforce payload cap immediately before waiting for an oversized body.

@@ -157,7 +157,9 @@ test("TLS SNI selects exact, wildcard, fallback, and runtime-added/removed certs
   }
 })
 
-test("Unix domain socket listener answers GET and POST over serve({ path })", async () => {
+test("Unix domain socket listener answers GET and POST over serve({ path })", {
+  skip: process.platform === "win32",
+}, async () => {
   const dir = await mkdtemp(join(tmpdir(), "nifra-uds-"))
   const sockPath = join(dir, "app.sock")
   const running = await serve(

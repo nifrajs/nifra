@@ -9,6 +9,10 @@ description = "Thin NAPI-RS bridge exposing Nifra's batched shared-memory ABI to
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Panics on a marked request, to test that one panic does not end the process. Never ship it.
+fault-injection = []
+
 [dependencies]
 bytes.workspace = true
 napi.workspace = true

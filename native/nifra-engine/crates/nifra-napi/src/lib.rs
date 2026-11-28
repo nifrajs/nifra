@@ -52,6 +52,7 @@ struct SharedSlab {
 impl SharedSlab {
     #[allow(clippy::arc_with_non_send_sync)]
     fn new(len: usize, align: usize) -> Arc<Self> {
+        #[allow(clippy::expect_used)] // sizes and alignments are engine constants
         let layout = Layout::from_size_align(len, align).expect("valid slab layout");
         let ptr = unsafe { alloc_zeroed(layout) };
         if ptr.is_null() {
@@ -85,6 +86,7 @@ impl SharedSlab {
 
 impl Drop for SharedSlab {
     fn drop(&mut self) {
+        #[allow(clippy::expect_used)] // the layout `new` already built
         let layout = Layout::from_size_align(self.len, self.align).expect("valid slab layout");
         unsafe { dealloc(self.ptr, layout) };
     }
@@ -377,7 +379,7 @@ pub struct ProbeResult {
     pub capabilities: EngineCapabilities,
 }
 
-#[napi]
+#[napi(catch_unwind)]
 pub fn probe() -> ProbeResult {
     ProbeResult {
         ok: true,
@@ -420,7 +422,7 @@ pub struct BoundSharedListener {
 
 /// Bind a non-blocking TCP listener socket without registering an accept loop on `uv_loop`,
 /// for passing a primary-owned listener across cluster workers over IPC.
-#[napi]
+#[napi(catch_unwind)]
 pub fn bind_shared_listener(
     host: Option<String>,
     port: u32,
@@ -459,7 +461,7 @@ pub fn bind_shared_listener(
 }
 
 /// Duplicate a listener descriptor (`F_DUPFD_CLOEXEC`) so IPC wrappers can be closed immediately.
-#[napi]
+#[napi(catch_unwind)]
 pub fn dup_listener_fd(fd: i32) -> Result<i32> {
     #[cfg(unix)]
     {
@@ -1763,6 +1765,8 @@ impl HttpUvCallbacks {
         read_buf: &[u8],
         write_buf: &mut Vec<u8>,
     ) -> ConnAction {
+        #[cfg(feature = "fault-injection")]
+        assert!(!read_buf.starts_with(b"PANIC "), "injected fault");
         let mut st = self.shared.borrow_mut();
 
         if st.conn_meta.get(conn_id).is_some_and(|s| s.refuse_input) {
@@ -2117,7 +2121,14 @@ impl HttpUvCallbacks {
                 }
             }
             return if feed.close_after_write {
-                ConnAction::CloseAfterWrite {
+                // The peer may still be sending; closing over unread frames resets the connection
+                // and can lose the GOAWAY.
+                self.shared
+                    .borrow_mut()
+                    .conn_meta
+                    .ensure(conn_id)
+                    .refuse_input = true;
+                ConnAction::Refuse {
                     consumed: feed.consumed,
                 }
             } else {
@@ -2517,6 +2528,17 @@ impl HttpUvCallbacks {
 }
 
 impl UvCallbacks for HttpUvCallbacks {
+    fn on_h2_negotiated(&mut self, conn_id: u32) {
+        let mut st = self.shared.borrow_mut();
+        if st.http2_enabled {
+            let cfg = st.h2_cfg;
+            st.conn_meta
+                .ensure(conn_id)
+                .h2
+                .get_or_insert_with(|| Box::new(H2Conn::new(cfg)));
+        }
+    }
+
     fn on_data(&mut self, conn_id: u32, read_buf: &[u8], write_buf: &mut Vec<u8>) -> ConnAction {
         self.on_data_body(conn_id, read_buf, write_buf)
     }
@@ -3177,13 +3199,13 @@ pub struct UvHttpServer {
 
 #[napi]
 impl UvHttpServer {
-    #[napi(getter)]
+    #[napi(getter, catch_unwind)]
     pub fn port(&self) -> u32 {
         self.port as u32
     }
 
     /// Register optional `onWritable(reqId)` and `onAborted(reqId)` streaming callbacks.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_stream_callbacks(
         &self,
         env: Env,
@@ -3229,7 +3251,7 @@ impl UvHttpServer {
     }
 
     /// Register optional incremental request-body callback: `onReqBody(reqId, chunk, isLast)`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_req_body_callback(&self, env: Env, on_req_body: Option<JsFunction>) -> Result<()> {
         let mut st = self.shared.borrow_mut();
         if !st.on_req_body_ref.is_null() {
@@ -3253,7 +3275,7 @@ impl UvHttpServer {
     }
 
     /// Pause reading incoming request body bytes for `reqId` (HTTP/1.1 socket read or HTTP/2 `WINDOW_UPDATE`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn pause_request_body(&self, req_id: u32) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.pending.get(req_id) else {
@@ -3277,7 +3299,7 @@ impl UvHttpServer {
     }
 
     /// Resume reading incoming request body bytes for `reqId`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn resume_request_body(&self, req_id: u32) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.pending.get(req_id) else {
@@ -3305,7 +3327,7 @@ impl UvHttpServer {
     }
 
     /// Return zero-copy JS views (`Uint32Array` & `Buffer`) backed directly by Rust's ring slabs.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_batch_buffers(&self, env: Env) -> Result<Object> {
         let st = self.shared.borrow();
         let mut obj = env.create_object()?;
@@ -3325,7 +3347,7 @@ impl UvHttpServer {
     }
 
     /// Return the raw HTTP method string for non-standard verbs (`methodIdx >= 7`, e.g. `PROPFIND`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_method(&self, req_id: u32) -> Option<String> {
         self.shared
             .borrow()
@@ -3336,7 +3358,7 @@ impl UvHttpServer {
     }
 
     /// Lazily look up a single header by case-insensitive name for an in-flight request.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_header(&self, req_id: u32, name: String) -> Option<String> {
         let mut st = self.shared.borrow_mut();
         let UvHttpShared {
@@ -3370,7 +3392,7 @@ impl UvHttpServer {
     }
 
     /// Lazily return all request headers as `[lowercaseName, value, ...]`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_headers(&self, req_id: u32) -> Vec<String> {
         let mut st = self.shared.borrow_mut();
         let UvHttpShared {
@@ -3389,11 +3411,17 @@ impl UvHttpServer {
             }
             return out;
         }
-        pending.parsed_head(batch_heads).to_vec()
+        let headers = pending.parsed_head(batch_heads).to_vec();
+        #[cfg(feature = "fault-injection")]
+        assert!(
+            !headers.iter().any(|part| part == "x-nifra-panic"),
+            "injected fault"
+        );
+        headers
     }
 
     /// Lazily return the complete request body (used for bodies > 64 KiB or chunked uploads).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_body(&self, req_id: u32) -> Option<Buffer> {
         let st = self.shared.borrow();
         let pending = st.pending.get(req_id)?;
@@ -3401,7 +3429,7 @@ impl UvHttpServer {
     }
 
     /// Return validated HTTP/1.1 chunked or HTTP/2 trailing headers as `[name, value, ...]`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_trailers(&self, req_id: u32) -> Vec<String> {
         let st = self.shared.borrow();
         let Some(trailers) = st
@@ -3421,7 +3449,7 @@ impl UvHttpServer {
     }
 
     /// Lazily return the socket peer IP address for an in-flight request.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_remote_address(&self, req_id: u32) -> Option<String> {
         let conn_id = self.shared.borrow().pending.get(req_id)?.conn_id;
         let ip = self.server.remote_addr(conn_id)?;
@@ -3432,7 +3460,7 @@ impl UvHttpServer {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_static_route(
         &self,
         path: String,
@@ -3450,7 +3478,7 @@ impl UvHttpServer {
             .add_static_get(path, status, &pairs, body.as_ref());
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_static_post_route(
         &self,
         path: String,
@@ -3468,7 +3496,7 @@ impl UvHttpServer {
             .add_static_post(path, status, &pairs, body.as_ref());
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_param_route(
         &self,
         prefix: String,
@@ -3486,8 +3514,10 @@ impl UvHttpServer {
             .add_param_get(prefix, suffix, status, &pairs);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn prepare_response(&self, status: u16, flat_headers: Vec<String>) -> u32 {
+        #[cfg(feature = "fault-injection")]
+        assert_ne!(status, 299, "injected fault");
         let pairs: Vec<(&str, &str)> = flat_headers
             .chunks_exact(2)
             .map(|c| (c[0].as_str(), c[1].as_str()))
@@ -3507,7 +3537,7 @@ impl UvHttpServer {
     }
 
     /// Flush `count` synchronous responses written by JS into `outMeta` + `outData`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn flush_responses(&self, count: u32) {
         let mut st = self.shared.borrow_mut();
         let out_meta = Arc::clone(&st.out_meta);
@@ -3517,188 +3547,17 @@ impl UvHttpServer {
         let n = (count as usize).min(meta.len() / OUT_SLOT_U32S);
         let (sec, date_text) = nifra_http::date::now_cached();
         let mut frame = std::mem::take(&mut st.scratch_frame);
-        let compression = st.compression;
         for i in 0..n {
-            let base = i * OUT_SLOT_U32S;
-            let req_id = meta[base];
-            let template_id = meta[base + 1];
-            let body_off = meta[base + 2] as usize;
-            let body_len = meta[base + 3] as usize;
-            // Non-zero: that many bytes of header lines precede the body, and the template field
-            // carries the status instead.
-            let block_len = meta[base + 4] as usize;
-            let Some(mut pending) = st.remove_pending(req_id) else {
-                continue;
-            };
-            let split = body_off + block_len;
-            if split + body_len > data.len() {
-                continue;
-            }
-            let body_slice = &data[split..split + body_len];
-            frame.clear();
-            if block_len != 0 {
-                let block = &data[body_off..split];
-                let status = template_id as u16;
-                // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
-                let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
-                    .unwrap_or("")
-                    .split_terminator("\r\n")
-                    .filter_map(|line| line.split_once(": "))
-                    .collect();
-                let compressed = negotiate_compression_payload(
-                    compression,
-                    &st.batch_heads,
-                    &mut pending,
-                    status,
-                    &pairs,
-                    body_slice,
-                );
-                let out_body = compressed
-                    .as_ref()
-                    .and_then(|c| c.body.as_deref())
-                    .unwrap_or(body_slice);
-                if let Some(stream_id) = pending.h2_stream_id() {
-                    let Some(h2) = st
-                        .conn_meta
-                        .get_mut(pending.conn_id)
-                        .and_then(|s| s.h2.as_deref_mut())
-                    else {
-                        continue;
-                    };
-                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
-                        h2.write_response(stream_id, status, out_pairs, Some(out_body), &mut frame);
-                    });
-                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
-                } else if compressed.is_some() {
-                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
-                        write_buffered_response(&mut frame, status, out_pairs, Some(out_body));
-                    });
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
-                } else {
-                    write_block_response(&mut frame, status, block, body_slice);
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
-                }
-                continue;
-            }
-            if let Some(stream_id) = pending.h2_stream_id() {
-                let compressed =
-                    st.template_meta
-                        .get(template_id as usize)
-                        .and_then(|(status, hdrs)| {
-                            with_tuple_header_pairs(hdrs, |pairs| {
-                                negotiate_compression_payload(
-                                    compression,
-                                    &st.batch_heads,
-                                    &mut pending,
-                                    *status,
-                                    pairs,
-                                    body_slice,
-                                )
-                            })
-                        });
-                let UvHttpShared {
-                    ref template_meta,
-                    ref mut conn_meta,
-                    ..
-                } = *st;
-                if let (Some((status, hdrs)), Some(h2)) = (
-                    template_meta.get(template_id as usize),
-                    conn_meta
-                        .get_mut(pending.conn_id)
-                        .and_then(|s| s.h2.as_deref_mut()),
-                ) {
-                    let out_body = compressed
-                        .as_ref()
-                        .and_then(|c| c.body.as_deref())
-                        .unwrap_or(body_slice);
-                    with_tuple_header_pairs(hdrs, |pairs| {
-                        with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
-                            h2.write_response(
-                                stream_id,
-                                *status,
-                                out_pairs,
-                                Some(out_body),
-                                &mut frame,
-                            );
-                        });
-                    });
-                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
-                }
-            } else {
-                let compressed = compression
-                    .enabled
-                    .then(|| {
-                        st.template_meta
-                            .get(template_id as usize)
-                            .and_then(|(status, hdrs)| {
-                                with_tuple_header_pairs(hdrs, |pairs| {
-                                    negotiate_compression_payload(
-                                        compression,
-                                        &st.batch_heads,
-                                        &mut pending,
-                                        *status,
-                                        pairs,
-                                        body_slice,
-                                    )
-                                })
-                            })
-                    })
-                    .flatten();
-                if let Some(ref comp) = compressed {
-                    if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
-                        let out_body = comp.body.as_deref().unwrap_or(body_slice);
-                        with_tuple_header_pairs(hdrs, |pairs| {
-                            with_compression_headers(pairs, Some(comp), |out_pairs| {
-                                write_buffered_response(
-                                    &mut frame,
-                                    *status,
-                                    out_pairs,
-                                    Some(out_body),
-                                );
-                            });
-                        });
-                        let _ = h1_send(
-                            &self.server,
-                            &mut st,
-                            pending.conn_id,
-                            req_id,
-                            &frame,
-                            true,
-                            pending.keep_alive(),
-                        );
-                    }
-                } else if st.templates.write_prepared_at(
-                    template_id,
-                    sec,
-                    &date_text,
-                    body_slice,
-                    &mut frame,
-                ) {
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
+            let req_id = meta[i * OUT_SLOT_U32S];
+            let conn_id = st.pending.get(req_id).map(|pending| pending.conn_id);
+            // The other slots are other requests' answers; a panic costs only this one.
+            let flushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.flush_slot(&mut st, i, meta, data, sec, &date_text, &mut frame);
+            }));
+            if flushed.is_err() {
+                st.remove_pending(req_id);
+                if let Some(conn_id) = conn_id {
+                    self.server.close_conn(conn_id);
                 }
             }
         }
@@ -3706,7 +3565,7 @@ impl UvHttpServer {
     }
 
     /// Respond to a single request using a prepared template.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn respond_prepared(&self, req_id: u32, template_id: u32, body: Buffer) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(mut pending) = st.remove_pending(req_id) else {
@@ -3810,7 +3669,7 @@ impl UvHttpServer {
     }
 
     /// Respond with arbitrary status, flat headers (`[name, value, ...]`), and optional body.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn respond(
         &self,
         req_id: u32,
@@ -3882,7 +3741,7 @@ impl UvHttpServer {
     }
 
     /// Begin a streamed response (`Transfer-Encoding: chunked` unless `contentLength` is passed).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn write_head(
         &self,
         req_id: u32,
@@ -3956,7 +3815,7 @@ impl UvHttpServer {
 
     /// Write a streaming body chunk. Returns `false` if socket send buffer is backpressured
     /// (caller should wait for `onWritable(reqId)`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn write(&self, req_id: u32, chunk: Buffer) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.pending.get(req_id) else {
@@ -4011,7 +3870,7 @@ impl UvHttpServer {
     }
 
     /// Finish a streamed response, optionally writing a final chunk and the `0\r\n\r\n` terminator.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn end(&self, req_id: u32, chunk: Option<Buffer>) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.remove_pending(req_id) else {
@@ -4060,7 +3919,7 @@ impl UvHttpServer {
 
     /// Cut an in-progress streamed response immediately: sends `RST_STREAM(INTERNAL_ERROR)` on
     /// HTTP/2 (leaving sibling streams untouched) or closes the TCP socket on HTTP/1.1.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn abort_stream(&self, req_id: u32) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(pending) = st.remove_pending(req_id) else {
@@ -4089,7 +3948,7 @@ impl UvHttpServer {
     }
 
     /// Register optional WebSocket callbacks: `onWsOpen(id)`, `onWsMessage(id, data)`, `onWsClose(id, code, reason)`, `onWsDrain(id)`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_ws_callbacks(
         &self,
         env: Env,
@@ -4163,7 +4022,7 @@ impl UvHttpServer {
 
     /// Upgrade an in-flight HTTP/1.1 (`101`) or HTTP/2 Extended CONNECT (`200`, RFC 8441) request to WebSocket.
     /// Returns the positive socket id (firing `onWsOpen` synchronously), or `-1` if the handshake is invalid.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn upgrade_to_web_socket(
         &self,
         req_id: u32,
@@ -4401,7 +4260,7 @@ impl UvHttpServer {
     }
 
     /// Send a binary or text WebSocket frame from a `Buffer`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_send(&self, socket_id: u32, payload: Buffer, is_binary: bool) -> bool {
         send_ws_frame(
             &self.server,
@@ -4417,7 +4276,7 @@ impl UvHttpServer {
     }
 
     /// Send a UTF-8 text WebSocket frame directly from a JS `string`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_send_text(&self, socket_id: u32, text: String) -> bool {
         send_ws_frame(
             &self.server,
@@ -4429,7 +4288,7 @@ impl UvHttpServer {
     }
 
     /// Send multiple UTF-8 text WebSocket messages in a single N-API crossing.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_send_batch(&self, socket_id: u32, messages: Vec<String>) -> u32 {
         let mut sent = 0u32;
         for msg in messages {
@@ -4452,7 +4311,7 @@ impl UvHttpServer {
     }
 
     /// Current queued outbound bytes on the underlying TCP socket (or H2 stream) for a WebSocket.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_get_buffered_amount(&self, socket_id: u32) -> u32 {
         let st = self.shared.borrow();
         if socket_id >= H2_WS_ID_BIT {
@@ -4477,7 +4336,7 @@ impl UvHttpServer {
     }
 
     /// Defer outbound TCP/TLS socket flushes on `socket_id`'s connection until `ws_cork_end`.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_cork_begin(&self, socket_id: u32) -> bool {
         let mut st = self.shared.borrow_mut();
         let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
@@ -4495,7 +4354,7 @@ impl UvHttpServer {
     }
 
     /// Flush deferred outbound writes when the outermost cork scope completes.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_cork_end(&self, socket_id: u32) -> bool {
         let conn_id = {
             let mut st = self.shared.borrow_mut();
@@ -4521,7 +4380,7 @@ impl UvHttpServer {
     }
 
     /// Subscribe `socket_id` to a native WebSocket topic for native fan-out.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_subscribe(&self, socket_id: u32, topic: String) -> bool {
         let mut st = self.shared.borrow_mut();
         let found = if socket_id >= H2_WS_ID_BIT {
@@ -4564,7 +4423,7 @@ impl UvHttpServer {
     }
 
     /// Unsubscribe `socket_id` from a native WebSocket topic.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_unsubscribe(&self, socket_id: u32, topic: String) -> bool {
         let mut st = self.shared.borrow_mut();
         if let Some(list) = st.ws_topics.get_mut(&topic) {
@@ -4598,7 +4457,7 @@ impl UvHttpServer {
     }
 
     /// Broadcast a binary or text payload to all subscribers of `topic` (optionally skipping `exclude_socket_id`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_publish(
         &self,
         topic: String,
@@ -4621,7 +4480,7 @@ impl UvHttpServer {
     }
 
     /// Broadcast a UTF-8 text payload to all subscribers of `topic` (optionally skipping `exclude_socket_id`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_publish_text(
         &self,
         topic: String,
@@ -4639,7 +4498,7 @@ impl UvHttpServer {
     }
 
     /// Send an RFC 6455 Close frame and close the WebSocket connection.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_close(&self, socket_id: u32, code: u16, reason: Option<String>) -> bool {
         let reason_str = reason.unwrap_or_default();
         if socket_id >= H2_WS_ID_BIT {
@@ -4734,7 +4593,7 @@ impl UvHttpServer {
         true
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_get_headers(&self, socket_id: u32) -> Vec<String> {
         let st = self.shared.borrow();
         if socket_id >= H2_WS_ID_BIT {
@@ -4756,7 +4615,7 @@ impl UvHttpServer {
         collect_headers_in_head(&ws.raw_head)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_get_query(&self, socket_id: u32) -> String {
         let st = self.shared.borrow();
         if socket_id >= H2_WS_ID_BIT {
@@ -4777,7 +4636,7 @@ impl UvHttpServer {
             .unwrap_or_default()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ws_get_remote_address(&self, socket_id: u32) -> Option<String> {
         let st = self.shared.borrow();
         let conn_id = ws_conn_id_for_socket(&st, socket_id)?;
@@ -4790,7 +4649,7 @@ impl UvHttpServer {
     }
 
     /// Add or replace an SNI certificate/key entry at runtime.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn add_server_name(&self, entry: TlsSniEntry) -> Result<()> {
         self.server
             .add_server_name(to_sni_input(&entry))
@@ -4798,7 +4657,7 @@ impl UvHttpServer {
     }
 
     /// Remove an SNI certificate entry at runtime. Returns `true` if one was removed.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn remove_server_name(&self, server_name: String) -> Result<bool> {
         self.server
             .remove_server_name(&server_name)
@@ -4806,7 +4665,7 @@ impl UvHttpServer {
     }
 
     /// Atomically replace the TLS certificate/key for all new handshakes (preserving session tickets).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn reload_tls(&self, tls: TlsOptions) -> Result<()> {
         let http2_enabled = self.shared.borrow().http2_enabled;
         self.server
@@ -4816,7 +4675,7 @@ impl UvHttpServer {
 
     /// Whether response bytes are still held for a client: queued on a socket the peer is not
     /// reading, or behind an HTTP/2 flow-control window. A graceful stop waits for this to clear.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn has_unsent_output(&self) -> bool {
         if self.server.any_queued() {
             return true;
@@ -4828,7 +4687,7 @@ impl UvHttpServer {
         })
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stop_listening(&self) {
         self.server.stop_listening();
         // Send HTTP/2 GOAWAY(NO_ERROR) so open H2 sessions finish in-flight streams and close.
@@ -4853,7 +4712,7 @@ impl UvHttpServer {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn close(&mut self) {
         let hook = self.cleanup_slot.replace(std::ptr::null_mut());
         if !hook.is_null() {
@@ -5130,6 +4989,196 @@ fn publish_ws_topic(
     delivered
 }
 
+impl UvHttpServer {
+    /// Write the response in out-slab slot `i`.
+    #[allow(clippy::too_many_arguments)]
+    fn flush_slot(
+        &self,
+        st: &mut UvHttpShared,
+        i: usize,
+        meta: &[u32],
+        data: &[u8],
+        sec: u64,
+        date_text: &[u8; nifra_http::date::IMF_LEN],
+        frame: &mut Vec<u8>,
+    ) {
+        let compression = st.compression;
+        let base = i * OUT_SLOT_U32S;
+        let req_id = meta[base];
+        let template_id = meta[base + 1];
+        let body_off = meta[base + 2] as usize;
+        let body_len = meta[base + 3] as usize;
+        // Non-zero: that many bytes of header lines precede the body, and the template field
+        // carries the status instead.
+        let block_len = meta[base + 4] as usize;
+        let Some(mut pending) = st.remove_pending(req_id) else {
+            return;
+        };
+        let split = body_off + block_len;
+        if split + body_len > data.len() {
+            return;
+        }
+        let body_slice = &data[split..split + body_len];
+        frame.clear();
+        if block_len != 0 {
+            let block = &data[body_off..split];
+            let status = template_id as u16;
+            // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
+            let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
+                .unwrap_or("")
+                .split_terminator("\r\n")
+                .filter_map(|line| line.split_once(": "))
+                .collect();
+            #[cfg(feature = "fault-injection")]
+            assert!(
+                !pairs.iter().any(|(name, _)| *name == "x-nifra-panic-flush"),
+                "injected fault"
+            );
+            let compressed = negotiate_compression_payload(
+                compression,
+                &st.batch_heads,
+                &mut pending,
+                status,
+                &pairs,
+                body_slice,
+            );
+            let out_body = compressed
+                .as_ref()
+                .and_then(|c| c.body.as_deref())
+                .unwrap_or(body_slice);
+            if let Some(stream_id) = pending.h2_stream_id() {
+                let Some(h2) = st
+                    .conn_meta
+                    .get_mut(pending.conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                else {
+                    return;
+                };
+                with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                    h2.write_response(stream_id, status, out_pairs, Some(out_body), frame);
+                });
+                let _ = self.server.write_to_conn(pending.conn_id, frame, false);
+            } else if compressed.is_some() {
+                with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                    write_buffered_response(frame, status, out_pairs, Some(out_body));
+                });
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            } else {
+                write_block_response(frame, status, block, body_slice);
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            }
+            return;
+        }
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let compressed =
+                st.template_meta
+                    .get(template_id as usize)
+                    .and_then(|(status, hdrs)| {
+                        with_tuple_header_pairs(hdrs, |pairs| {
+                            negotiate_compression_payload(
+                                compression,
+                                &st.batch_heads,
+                                &mut pending,
+                                *status,
+                                pairs,
+                                body_slice,
+                            )
+                        })
+                    });
+            let UvHttpShared {
+                ref template_meta,
+                ref mut conn_meta,
+                ..
+            } = *st;
+            if let (Some((status, hdrs)), Some(h2)) = (
+                template_meta.get(template_id as usize),
+                conn_meta
+                    .get_mut(pending.conn_id)
+                    .and_then(|s| s.h2.as_deref_mut()),
+            ) {
+                let out_body = compressed
+                    .as_ref()
+                    .and_then(|c| c.body.as_deref())
+                    .unwrap_or(body_slice);
+                with_tuple_header_pairs(hdrs, |pairs| {
+                    with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
+                        h2.write_response(stream_id, *status, out_pairs, Some(out_body), frame);
+                    });
+                });
+                let _ = self.server.write_to_conn(pending.conn_id, frame, false);
+            }
+        } else {
+            let compressed = compression
+                .enabled
+                .then(|| {
+                    st.template_meta
+                        .get(template_id as usize)
+                        .and_then(|(status, hdrs)| {
+                            with_tuple_header_pairs(hdrs, |pairs| {
+                                negotiate_compression_payload(
+                                    compression,
+                                    &st.batch_heads,
+                                    &mut pending,
+                                    *status,
+                                    pairs,
+                                    body_slice,
+                                )
+                            })
+                        })
+                })
+                .flatten();
+            if let Some(ref comp) = compressed {
+                if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
+                    let out_body = comp.body.as_deref().unwrap_or(body_slice);
+                    with_tuple_header_pairs(hdrs, |pairs| {
+                        with_compression_headers(pairs, Some(comp), |out_pairs| {
+                            write_buffered_response(frame, *status, out_pairs, Some(out_body));
+                        });
+                    });
+                    let _ = h1_send(
+                        &self.server,
+                        st,
+                        pending.conn_id,
+                        req_id,
+                        frame,
+                        true,
+                        pending.keep_alive(),
+                    );
+                }
+            } else if st
+                .templates
+                .write_prepared_at(template_id, sec, date_text, body_slice, frame)
+            {
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            }
+        }
+    }
+}
+
 impl Drop for UvHttpServer {
     fn drop(&mut self) {
         self.close();
@@ -5137,7 +5186,7 @@ impl Drop for UvHttpServer {
 }
 
 /// Start a zero-hop HTTP/1.1 + HTTP/2 + WebSocket server directly on Node's `libuv` event loop.
-#[napi]
+#[napi(catch_unwind)]
 pub fn create_uv_server(
     env: Env,
     host: String,
@@ -5523,7 +5572,7 @@ pub struct NifraEngine {
 
 #[napi]
 impl NifraEngine {
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(max_body_size: Option<u32>, oversize_window: Option<u32>) -> Self {
         let mut limits = ParseLimits::default();
         if let Some(v) = max_body_size {
@@ -5542,7 +5591,7 @@ impl NifraEngine {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn prepare_response(&mut self, status: u16, flat_headers: Vec<String>) -> u32 {
         let pairs: Vec<(&str, &str)> = flat_headers
             .chunks_exact(2)
@@ -5551,7 +5600,7 @@ impl NifraEngine {
         self.templates.register(status, &pairs)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn parse_http1_batch(&mut self, raw: Buffer) -> Result<u32> {
         let slice = raw.as_ref();
         let mut offset = 0usize;
@@ -5578,7 +5627,7 @@ impl NifraEngine {
         Ok(packer.count() as u32)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn get_batch_buffers(&self) -> BatchBuffers {
         BatchBuffers {
             in_meta: Uint32Array::new(self.in_meta.clone()),
@@ -5592,7 +5641,7 @@ impl NifraEngine {
 }
 
 /// Standalone blocking mio HTTP/1.1 echo benchmark runner.
-#[napi]
+#[napi(catch_unwind)]
 pub fn serve_echo_blocking(host: String, port: u16) -> Result<()> {
     let mut routes = FastRoutes::default();
     routes.add_static_get(
