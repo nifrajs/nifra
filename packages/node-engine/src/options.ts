@@ -131,7 +131,10 @@ export interface Http2Options {
   readonly maxFrameSize?: number
   /** Bytes of each HPACK table, request and response side; 0 to 65536. Default 4096. */
   readonly headerTableSize?: number
-  /** Queued response bytes per connection past which further responses wait. Default 16 MiB. */
+  /**
+   * Queued response bytes per connection. At this limit the next buffered response with a body is
+   * reset with `ENHANCE_YOUR_CALM`, and past it a streamed one is told to wait. Default 16 MiB.
+   */
   readonly maxSendBuffer?: number
   /**
    * Send a `PING` to a connection quiet for this long, and close it when no answer comes. A peer that

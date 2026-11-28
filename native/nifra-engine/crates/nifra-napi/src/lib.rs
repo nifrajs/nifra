@@ -2598,6 +2598,15 @@ impl UvCallbacks for HttpUvCallbacks {
         }
     }
 
+    fn finished(&self, conn_id: u32) -> bool {
+        self.shared
+            .borrow()
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.h2.as_deref())
+            .is_some_and(H2Conn::shutdown_complete)
+    }
+
     fn oldest_incomplete_head(&self, conn_id: u32) -> Option<std::time::Instant> {
         self.shared
             .borrow()

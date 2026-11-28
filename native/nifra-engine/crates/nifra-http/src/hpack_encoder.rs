@@ -127,7 +127,8 @@ fn literal(
 /// A literal that leaves the table alone, for a block that is written later than it is encoded.
 pub(crate) fn encode_stateless(name: &str, value: &[u8], out: &mut Vec<u8>) {
     let name_index = static_name(name);
-    literal(0x00, 4, name_index, name, value, out);
+    let mask = if is_sensitive(name) { 0x10 } else { 0x00 };
+    literal(mask, 4, name_index, name, value, out);
 }
 
 impl HpackEncoder {

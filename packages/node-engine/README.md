@@ -127,7 +127,7 @@ Response header fields are compressed (Huffman coding and the HPACK dynamic tabl
 | `connectionWindowSize` | 4 MiB | Flow-control window of the connection, 65535 or more. |
 | `maxFrameSize` | 16384 | Largest frame accepted. |
 | `headerTableSize` | 4096 | Bytes of each HPACK table, request and response side. 0 to 65536. |
-| `maxSendBuffer` | 16 MiB | Queued response bytes per connection past which further responses wait. |
+| `maxSendBuffer` | 16 MiB | Queued response bytes per connection. At this limit the next buffered response with a body is reset with `ENHANCE_YOUR_CALM`, and past it a streamed one is told to wait. |
 | `pingIntervalMs` | 0 (off) | Quiet time after which a `PING` is sent, checked once a second. A peer that answers is not idle: set this below `idleTimeoutMs` to keep a live one open. |
 | `pingTimeoutMs` | 20000 | Budget for the answer before the connection closes. |
 

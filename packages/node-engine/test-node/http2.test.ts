@@ -556,3 +556,67 @@ test("stop() announces the shutdown in two GOAWAY frames", async () => {
     await (stopped ?? running.stop({ drainMs: 50 }))
   }
 })
+
+test("stop() delivers a response that a slow reader has not taken yet", async () => {
+  const size = 12 * 1024 * 1024
+  const entered = Promise.withResolvers<void>()
+  const app = server().get("/big", () => {
+    entered.resolve()
+    return new Response(new Uint8Array(size))
+  })
+  // The body goes to the engine in one write, so all of it is queued at once.
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    http2: true,
+    engine: { writeHighWaterMark: 32 * 1024 * 1024, responseBackpressureLimit: 64 * 1024 * 1024 },
+  })
+  const socket = createConnection({ port: running.port, host: "127.0.0.1" })
+  socket.on("error", () => {})
+  let buffered = Buffer.alloc(0)
+  let received = 0
+  socket.on("data", (chunk) => {
+    buffered = Buffer.concat([buffered, chunk])
+    while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+      const length = buffered.readUIntBE(0, 3)
+      if (buffered.readUInt8(3) === 0) received += length
+      buffered = buffered.subarray(9 + length)
+    }
+  })
+  const closed = new Promise((resolve) => socket.once("close", resolve))
+  const frame = (type: number, flags: number, stream: number, payload: Buffer) => {
+    const head = Buffer.alloc(9)
+    head.writeUIntBE(payload.length, 0, 3)
+    head.writeUInt8(type, 3)
+    head.writeUInt8(flags, 4)
+    head.writeUInt32BE(stream, 5)
+    return Buffer.concat([head, payload])
+  }
+  // Windows wide enough for the whole body, so what is left waits on the socket alone.
+  const initialWindow = Buffer.from([0, 4, 0x7f, 0xff, 0xff, 0xff])
+  const connectionWindow = Buffer.from([0x7f, 0xff, 0, 0])
+  const request = Buffer.concat([
+    Buffer.from([0x82, 0x86, 0x04, 4]),
+    Buffer.from("/big"),
+    Buffer.from([0x41, 9]),
+    Buffer.from("localhost"),
+  ])
+  let stopped: Promise<void> | undefined
+  try {
+    socket.pause()
+    socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+    socket.write(frame(4, 0, 0, initialWindow))
+    socket.write(frame(8, 0, 0, connectionWindow))
+    socket.write(frame(1, 0x05, 1, request))
+    await entered.promise
+    stopped = running.stop({ drainMs: 20_000 })
+    // Past the unanswered shutdown PING and two sweeps; reading later only makes this stricter.
+    await new Promise((resolve) => setTimeout(resolve, 3500))
+    socket.resume()
+    await closed
+    assert.equal(received, size)
+  } finally {
+    socket.destroy()
+    await (stopped ?? running.stop({ drainMs: 50 }))
+  }
+})

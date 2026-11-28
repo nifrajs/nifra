@@ -1223,6 +1223,8 @@ pub(crate) fn collect_timeouts<'a>(
             reply.clear();
         } else if !reply.is_empty() {
             replies.push((id, std::mem::take(&mut reply)));
+        } else if c.queued_bytes() == 0 && callbacks.as_deref().is_some_and(|cb| cb.finished(id)) {
+            overdue.push(id);
         }
         if c.tls.as_ref().is_some_and(|tls| tls.is_handshaking()) && past(c.accepted_at, head_limit)
         {

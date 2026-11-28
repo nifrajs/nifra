@@ -688,6 +688,10 @@ impl H2Conn {
                             res.close_after_write = true;
                             return res;
                         }
+                        // Blocks sent before this may still use the default table.
+                        if self.server_settings_sent {
+                            self.hpack.limit_table(self.cfg.header_table_size);
+                        }
                     } else {
                         if payload.len() % 6 != 0 {
                             self.send_goaway_internal(ERR_FRAME_SIZE_ERROR, write_buf);
@@ -700,9 +704,6 @@ impl H2Conn {
                             let id = u16::from_be_bytes([chunk[0], chunk[1]]);
                             let val = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
                             match id {
-                                // HEADER_TABLE_SIZE (1) sizes the peer's view of the table the server
-                                // encodes with, and the server encodes without indexing; the table this
-                                // side decodes with is the one it advertised (the 4096 default).
                                 4 => {
                                     // INITIAL_WINDOW_SIZE: moves every open stream's send window.
                                     if i64::from(val) > MAX_WINDOW {
@@ -1619,6 +1620,9 @@ impl H2Conn {
             None
         };
         self.encode_response(status, headers, cl_str.as_deref(), &mut block);
+        if bodyless {
+            self.response_trailers.remove(&stream_id);
+        }
         let has_trailers = self.response_trailers.contains_key(&stream_id);
         let end_on_headers = body_bytes.is_empty() && !has_trailers;
         let hflags = FLAG_END_HEADERS | if end_on_headers { FLAG_END_STREAM } else { 0 };
@@ -1704,8 +1708,8 @@ impl H2Conn {
                     self.conn_send_window -= data.len() as i64;
                 }
                 if let Some(block) = trailers {
-                    let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
-                    write_header_frames(stream_id, flags, &block, self.peer_max_frame_size, out);
+                    let max_frame = self.peer_max_frame_size;
+                    write_trailers(&mut self.encoder, stream_id, &block, max_frame, out);
                 }
                 return;
             }
@@ -1764,8 +1768,7 @@ impl H2Conn {
             if os.end && !finished {
                 match os.trailers.take() {
                     Some(block) => {
-                        let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
-                        write_header_frames(stream_id, flags, &block, max_frame, out);
+                        write_trailers(&mut self.encoder, stream_id, &block, max_frame, out);
                     }
                     None => write_frame(FRAME_DATA, FLAG_END_STREAM, stream_id, &[], out),
                 }
@@ -1900,7 +1903,12 @@ impl H2Conn {
         self.shutdown_since.is_some() && !self.goaway_sent
     }
 
-    /// Timers of the connection itself. Returns `true` when it must close now.
+    /// A graceful shutdown with nothing left to send: close once the output has left.
+    pub fn shutdown_complete(&self) -> bool {
+        self.shutdown_since.is_some() && self.goaway_sent && self.is_idle_connection()
+    }
+
+    /// Timers of the connection itself. Returns `true` when it must close now, unsent output or not.
     pub fn tick(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
         if let Some(since) = self.shutdown_since {
             if !self.goaway_sent {
@@ -1908,9 +1916,6 @@ impl H2Conn {
                     self.send_goaway_internal(ERR_NO_ERROR, out);
                 }
                 return false;
-            }
-            if self.is_idle_connection() {
-                return true;
             }
         }
         let Some(interval) = self.cfg.ping_interval else {
@@ -1967,6 +1972,22 @@ fn write_rst_stream(stream_id: u32, error_code: u32, out: &mut Vec<u8>) {
         &error_code.to_be_bytes(),
         out,
     );
+}
+
+/// A trailer block is encoded when it is set but sent later, so a table size update owed to the peer
+/// is added here (RFC 7541 section 4.2).
+fn write_trailers(
+    encoder: &mut HpackEncoder,
+    stream_id: u32,
+    fields: &[u8],
+    max_frame: usize,
+    out: &mut Vec<u8>,
+) {
+    let mut block = Vec::with_capacity(fields.len() + 8);
+    encoder.begin(&mut block);
+    block.extend_from_slice(fields);
+    let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+    write_header_frames(stream_id, flags, &block, max_frame, out);
 }
 
 fn write_header_frames(
@@ -2188,6 +2209,14 @@ impl HpackDecoder {
     fn with_table_limit(mut self, limit: usize) -> Self {
         self.table_limit = limit;
         self
+    }
+
+    /// Lower both the table and what the peer may resize it to (RFC 7541 section 4.2).
+    fn limit_table(&mut self, limit: usize) {
+        self.table_limit = limit;
+        if self.max_dynamic_size > limit {
+            self.set_max_table_size(limit);
+        }
     }
 
     fn set_max_table_size(&mut self, max_size: usize) {
@@ -3572,6 +3601,57 @@ mod tests {
     }
 
     #[test]
+    fn the_advertised_decoder_table_applies_once_it_is_acknowledged() {
+        let mut conn = ready_conn(H2Config {
+            header_table_size: 0,
+            ..H2Config::default()
+        });
+        assert_eq!(conn.hpack.table_limit, HPACK_TABLE_LIMIT);
+        conn.feed(&frame(FRAME_SETTINGS, FLAG_ACK, 0, &[]), &mut Vec::new());
+        assert_eq!(
+            (conn.hpack.table_limit, conn.hpack.max_dynamic_size),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn a_bodyless_status_drops_its_trailers() {
+        for status in [204, 205, 304] {
+            let mut conn = ready_conn(H2Config::default());
+            let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+            conn.feed(
+                &frame(FRAME_HEADERS, end, 1, &get_headers(&[])),
+                &mut Vec::new(),
+            );
+            assert!(conn.set_response_trailers(1, &[("x-checksum", "abc")]));
+            let mut out = Vec::new();
+            conn.write_response(1, status, &[], None, &mut out);
+            let sent = frames(&out);
+            assert_eq!((sent.len(), sent[0].0, sent[0].1), (1, FRAME_HEADERS, end));
+        }
+    }
+
+    #[test]
+    fn trailers_lead_with_an_owed_table_size_update_and_keep_secrets_unindexed() {
+        let mut conn = ready_conn(H2Config::default());
+        let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+        conn.feed(
+            &frame(FRAME_HEADERS, end, 1, &get_headers(&[])),
+            &mut Vec::new(),
+        );
+        assert!(conn.set_response_trailers(1, &[("set-cookie", "id=1")]));
+        conn.write_stream_head(1, 200, &[], None, &mut Vec::new());
+        let setting = [&1u16.to_be_bytes()[..], &0u32.to_be_bytes()].concat();
+        conn.feed(&frame(FRAME_SETTINGS, 0, 0, &setting), &mut Vec::new());
+        let mut out = Vec::new();
+        conn.write_stream_data(1, b"", true, &mut out);
+        let sent = frames(&out);
+        let block = &sent.last().expect("trailers").3;
+        // Size update to 0, then a never-indexed literal naming static entry 55.
+        assert_eq!(block[..3], [0x20, 0x1f, 55 - 15]);
+    }
+
+    #[test]
     fn graceful_shutdown_serves_what_crossed_it_then_refuses_the_rest() {
         let end = FLAG_END_HEADERS | FLAG_END_STREAM;
         let get = |stream| frame(FRAME_HEADERS, end, stream, &get_headers(&[]));
@@ -3602,10 +3682,11 @@ mod tests {
         let refused = conn.feed(&get(5), &mut out);
         assert!(requests(&refused).is_empty());
         for stream in [1, 3] {
-            assert!(!conn.tick(Instant::now(), &mut out));
+            assert!(!conn.shutdown_complete());
             conn.write_response(stream, 200, &[], Some(b"ok"), &mut out);
         }
-        assert!(conn.tick(Instant::now(), &mut out));
+        assert!(conn.shutdown_complete());
+        assert!(!conn.tick(Instant::now(), &mut out));
     }
 
     #[test]
@@ -3617,7 +3698,7 @@ mod tests {
         assert!(out.is_empty());
         assert!(!conn.tick(Instant::now() + SHUTDOWN_PING_WAIT, &mut out));
         assert_eq!(frames(&out)[0].0, FRAME_GOAWAY);
-        assert!(conn.tick(Instant::now() + SHUTDOWN_PING_WAIT, &mut out));
+        assert!(conn.shutdown_complete());
     }
 
     #[test]
