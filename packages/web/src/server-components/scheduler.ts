@@ -1,5 +1,12 @@
 import { ServerComponentError } from "./error.ts"
 
+interface PendingTask {
+  readonly signal: AbortSignal
+  readonly start: () => void
+  readonly reject: (reason: unknown) => void
+  readonly cancel: () => void
+}
+
 export function componentAbort(signal: AbortSignal): ServerComponentError {
   return new ServerComponentError(
     signal.reason instanceof DOMException && signal.reason.name === "TimeoutError"
@@ -102,8 +109,7 @@ function retainStreamUntilSettled<T>(
 
 export class BoundedComponentTasks {
   #active = 0
-  readonly #queue = new Set<() => void>()
-  #pendingStarts: SetIterator<() => void> | undefined
+  readonly #queue: PendingTask[] = []
   constructor(
     readonly concurrency: number,
     readonly capacity: number,
@@ -117,7 +123,7 @@ export class BoundedComponentTasks {
       throw new ServerComponentError("component_contract")
   }
   get counts(): { active: number; queued: number } {
-    return { active: this.#active, queued: this.#queue.size }
+    return { active: this.#active, queued: this.#queue.length }
   }
 
   run<T>(signal: AbortSignal, work: () => T | Promise<T>): Promise<T> {
@@ -207,7 +213,7 @@ export class BoundedComponentTasks {
 
   #acquire(signal: AbortSignal): Promise<() => void> {
     if (signal.aborted) return Promise.reject(componentAbort(signal))
-    if (this.#active >= this.concurrency && this.#queue.size >= this.capacity)
+    if (this.#active >= this.concurrency && this.#queue.length >= this.capacity)
       return Promise.reject(new ServerComponentError("component_busy", 429))
     return new Promise((resolve, reject) => {
       let began = false
@@ -216,18 +222,13 @@ export class BoundedComponentTasks {
         if (released) return
         released = true
         this.#active--
-        if (this.#queue.size === 0) return
-        this.#pendingStarts ??= this.#queue.values()
-        const next = this.#pendingStarts.next().value
-        if (next === undefined) return
-        this.#queue.delete(next)
-        if (this.#queue.size === 0) this.#pendingStarts = undefined
-        next()
+        const next = this.#queue.shift()
+        if (next !== undefined) next.start()
       }
       const cancel = (): void => {
         if (!began) {
-          this.#queue.delete(start)
-          if (this.#queue.size === 0) this.#pendingStarts = undefined
+          const index = this.#queue.indexOf(pending)
+          if (index !== -1) this.#queue.splice(index, 1)
           signal.removeEventListener("abort", cancel)
         }
         reject(componentAbort(signal))
@@ -238,9 +239,10 @@ export class BoundedComponentTasks {
         this.#active++
         resolve(release)
       }
+      const pending: PendingTask = { signal, start, reject, cancel }
       signal.addEventListener("abort", cancel, { once: true })
       if (this.#active < this.concurrency) start()
-      else this.#queue.add(start)
+      else this.#queue.push(pending)
     })
   }
 }
