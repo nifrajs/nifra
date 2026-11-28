@@ -42,6 +42,40 @@ fn is_volatile(name: &str) -> bool {
     )
 }
 
+/// First static table index of a name a response carries. A name missing here is still encoded
+/// correctly, as a literal; a scan of the whole table per field costs more than the bytes it saves.
+fn static_name(name: &str) -> Option<usize> {
+    Some(match name {
+        ":status" => 8,
+        "accept-ranges" => 18,
+        "access-control-allow-origin" => 20,
+        "age" => 21,
+        "allow" => 22,
+        "cache-control" => 24,
+        "content-disposition" => 25,
+        "content-encoding" => 26,
+        "content-language" => 27,
+        "content-length" => 28,
+        "content-location" => 29,
+        "content-range" => 30,
+        "content-type" => 31,
+        "date" => 33,
+        "etag" => 34,
+        "expires" => 36,
+        "last-modified" => 44,
+        "link" => 45,
+        "location" => 46,
+        "retry-after" => 53,
+        "server" => 54,
+        "set-cookie" => 55,
+        "strict-transport-security" => 56,
+        "vary" => 59,
+        "via" => 60,
+        "www-authenticate" => 61,
+        _ => return None,
+    })
+}
+
 fn encode_string(bytes: &[u8], out: &mut Vec<u8>) {
     let bits: usize = bytes
         .iter()
@@ -92,10 +126,7 @@ fn literal(
 
 /// A literal that leaves the table alone, for a block that is written later than it is encoded.
 pub(crate) fn encode_stateless(name: &str, value: &[u8], out: &mut Vec<u8>) {
-    let name_index = STATIC_TABLE
-        .iter()
-        .position(|&(entry, _)| entry == name)
-        .map(|at| at + 1);
+    let name_index = static_name(name);
     literal(0x00, 4, name_index, name, value, out);
 }
 
@@ -144,14 +175,17 @@ impl HpackEncoder {
 
     /// Append one field. `name` must already be lower-case.
     pub(crate) fn field(&mut self, name: &str, value: &[u8], out: &mut Vec<u8>) {
-        let mut name_index = None;
-        for (at, &(entry, held)) in STATIC_TABLE.iter().enumerate() {
-            if entry == name {
-                if held.as_bytes() == value {
+        let mut name_index = static_name(name);
+        if let Some(first) = name_index {
+            // Entries sharing a name are adjacent; only some carry a value.
+            for (at, &(entry, held)) in STATIC_TABLE.iter().enumerate().skip(first - 1) {
+                if entry != name {
+                    break;
+                }
+                if !held.is_empty() && held.as_bytes() == value {
                     encode_hpack_int(at + 1, 7, 0x80, out);
                     return;
                 }
-                name_index.get_or_insert(at + 1);
             }
         }
         let sensitive = is_sensitive(name);
@@ -174,6 +208,21 @@ impl HpackEncoder {
             self.evict(self.max_size - size);
             self.dynamic.push_front((name.into(), value.into()));
             self.size += size;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_names_point_at_their_first_table_entry() {
+        for (at, &(name, _)) in STATIC_TABLE.iter().enumerate() {
+            if let Some(index) = static_name(name) {
+                let first = STATIC_TABLE.iter().position(|&(n, _)| n == name);
+                assert_eq!(Some(index - 1), first, "{name} at {at}");
+            }
         }
     }
 }
