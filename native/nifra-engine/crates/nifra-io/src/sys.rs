@@ -958,6 +958,12 @@ impl ConnCore {
         socket_backlog + if deferred_bp { deferred } else { 0 }
     }
 
+    pub fn negotiated_h2(&self) -> bool {
+        self.tls
+            .as_ref()
+            .is_some_and(|t| t.alpn_protocol() == Some(b"h2".as_slice()))
+    }
+
     pub fn alpn_protocol(&self) -> Option<Vec<u8>> {
         self.tls
             .as_ref()

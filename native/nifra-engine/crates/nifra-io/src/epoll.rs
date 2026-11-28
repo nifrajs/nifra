@@ -823,6 +823,7 @@ unsafe fn handle_client_readable(
     let mut direct_len = 0usize;
     let mut has_buf_plaintext = false;
     let mut scratch;
+    let mut negotiated_h2 = false;
     let mut dispatch_state: Option<(Option<Box<dyn UvCallbacks>>, Vec<u8>, Vec<u8>)> = None;
 
     {
@@ -979,6 +980,7 @@ unsafe fn handle_client_readable(
 
             if !remove && (direct_len > 0 || has_buf_plaintext) {
                 conn.dispatching = true;
+                negotiated_h2 = conn.negotiated_h2();
                 let taken = if direct_len > 0 {
                     Vec::new()
                 } else {
@@ -1033,6 +1035,9 @@ unsafe fn handle_client_readable(
         } else {
             &read_buf
         };
+        if negotiated_h2 {
+            handler.on_h2_negotiated(conn_id);
+        }
         handler.on_data(conn_id, input_slice, &mut cleartext_write)
     } else {
         ConnAction::CloseNow

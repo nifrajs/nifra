@@ -2121,7 +2121,14 @@ impl HttpUvCallbacks {
                 }
             }
             return if feed.close_after_write {
-                ConnAction::CloseAfterWrite {
+                // The peer may still be sending; closing over unread frames resets the connection
+                // and can lose the GOAWAY.
+                self.shared
+                    .borrow_mut()
+                    .conn_meta
+                    .ensure(conn_id)
+                    .refuse_input = true;
+                ConnAction::Refuse {
                     consumed: feed.consumed,
                 }
             } else {
@@ -2521,6 +2528,17 @@ impl HttpUvCallbacks {
 }
 
 impl UvCallbacks for HttpUvCallbacks {
+    fn on_h2_negotiated(&mut self, conn_id: u32) {
+        let mut st = self.shared.borrow_mut();
+        if st.http2_enabled {
+            let cfg = st.h2_cfg;
+            st.conn_meta
+                .ensure(conn_id)
+                .h2
+                .get_or_insert_with(|| Box::new(H2Conn::new(cfg)));
+        }
+    }
+
     fn on_data(&mut self, conn_id: u32, read_buf: &[u8], write_buf: &mut Vec<u8>) -> ConnAction {
         self.on_data_body(conn_id, read_buf, write_buf)
     }

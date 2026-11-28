@@ -216,3 +216,46 @@ jobs:
 
       - name: Run the Autobahn fuzzing client
         run: node packages/node-engine/conformance/autobahn.mjs
+
+  http2-conformance:
+    name: engine (h2spec)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: |
+          bun run build
+          bun run --filter '@nifrajs/node-engine' build
+          bun run scripts/link-for-node.ts
+
+      - name: Build the addon
+        run: cargo build --release --locked -p nifra-napi
+        working-directory: native/nifra-engine
+
+      - name: Fetch h2spec 2.6.0
+        run: |
+          archive="$RUNNER_TEMP/h2spec.tar.gz"
+          curl -fsSL -o "$archive" \
+            https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz
+          echo "157ee0de702e01ad40e752dbf074b366027e550c8e7504f9450da2809e279318  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" h2spec
+
+      - name: Run h2spec
+        run: H2SPEC="$RUNNER_TEMP/h2spec" node packages/node-engine/conformance/h2spec.mjs

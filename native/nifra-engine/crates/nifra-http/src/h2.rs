@@ -219,6 +219,10 @@ pub struct H2Conn {
     server_settings_sent: bool,
     peer_max_frame_size: usize,
     last_stream_id: u32,
+    /// Highest stream the peer has opened, refused ones included; any id above it is idle.
+    seen_stream_id: u32,
+    /// The latest run of ids the peer jumped over: closed without ever being used.
+    skipped_ids: (u32, u32),
     active_streams: HashMap<u32, InStream>,
     open_response_streams: HashMap<u32, ()>,
     continuation: Option<HeaderContinuation>,
@@ -254,6 +258,8 @@ impl H2Conn {
             server_settings_sent: false,
             peer_max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             last_stream_id: 0,
+            seen_stream_id: 0,
+            skipped_ids: (1, 0),
             active_streams: HashMap::with_capacity(16),
             open_response_streams: HashMap::with_capacity(16),
             continuation: None,
@@ -359,7 +365,28 @@ impl H2Conn {
         }
     }
 
+    /// A stream nobody has opened. The server never pushes, so every even id stays idle.
+    fn is_idle(&self, stream_id: u32) -> bool {
+        stream_id & 1 == 0 || stream_id > self.seen_stream_id
+    }
+
+    fn note_opened(&mut self, stream_id: u32) {
+        let next = if self.seen_stream_id == 0 {
+            1
+        } else {
+            self.seen_stream_id + 2
+        };
+        if stream_id > next {
+            self.skipped_ids = (next, stream_id - 2);
+        }
+        self.seen_stream_id = self.seen_stream_id.max(stream_id);
+    }
+
     fn drain_stream(&mut self, stream_id: u32, rst_owed: bool) {
+        if let Some(entry) = self.draining.iter_mut().find(|(id, _)| *id == stream_id) {
+            entry.1 |= rst_owed;
+            return;
+        }
         if self.draining.len() >= DRAINING_LIMIT {
             self.draining.remove(0);
         }
@@ -629,6 +656,13 @@ impl H2Conn {
                                     }
                                     self.peer_max_frame_size = val as usize;
                                 }
+                                // ENABLE_PUSH (RFC 9113 §6.5.2).
+                                2 if val > 1 => {
+                                    self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
+                                    res.consumed = pos;
+                                    res.close_after_write = true;
+                                    return res;
+                                }
                                 _ => {}
                             }
                         }
@@ -659,6 +693,12 @@ impl H2Conn {
                 FRAME_WINDOW_UPDATE => {
                     if payload.len() != 4 {
                         self.send_goaway_internal(ERR_FRAME_SIZE_ERROR, write_buf);
+                        res.consumed = pos;
+                        res.close_after_write = true;
+                        return res;
+                    }
+                    if stream_id != 0 && self.is_idle(stream_id) {
+                        self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
                         res.consumed = pos;
                         res.close_after_write = true;
                         return res;
@@ -710,6 +750,12 @@ impl H2Conn {
                         res.close_after_write = true;
                         return res;
                     }
+                    if depends_on(payload, stream_id) {
+                        self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
+                        res.consumed = pos;
+                        res.close_after_write = true;
+                        return res;
+                    }
                 }
                 FRAME_RST_STREAM => {
                     if stream_id == 0 || payload.len() != 4 {
@@ -718,7 +764,14 @@ impl H2Conn {
                         res.close_after_write = true;
                         return res;
                     }
+                    if self.is_idle(stream_id) {
+                        self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
+                        res.consumed = pos;
+                        res.close_after_write = true;
+                        return res;
+                    }
                     let flooding = self.count_reset();
+                    self.draining.retain(|&(id, _)| id != stream_id);
                     self.active_streams.remove(&stream_id);
                     self.open_response_streams.remove(&stream_id);
                     self.out_streams.remove(&stream_id);
@@ -756,7 +809,8 @@ impl H2Conn {
                         res.close_after_write = true;
                         return res;
                     }
-                    let Some(frag) = strip_headers_padding_and_priority(payload, flags) else {
+                    let Some(frag) = strip_headers_padding_and_priority(payload, flags, stream_id)
+                    else {
                         self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
                         res.consumed = pos;
                         res.close_after_write = true;
@@ -836,6 +890,12 @@ impl H2Conn {
                 }
                 FRAME_DATA => {
                     if stream_id == 0 {
+                        self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
+                        res.consumed = pos;
+                        res.close_after_write = true;
+                        return res;
+                    }
+                    if self.is_idle(stream_id) {
                         self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
                         res.consumed = pos;
                         res.close_after_write = true;
@@ -1030,13 +1090,23 @@ impl H2Conn {
             .hpack
             .decode(block)
             .map_err(|_| ERR_COMPRESSION_ERROR)?;
-        // Trailers already in flight when a stream was reset can still change the HPACK table.
-        if stream_id <= self.last_stream_id
-            && !self.active_streams.contains_key(&stream_id)
-            && !self.open_response_streams.contains_key(&stream_id)
-        {
+        if stream_id <= self.seen_stream_id && !self.active_streams.contains_key(&stream_id) {
+            // Trailers in flight when the server cut a stream short still count for the HPACK
+            // table, which is why they are decoded first. Anything else is a peer error (§5.1).
+            let Some(at) = self.draining.iter().position(|&(id, _)| id == stream_id) else {
+                let (first, last) = self.skipped_ids;
+                return Err(if (first..=last).contains(&stream_id) {
+                    ERR_PROTOCOL_ERROR
+                } else {
+                    ERR_STREAM_CLOSED
+                });
+            };
+            if end_stream {
+                self.draining.remove(at);
+            }
             return Ok(());
         }
+        self.note_opened(stream_id);
         // The table is now in step with the peer's whatever the bytes were. A target or name that is
         // not UTF-8 fails this request, not the connection and its streams.
         let decoded: Option<Vec<(String, String)>> = decoded
@@ -1052,9 +1122,6 @@ impl H2Conn {
             })
             .collect();
         let Some(decoded) = decoded else {
-            if stream_id <= self.last_stream_id && !self.active_streams.contains_key(&stream_id) {
-                return Err(ERR_PROTOCOL_ERROR);
-            }
             self.last_stream_id = self.last_stream_id.max(stream_id);
             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
             return Ok(());
@@ -1116,9 +1183,6 @@ impl H2Conn {
         if self.goaway_sent {
             self.fault(stream_id, ERR_REFUSED_STREAM, write_buf);
             return Ok(());
-        }
-        if stream_id <= self.last_stream_id {
-            return Err(ERR_PROTOCOL_ERROR);
         }
         let open_streams = self.active_streams.len()
             + self
@@ -1630,7 +1694,10 @@ impl H2Conn {
 
     /// Reset a single HTTP/2 stream (leaving the connection and sibling streams intact).
     pub fn reset_stream(&mut self, stream_id: u32, error_code: u32, out: &mut Vec<u8>) {
-        self.active_streams.remove(&stream_id);
+        // The peer may have frames in flight; they are not a violation.
+        if self.active_streams.remove(&stream_id).is_some() {
+            self.drain_stream(stream_id, false);
+        }
         self.open_response_streams.remove(&stream_id);
         self.out_streams.remove(&stream_id);
         self.early_credit.remove(&stream_id);
@@ -1792,7 +1859,14 @@ fn strip_padding(payload: &[u8], flags: u8) -> Option<&[u8]> {
     Some(&payload[1..payload.len() - pad])
 }
 
-fn strip_headers_padding_and_priority(payload: &[u8], flags: u8) -> Option<&[u8]> {
+/// Whether a priority block names its own stream as the dependency (RFC 7540 §5.3.1).
+fn depends_on(priority: &[u8], stream_id: u32) -> bool {
+    priority
+        .first_chunk::<4>()
+        .is_some_and(|dep| u32::from_be_bytes(*dep) & 0x7FFF_FFFF == stream_id)
+}
+
+fn strip_headers_padding_and_priority(payload: &[u8], flags: u8, stream_id: u32) -> Option<&[u8]> {
     let mut start = 0usize;
     let mut end = payload.len();
     if (flags & FLAG_PADDED) != 0 {
@@ -1804,7 +1878,7 @@ fn strip_headers_padding_and_priority(payload: &[u8], flags: u8) -> Option<&[u8]
         end -= pad;
     }
     if (flags & FLAG_PRIORITY) != 0 {
-        if start + 5 > end {
+        if start + 5 > end || depends_on(&payload[start..], stream_id) {
             return None;
         }
         start += 5;
@@ -2003,7 +2077,10 @@ impl HpackDecoder {
                 self.insert(name.clone(), val.clone());
                 out.push((name, val));
             } else if (b & 0x20) != 0 {
-                // Dynamic Table Size Update (RFC 7541 §6.3)
+                // Dynamic Table Size Update (RFC 7541 §6.3), only ahead of the first field (§4.2).
+                if !out.is_empty() {
+                    return Err(());
+                }
                 let (new_max, used) = decode_hpack_int(&buf[pos..], 5)?;
                 pos += used;
                 if new_max > HPACK_TABLE_LIMIT {
@@ -2715,8 +2792,7 @@ mod tests {
                 + Duration::from_millis(OFFSET_MS.load(Ordering::SeqCst))
         }
         let rst = |conn: &mut H2Conn, stream: u32| {
-            let mut wire = Vec::new();
-            write_rst_stream(stream, ERR_CANCEL, &mut wire);
+            let wire = open_and_reset(stream);
             conn.feed(&wire, &mut Vec::new()).close_after_write
         };
         let cfg = H2Config {
@@ -3131,9 +3207,9 @@ mod tests {
         let mut wire = Vec::new();
         wire.extend_from_slice(CLIENT_PREFACE);
         write_frame(FRAME_SETTINGS, 0, 0, &[], &mut wire);
-        write_rst_stream(1, ERR_CANCEL, &mut wire);
-        write_rst_stream(3, ERR_CANCEL, &mut wire);
-        write_rst_stream(5, ERR_CANCEL, &mut wire);
+        for stream in [1, 3, 5] {
+            wire.extend_from_slice(&open_and_reset(stream));
+        }
 
         let mut out = Vec::new();
         let res = conn.feed(&wire, &mut out);
@@ -3142,6 +3218,106 @@ mod tests {
             .iter()
             .any(|(ty, _, _, p)| *ty == FRAME_GOAWAY
                 && p[4..8] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+    }
+
+    fn open_and_reset(stream: u32) -> Vec<u8> {
+        let mut wire = Vec::new();
+        let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+        write_frame(FRAME_HEADERS, flags, stream, &get_headers(&[]), &mut wire);
+        write_rst_stream(stream, ERR_CANCEL, &mut wire);
+        wire
+    }
+
+    /// The GOAWAY error code a ready connection answers `wire` with, if it closes.
+    fn goaway_for(wire: &[u8]) -> Option<u32> {
+        let mut out = Vec::new();
+        ready_conn(H2Config::default()).feed(wire, &mut out);
+        frames(&out)
+            .iter()
+            .find(|frame| frame.0 == FRAME_GOAWAY)
+            .map(|frame| u32::from_be_bytes([frame.3[4], frame.3[5], frame.3[6], frame.3[7]]))
+    }
+
+    fn frame(ty: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::new();
+        write_frame(ty, flags, stream, payload, &mut wire);
+        wire
+    }
+
+    #[test]
+    fn h2_frames_on_idle_streams_close_the_connection() {
+        let opened = open_and_reset(3);
+        for stream in [1, 2, 5] {
+            for idle in [
+                frame(FRAME_DATA, 0, stream, b"x"),
+                frame(FRAME_RST_STREAM, 0, stream, &ERR_CANCEL.to_be_bytes()),
+                frame(FRAME_WINDOW_UPDATE, 0, stream, &1u32.to_be_bytes()),
+            ] {
+                // Stream 1 was skipped over, so it is closed rather than idle once 3 is open.
+                let wire = [
+                    if stream == 1 {
+                        Vec::new()
+                    } else {
+                        opened.clone()
+                    },
+                    idle,
+                ]
+                .concat();
+                assert_eq!(goaway_for(&wire), Some(ERR_PROTOCOL_ERROR), "{wire:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn h2_headers_on_a_stream_that_is_gone_close_the_connection() {
+        let get = |stream| {
+            let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+            frame(FRAME_HEADERS, flags, stream, &get_headers(&[]))
+        };
+        // Reset by the peer, and half-closed with the response still owed.
+        for first in [open_and_reset(1), get(1)] {
+            let wire = [first, get(1)].concat();
+            assert_eq!(goaway_for(&wire), Some(ERR_STREAM_CLOSED));
+        }
+        // Never used: the peer jumped past it.
+        let wire = [get(5), get(3)].concat();
+        assert_eq!(goaway_for(&wire), Some(ERR_PROTOCOL_ERROR));
+    }
+
+    #[test]
+    fn h2_trailers_in_flight_after_a_server_reset_are_ignored() {
+        let mut conn = ready_conn(H2Config::default());
+        let upload = frame(FRAME_HEADERS, FLAG_END_HEADERS, 1, &get_headers(&[]));
+        conn.feed(&upload, &mut Vec::new());
+        conn.reset_stream(1, ERR_CANCEL, &mut Vec::new());
+        let mut trailers = Vec::new();
+        encode_header_pair("x-sum", b"1", &mut trailers);
+        let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+        let late = frame(FRAME_HEADERS, flags, 1, &trailers);
+        assert!(!conn.feed(&late, &mut Vec::new()).close_after_write);
+        // The trailers ended the peer's side, so nothing more is expected.
+        assert!(conn.feed(&late, &mut Vec::new()).close_after_write);
+    }
+
+    #[test]
+    fn h2_rejects_self_dependency_enable_push_and_a_late_table_resize() {
+        let on_itself = [0, 0, 0, 1, 16];
+        let priority = frame(FRAME_PRIORITY, 0, 1, &on_itself);
+        assert_eq!(goaway_for(&priority), Some(ERR_PROTOCOL_ERROR));
+
+        let block = [&on_itself[..], &get_headers(&[])].concat();
+        let flags = FLAG_END_HEADERS | FLAG_END_STREAM | FLAG_PRIORITY;
+        let headers = frame(FRAME_HEADERS, flags, 1, &block);
+        assert_eq!(goaway_for(&headers), Some(ERR_PROTOCOL_ERROR));
+
+        let push = frame(FRAME_SETTINGS, 0, 0, &[0, 2, 0, 0, 0, 2]);
+        assert_eq!(goaway_for(&push), Some(ERR_PROTOCOL_ERROR));
+
+        let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+        let late = frame(FRAME_HEADERS, flags, 1, &get_headers(&[0x20]));
+        assert_eq!(goaway_for(&late), Some(ERR_COMPRESSION_ERROR));
+        let early = [&[0x20][..], &get_headers(&[])].concat();
+        assert_eq!(goaway_for(&frame(FRAME_HEADERS, flags, 1, &early)), None);
     }
 
     /// A connection that has read the preface and a SETTINGS frame, with the server's own output drained.

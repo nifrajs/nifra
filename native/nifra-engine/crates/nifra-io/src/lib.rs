@@ -229,6 +229,8 @@ fn bind_one(addr: SocketAddr, cfg: SocketConfig) -> io::Result<(StdTcpListener, 
         SocketAddr::V6(_) => Domain::IPV6,
     };
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    // Unix only: on Windows this lets a second socket take a port that is already being served.
+    #[cfg(unix)]
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     if cfg.reuse_port {

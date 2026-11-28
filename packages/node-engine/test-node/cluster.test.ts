@@ -14,6 +14,8 @@ import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import { serveCluster } from "../src/cluster.ts"
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/cluster-server.ts", import.meta.url))
+// Windows has no `SO_REUSEPORT`, and `serveCluster` refuses to start there.
+const needsReusePort = { skip: process.platform === "win32" }
 
 interface Event {
   readonly event: string
@@ -102,23 +104,27 @@ async function pidOf(port: number): Promise<number> {
   return pidField(body, "no pid in the answer")
 }
 
-test("every worker comes up on one port and the primary answers through them", async () => {
-  const port = await freePort()
-  const run = new Run({ PORT: String(port), WORKERS: "3" })
-  try {
-    const ready = await run.nth("ready")
-    const pids = new Set(pidsOf(ready))
-    assert.equal(pids.size, 3)
-    const answered = new Set<number>()
-    for (let i = 0; i < 30; i++) answered.add(await pidOf(port))
-    for (const pid of answered) assert.ok(pids.has(pid), "a request was answered by a stranger")
-  } finally {
-    run.child.kill("SIGTERM")
-    assert.equal(await run.exited, 0)
-  }
-})
+test(
+  "every worker comes up on one port and the primary answers through them",
+  needsReusePort,
+  async () => {
+    const port = await freePort()
+    const run = new Run({ PORT: String(port), WORKERS: "3" })
+    try {
+      const ready = await run.nth("ready")
+      const pids = new Set(pidsOf(ready))
+      assert.equal(pids.size, 3)
+      const answered = new Set<number>()
+      for (let i = 0; i < 30; i++) answered.add(await pidOf(port))
+      for (const pid of answered) assert.ok(pids.has(pid), "a request was answered by a stranger")
+    } finally {
+      run.child.kill("SIGTERM")
+      assert.equal(await run.exited, 0)
+    }
+  },
+)
 
-test("a worker that dies is replaced", async () => {
+test("a worker that dies is replaced", needsReusePort, async () => {
   const port = await freePort()
   const run = new Run({ PORT: String(port), WORKERS: "2" })
   try {
@@ -138,7 +144,7 @@ test("a worker that dies is replaced", async () => {
   }
 })
 
-test("SIGTERM to the primary stops every worker and frees the port", async () => {
+test("SIGTERM to the primary stops every worker and frees the port", needsReusePort, async () => {
   const port = await freePort()
   const run = new Run({ PORT: String(port), WORKERS: "3" })
   const ready = await run.nth("ready")
@@ -152,15 +158,19 @@ test("SIGTERM to the primary stops every worker and frees the port", async () =>
   assert.equal(run.events.filter((event) => event.respawning === true).length, 0)
 })
 
-test("a worker that cannot start fails the primary and leaves nothing running", async () => {
-  const port = await freePort()
-  const run = new Run({ PORT: String(port), WORKERS: "2", FAIL: "1" })
-  assert.equal(await run.exited, 1)
-  const failed = await run.nth("failed")
-  assert.match(String(failed.message), /factory refused/)
-})
+test(
+  "a worker that cannot start fails the primary and leaves nothing running",
+  needsReusePort,
+  async () => {
+    const port = await freePort()
+    const run = new Run({ PORT: String(port), WORKERS: "2", FAIL: "1" })
+    assert.equal(await run.exited, 1)
+    const failed = await run.nth("failed")
+    assert.match(String(failed.message), /factory refused/)
+  },
+)
 
-test("a reload reaches every worker", async () => {
+test("a reload reaches every worker", needsReusePort, async () => {
   const [a, b] = [await selfSignedCertificate(), await selfSignedCertificate()]
   const dir = await mkdtemp(join(tmpdir(), "node-engine-cluster-"))
   const certFile = join(dir, "cert.pem")
@@ -205,67 +215,75 @@ test("a reload reaches every worker", async () => {
   }
 })
 
-test("a worker that replaces a dead one serves the reloaded certificate, not the entrypoint's", async () => {
-  const [a, b] = [await selfSignedCertificate(), await selfSignedCertificate()]
-  const dir = await mkdtemp(join(tmpdir(), "node-engine-cluster-inline-"))
-  const files = {
-    a: [join(dir, "a-cert.pem"), join(dir, "a-key.pem")],
-    b: [join(dir, "b-cert.pem"), join(dir, "b-key.pem")],
-  } as const
-  await Promise.all([
-    writeFile(files.a[0], a.cert),
-    writeFile(files.a[1], a.key),
-    writeFile(files.b[0], b.cert),
-    writeFile(files.b[1], b.key),
-  ])
-  const port = await freePort()
-  const run = new Run({
-    PORT: String(port),
-    WORKERS: "2",
-    INLINE_CERT_FILE: files.a[0],
-    INLINE_KEY_FILE: files.a[1],
-    RELOAD_CERT_FILE: files.b[0],
-    RELOAD_KEY_FILE: files.b[1],
-  })
-  const presented = async (trusted: string): Promise<Set<string>> => {
-    const seen = new Set<string>()
-    for (let i = 0; i < 16; i++) {
-      seen.add(
-        await new Promise<string>((resolve, reject) => {
-          const socket = tlsConnect({ port, host: "127.0.0.1", ca: trusted }, () => {
-            const fingerprint = socket.getPeerCertificate().fingerprint256
-            socket.destroy()
-            resolve(fingerprint)
-          })
-          socket.on("error", reject)
-        }),
-      )
+test(
+  "a worker that replaces a dead one serves the reloaded certificate, not the entrypoint's",
+  needsReusePort,
+  async () => {
+    const [a, b] = [await selfSignedCertificate(), await selfSignedCertificate()]
+    const dir = await mkdtemp(join(tmpdir(), "node-engine-cluster-inline-"))
+    const files = {
+      a: [join(dir, "a-cert.pem"), join(dir, "a-key.pem")],
+      b: [join(dir, "b-cert.pem"), join(dir, "b-key.pem")],
+    } as const
+    await Promise.all([
+      writeFile(files.a[0], a.cert),
+      writeFile(files.a[1], a.key),
+      writeFile(files.b[0], b.cert),
+      writeFile(files.b[1], b.key),
+    ])
+    const port = await freePort()
+    const run = new Run({
+      PORT: String(port),
+      WORKERS: "2",
+      INLINE_CERT_FILE: files.a[0],
+      INLINE_KEY_FILE: files.a[1],
+      RELOAD_CERT_FILE: files.b[0],
+      RELOAD_KEY_FILE: files.b[1],
+    })
+    const presented = async (trusted: string): Promise<Set<string>> => {
+      const seen = new Set<string>()
+      for (let i = 0; i < 16; i++) {
+        seen.add(
+          await new Promise<string>((resolve, reject) => {
+            const socket = tlsConnect({ port, host: "127.0.0.1", ca: trusted }, () => {
+              const fingerprint = socket.getPeerCertificate().fingerprint256
+              socket.destroy()
+              resolve(fingerprint)
+            })
+            socket.on("error", reject)
+          }),
+        )
+      }
+      return seen
     }
-    return seen
-  }
-  try {
-    const ready = await run.nth("ready")
-    run.child.kill("SIGUSR1")
-    await run.nth("reloaded-inline")
-    const [victim] = pidsOf(ready)
-    assert.ok(victim)
-    process.kill(victim, "SIGKILL")
-    await run.nth("listening", 3)
-    assert.deepEqual([...(await presented(b.cert))], [new X509Certificate(b.cert).fingerprint256])
-  } finally {
-    run.child.kill("SIGTERM")
-    await run.exited
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+    try {
+      const ready = await run.nth("ready")
+      run.child.kill("SIGUSR1")
+      await run.nth("reloaded-inline")
+      const [victim] = pidsOf(ready)
+      assert.ok(victim)
+      process.kill(victim, "SIGKILL")
+      await run.nth("listening", 3)
+      assert.deepEqual([...(await presented(b.cert))], [new X509Certificate(b.cert).fingerprint256])
+    } finally {
+      run.child.kill("SIGTERM")
+      await run.exited
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
-test("the first worker to fail ends the start even while a sibling is still starting", async () => {
-  const port = await freePort()
-  const run = new Run({ PORT: String(port), WORKERS: "2", FAIL_FIRST: "1" })
-  assert.equal(await run.exited, 1)
-  const failed = await run.nth("failed")
-  assert.match(String(failed.message), /first worker refused/)
-})
+test(
+  "the first worker to fail ends the start even while a sibling is still starting",
+  needsReusePort,
+  async () => {
+    const port = await freePort()
+    const run = new Run({ PORT: String(port), WORKERS: "2", FAIL_FIRST: "1" })
+    assert.equal(await run.exited, 1)
+    const failed = await run.nth("failed")
+    assert.match(String(failed.message), /first worker refused/)
+  },
+)
 
 test("options a cluster cannot honour are refused up front", async () => {
   const app = () => ({ fetch: () => new Response("ok") })
@@ -282,84 +300,93 @@ const alive = (pid: number): boolean => {
   }
 }
 
-test("a rolling restart replaces every worker and the port keeps answering", async () => {
-  const port = await freePort()
-  const run = new Run({ PORT: String(port), WORKERS: "3" })
-  try {
-    const before = pidsOf(await run.nth("ready"))
-    // A client that retries once, as one behind a load balancer does. Linux drops the connections
-    // queued on a listener as it closes, so a first attempt may be reset; a second must not be.
-    let unanswered = 0
-    let answered = 0
-    let running = true
-    const attempt = async (): Promise<boolean> => {
-      try {
-        const reply = await fetch(`http://127.0.0.1:${port}/pid`, {
-          headers: { connection: "close" },
-          signal: AbortSignal.timeout(5000),
-        })
-        await reply.arrayBuffer()
-        return reply.ok
-      } catch {
-        return false
-      }
-    }
-    const traffic = (async () => {
-      while (running) {
-        let retried = await attempt()
-        if (!retried) retried = await attempt()
-        if (retried) answered++
-        else unanswered++
-      }
-    })()
-    run.child.kill("SIGUSR2")
-    let restarted: Event
+test(
+  "a rolling restart replaces every worker and the port keeps answering",
+  needsReusePort,
+  async () => {
+    const port = await freePort()
+    const run = new Run({ PORT: String(port), WORKERS: "3" })
     try {
-      restarted = await run.nth("restarted", 1, 30_000)
+      const before = pidsOf(await run.nth("ready"))
+      // A client that retries once, as one behind a load balancer does. Linux drops the connections
+      // queued on a listener as it closes, so a first attempt may be reset; a second must not be.
+      let unanswered = 0
+      let answered = 0
+      let running = true
+      const attempt = async (): Promise<boolean> => {
+        try {
+          const reply = await fetch(`http://127.0.0.1:${port}/pid`, {
+            headers: { connection: "close" },
+            signal: AbortSignal.timeout(5000),
+          })
+          await reply.arrayBuffer()
+          return reply.ok
+        } catch {
+          return false
+        }
+      }
+      const traffic = (async () => {
+        while (running) {
+          let retried = await attempt()
+          if (!retried) retried = await attempt()
+          if (retried) answered++
+          else unanswered++
+        }
+      })()
+      run.child.kill("SIGUSR2")
+      let restarted: Event
+      try {
+        restarted = await run.nth("restarted", 1, 30_000)
+      } finally {
+        running = false
+        await traffic
+      }
+      const after = pidsOf(restarted)
+      assert.equal(after.length, 3)
+      for (const pid of after) assert.ok(!before.includes(pid), "a worker survived the restart")
+      for (const pid of before) assert.ok(!alive(pid), "an old worker is still running")
+      assert.ok(answered > 0)
+      assert.equal(unanswered, 0, `${unanswered} requests failed twice during the restart`)
+      assert.ok(await pidOf(port))
+      // The replaced workers were retired, not mourned: nothing was respawned.
+      assert.equal(run.events.filter((event) => event.respawning === true).length, 0)
     } finally {
-      running = false
-      await traffic
+      run.child.kill("SIGTERM")
+      assert.equal(await run.exited, 0)
     }
-    const after = pidsOf(restarted)
-    assert.equal(after.length, 3)
-    for (const pid of after) assert.ok(!before.includes(pid), "a worker survived the restart")
-    for (const pid of before) assert.ok(!alive(pid), "an old worker is still running")
-    assert.ok(answered > 0)
-    assert.equal(unanswered, 0, `${unanswered} requests failed twice during the restart`)
-    assert.ok(await pidOf(port))
-    // The replaced workers were retired, not mourned: nothing was respawned.
-    assert.equal(run.events.filter((event) => event.respawning === true).length, 0)
-  } finally {
-    run.child.kill("SIGTERM")
-    assert.equal(await run.exited, 0)
-  }
-})
+  },
+)
 
-test("a restart whose new worker cannot start leaves the old workers serving", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "node-engine-restart-"))
-  const breakFile = join(dir, "broken")
-  const port = await freePort()
-  const run = new Run({ PORT: String(port), WORKERS: "2", BREAK_FILE: breakFile })
-  try {
-    const before = pidsOf(await run.nth("ready"))
-    await writeFile(breakFile, "")
-    run.child.kill("SIGUSR2")
-    const failed = await run.nth("restart-failed")
-    assert.match(String(failed.message), /broken build/)
-    for (const pid of before) assert.ok(alive(pid), "an old worker was stopped by a failed restart")
-    assert.ok(await pidOf(port))
-    await rm(breakFile)
-    run.child.kill("SIGUSR2")
-    const after = pidsOf(await run.nth("restarted", 1, 30_000))
-    for (const pid of after) assert.ok(!before.includes(pid))
-  } finally {
-    run.child.kill("SIGTERM")
-    assert.equal(await run.exited, 0)
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+test(
+  "a restart whose new worker cannot start leaves the old workers serving",
+  needsReusePort,
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "node-engine-restart-"))
+    const breakFile = join(dir, "broken")
+    const port = await freePort()
+    const run = new Run({ PORT: String(port), WORKERS: "2", BREAK_FILE: breakFile })
+    try {
+      const before = pidsOf(await run.nth("ready"))
+      await writeFile(breakFile, "")
+      run.child.kill("SIGUSR2")
+      const failed = await run.nth("restart-failed")
+      assert.match(String(failed.message), /broken build/)
+      for (const pid of before)
+        assert.ok(alive(pid), "an old worker was stopped by a failed restart")
+      assert.ok(await pidOf(port))
+      await rm(breakFile)
+      run.child.kill("SIGUSR2")
+      const after = pidsOf(await run.nth("restarted", 1, 30_000))
+      for (const pid of after) assert.ok(!before.includes(pid))
+    } finally {
+      run.child.kill("SIGTERM")
+      assert.equal(await run.exited, 0)
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
-test("stopping the cluster during a restart leaves no worker behind", async () => {
+test("stopping the cluster during a restart leaves no worker behind", needsReusePort, async () => {
   const port = await freePort()
   const run = new Run({ PORT: String(port), WORKERS: "3" })
   const seen = pidsOf(await run.nth("ready"))
@@ -374,111 +401,119 @@ test("stopping the cluster during a restart leaves no worker behind", async () =
   for (const pid of everyone) assert.ok(!alive(pid), `worker ${pid} outlived the primary`)
 })
 
-test("explicit ticketKeys survive a cert-only reloadTls across live and replacement workers", async () => {
-  const [a, b] = [await selfSignedCertificate(), await selfSignedCertificate()]
-  const dir = await mkdtemp(join(tmpdir(), "node-engine-cluster-keys-"))
-  const files = {
-    a: [join(dir, "a-cert.pem"), join(dir, "a-key.pem")],
-    b: [join(dir, "b-cert.pem"), join(dir, "b-key.pem")],
-  } as const
-  await Promise.all([
-    writeFile(files.a[0], a.cert),
-    writeFile(files.a[1], a.key),
-    writeFile(files.b[0], b.cert),
-    writeFile(files.b[1], b.key),
-  ])
-  const port = await freePort()
-  const keyHex = randomBytes(48).toString("hex")
-  const run = new Run({
-    PORT: String(port),
-    WORKERS: "2",
-    INLINE_CERT_FILE: files.a[0],
-    INLINE_KEY_FILE: files.a[1],
-    RELOAD_CERT_FILE: files.b[0],
-    RELOAD_KEY_FILE: files.b[1],
-    TICKET_KEY_HEX: keyHex,
-  })
-  const resumeTicket = (
-    trusted: string,
-    session?: Buffer,
-  ): Promise<{ reused: boolean; session: Buffer | undefined }> =>
-    new Promise((resolve, reject) => {
-      const tlsOpts: {
-        port: number
-        host: string
-        ca: string
-        maxVersion: "TLSv1.2"
-        session?: Buffer
-      } = {
-        port,
-        host: "127.0.0.1",
-        ca: trusted,
-        maxVersion: "TLSv1.2",
-      }
-      if (session !== undefined) tlsOpts.session = session
-      const sock = tlsConnect(tlsOpts, () => {
-        const out = { reused: sock.isSessionReused(), session: sock.getSession() }
-        sock.destroy()
-        resolve(out)
-      })
-      sock.on("error", reject)
+test(
+  "explicit ticketKeys survive a cert-only reloadTls across live and replacement workers",
+  needsReusePort,
+  async () => {
+    const [a, b] = [await selfSignedCertificate(), await selfSignedCertificate()]
+    const dir = await mkdtemp(join(tmpdir(), "node-engine-cluster-keys-"))
+    const files = {
+      a: [join(dir, "a-cert.pem"), join(dir, "a-key.pem")],
+      b: [join(dir, "b-cert.pem"), join(dir, "b-key.pem")],
+    } as const
+    await Promise.all([
+      writeFile(files.a[0], a.cert),
+      writeFile(files.a[1], a.key),
+      writeFile(files.b[0], b.cert),
+      writeFile(files.b[1], b.key),
+    ])
+    const port = await freePort()
+    const keyHex = randomBytes(48).toString("hex")
+    const run = new Run({
+      PORT: String(port),
+      WORKERS: "2",
+      INLINE_CERT_FILE: files.a[0],
+      INLINE_KEY_FILE: files.a[1],
+      RELOAD_CERT_FILE: files.b[0],
+      RELOAD_KEY_FILE: files.b[1],
+      TICKET_KEY_HEX: keyHex,
     })
-  try {
-    const ready = await run.nth("ready")
-    const before = await resumeTicket(a.cert)
-    assert.ok(before.session)
-    run.child.kill("SIGUSR1")
-    await run.nth("reloaded-inline")
+    const resumeTicket = (
+      trusted: string,
+      session?: Buffer,
+    ): Promise<{ reused: boolean; session: Buffer | undefined }> =>
+      new Promise((resolve, reject) => {
+        const tlsOpts: {
+          port: number
+          host: string
+          ca: string
+          maxVersion: "TLSv1.2"
+          session?: Buffer
+        } = {
+          port,
+          host: "127.0.0.1",
+          ca: trusted,
+          maxVersion: "TLSv1.2",
+        }
+        if (session !== undefined) tlsOpts.session = session
+        const sock = tlsConnect(tlsOpts, () => {
+          const out = { reused: sock.isSessionReused(), session: sock.getSession() }
+          sock.destroy()
+          resolve(out)
+        })
+        sock.on("error", reject)
+      })
+    try {
+      const ready = await run.nth("ready")
+      const before = await resumeTicket(a.cert)
+      assert.ok(before.session)
+      run.child.kill("SIGUSR1")
+      await run.nth("reloaded-inline")
 
-    // Issue a session under the reloaded cert on a live worker, then replace one worker and verify
-    // resumption succeeds across both live and replacement workers.
-    const issuedAfterReload = await resumeTicket(b.cert)
-    assert.ok(issuedAfterReload.session)
-    const [victim] = pidsOf(ready)
-    assert.ok(victim)
-    process.kill(victim, "SIGKILL")
-    await run.nth("listening", 3)
+      // Issue a session under the reloaded cert on a live worker, then replace one worker and verify
+      // resumption succeeds across both live and replacement workers.
+      const issuedAfterReload = await resumeTicket(b.cert)
+      assert.ok(issuedAfterReload.session)
+      const [victim] = pidsOf(ready)
+      assert.ok(victim)
+      process.kill(victim, "SIGKILL")
+      await run.nth("listening", 3)
 
-    for (let i = 0; i < 8; i++) {
-      const resumed = await resumeTicket(b.cert, issuedAfterReload.session)
-      assert.equal(resumed.reused, true)
+      for (let i = 0; i < 8; i++) {
+        const resumed = await resumeTicket(b.cert, issuedAfterReload.session)
+        assert.equal(resumed.reused, true)
+      }
+    } finally {
+      run.child.kill("SIGTERM")
+      await run.exited
+      await rm(dir, { recursive: true, force: true })
     }
-  } finally {
-    run.child.kill("SIGTERM")
-    await run.exited
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+  },
+)
 
-test("sharedListener supports ephemeral port 0 and rolling restarts across workers", async () => {
-  const run = new Run({ PORT: "0", WORKERS: "2", SHARED_LISTENER: "1" })
-  try {
-    const ready = await run.nth("ready")
-    const port = ready.port
-    assert.equal(typeof port, "number")
-    if (typeof port !== "number") throw new Error("expected numeric port")
-    assert.ok(port > 0)
+test(
+  "sharedListener supports ephemeral port 0 and rolling restarts across workers",
+  needsReusePort,
+  async () => {
+    const run = new Run({ PORT: "0", WORKERS: "2", SHARED_LISTENER: "1" })
+    try {
+      const ready = await run.nth("ready")
+      const port = ready.port
+      assert.equal(typeof port, "number")
+      if (typeof port !== "number") throw new Error("expected numeric port")
+      assert.ok(port > 0)
 
-    const before = pidsOf(ready)
-    assert.equal(before.length, 2)
-    for (let i = 0; i < 6; i++) {
-      const res = await fetch(`http://127.0.0.1:${port}/pid`)
-      assert.equal(res.status, 200)
-      const body: unknown = await res.json()
-      const pid = typeof body === "object" && body !== null ? Reflect.get(body, "pid") : undefined
-      assert.ok(typeof pid === "number" && before.includes(pid))
+      const before = pidsOf(ready)
+      assert.equal(before.length, 2)
+      for (let i = 0; i < 6; i++) {
+        const res = await fetch(`http://127.0.0.1:${port}/pid`)
+        assert.equal(res.status, 200)
+        const body: unknown = await res.json()
+        const pid = typeof body === "object" && body !== null ? Reflect.get(body, "pid") : undefined
+        assert.ok(typeof pid === "number" && before.includes(pid))
+      }
+
+      run.child.kill("SIGUSR2")
+      const restarted = await run.nth("restarted")
+      const after = pidsOf(restarted)
+      assert.equal(after.length, 2)
+      for (const oldPid of before) assert.ok(!after.includes(oldPid))
+
+      const resAfter = await fetch(`http://127.0.0.1:${port}/pid`)
+      assert.equal(resAfter.status, 200)
+    } finally {
+      run.child.kill("SIGTERM")
+      await run.exited
     }
-
-    run.child.kill("SIGUSR2")
-    const restarted = await run.nth("restarted")
-    const after = pidsOf(restarted)
-    assert.equal(after.length, 2)
-    for (const oldPid of before) assert.ok(!after.includes(oldPid))
-
-    const resAfter = await fetch(`http://127.0.0.1:${port}/pid`)
-    assert.equal(resAfter.status, 200)
-  } finally {
-    run.child.kill("SIGTERM")
-    await run.exited
-  }
-})
+  },
+)

@@ -39,6 +39,9 @@ pub enum WriteResult {
 
 /// Callback hooks invoked synchronously on Node's main V8/libuv thread.
 pub trait UvCallbacks {
+    /// The connection's TLS handshake chose HTTP/2. Called ahead of `on_data`, possibly more than
+    /// once, so that a bad preface is answered as HTTP/2 and not parsed as HTTP/1.
+    fn on_h2_negotiated(&mut self, _conn_id: u32) {}
     fn on_data(&mut self, conn_id: u32, read_buf: &[u8], write_buf: &mut Vec<u8>) -> ConnAction;
     fn on_turn_end(&mut self);
     fn has_pending_requests(&self, conn_id: u32) -> bool;
@@ -1066,6 +1069,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
     let mut scratch;
     let now;
     let mut fire_writable = false;
+    let mut negotiated_h2 = false;
     let mut dispatch_state: Option<(
         Option<Box<dyn UvCallbacks>>,
         Vec<u8>,
@@ -1217,6 +1221,7 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
         if !remove && (direct_len > 0 || has_buf_plaintext) {
             if let Some(c) = st.conns.get_mut(conn_id) {
                 c.core.dispatching = true;
+                negotiated_h2 = c.core.negotiated_h2();
                 let taken = if direct_len > 0 {
                     Vec::new()
                 } else {
@@ -1272,6 +1277,9 @@ unsafe extern "C" fn on_client_event(handle: *mut c_void, status: c_int, events:
             } else {
                 &read_buf
             };
+            if negotiated_h2 {
+                handler.on_h2_negotiated(conn_id);
+            }
             handler.on_data(conn_id, input_slice, &mut cleartext_write)
         } else {
             ConnAction::CloseNow

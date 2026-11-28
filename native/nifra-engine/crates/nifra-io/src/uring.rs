@@ -889,6 +889,7 @@ unsafe fn drive_uring_conn(
     let mut has_buf_plaintext = false;
     let mut scratch;
     let mut fire_writable = false;
+    let mut negotiated_h2 = false;
     let mut dispatch_state: Option<(
         Option<Box<dyn UvCallbacks>>,
         Vec<u8>,
@@ -1033,6 +1034,7 @@ unsafe fn drive_uring_conn(
         if !remove && (direct_len > 0 || has_buf_plaintext) {
             if let Some(c) = st.conns.get_mut(conn_id) {
                 c.core.dispatching = true;
+                negotiated_h2 = c.core.negotiated_h2();
                 let taken = if direct_len > 0 {
                     Vec::new()
                 } else {
@@ -1084,6 +1086,9 @@ unsafe fn drive_uring_conn(
             } else {
                 &read_buf
             };
+            if negotiated_h2 {
+                handler.on_h2_negotiated(conn_id);
+            }
             handler.on_data(conn_id, input_slice, &mut cleartext_write)
         } else {
             ConnAction::CloseNow

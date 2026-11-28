@@ -17,6 +17,9 @@ fn contain<R>(fallback: R, run: impl FnOnce() -> R) -> R {
 
 // Every method is forwarded: a missed one would silently use the trait's default.
 impl UvCallbacks for Contained {
+    fn on_h2_negotiated(&mut self, conn_id: u32) {
+        contain((), || self.0.on_h2_negotiated(conn_id));
+    }
     fn on_data(&mut self, conn_id: u32, read_buf: &[u8], write_buf: &mut Vec<u8>) -> ConnAction {
         contain(ConnAction::CloseNow, || {
             self.0.on_data(conn_id, read_buf, write_buf)
