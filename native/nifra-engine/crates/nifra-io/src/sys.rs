@@ -1215,15 +1215,16 @@ pub(crate) fn collect_timeouts<'a>(
             idle.push(id);
         }
         if c.partial_since.is_some_and(|at| past(at, request_limit))
-            || (request_limit.is_some()
-                && callbacks
-                    .as_deref_mut()
-                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply)))
+            || callbacks
+                .as_deref_mut()
+                .is_some_and(|cb| cb.expire_requests(id, now, &mut reply))
         {
             overdue.push(id);
             reply.clear();
         } else if !reply.is_empty() {
             replies.push((id, std::mem::take(&mut reply)));
+        } else if c.queued_bytes() == 0 && callbacks.as_deref().is_some_and(|cb| cb.finished(id)) {
+            overdue.push(id);
         }
         if c.tls.as_ref().is_some_and(|tls| tls.is_handshaking()) && past(c.accepted_at, head_limit)
         {

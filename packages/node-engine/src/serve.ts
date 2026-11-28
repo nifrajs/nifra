@@ -40,6 +40,7 @@ import {
   type EngineServer,
   type EngineSocket,
   type FetchHandler,
+  type Http2Options,
   isCap,
   mayServeSockets,
   type ProbeResult,
@@ -197,6 +198,7 @@ interface RustUvServer {
   getHeader(reqId: number, name: string): string | null
   getHeaders(reqId: number): string[]
   getTrailers(reqId: number): string[]
+  setResponseTrailers(reqId: number, flatTrailers: string[]): boolean
   getBody(reqId: number): Buffer | null
   getRemoteAddress(reqId: number): string | null
   setStaticRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
@@ -265,6 +267,13 @@ interface RustAddon {
       readonly wsDeflate?: RustWsDeflateOptions | undefined
       readonly http2?: boolean | undefined
       readonly http2MaxConcurrentStreams?: number | undefined
+      readonly http2InitialWindowSize?: number | undefined
+      readonly http2ConnectionWindowSize?: number | undefined
+      readonly http2MaxFrameSize?: number | undefined
+      readonly http2HeaderTableSize?: number | undefined
+      readonly http2MaxSendBuffer?: number | undefined
+      readonly http2PingIntervalMs?: number | undefined
+      readonly http2PingTimeoutMs?: number | undefined
       readonly reusePort?: boolean | undefined
       readonly tls?: RustTlsOptions | undefined
     },
@@ -582,6 +591,29 @@ function optionalNonNegMs(name: string, value: number | undefined): number | und
   return Math.min(Math.round(value), MAX_NATIVE_LENGTH)
 }
 
+function toRustHttp2(options: Http2Options) {
+  const bounded = (name: keyof Http2Options, min: number, max: number): number | undefined => {
+    const value = options[name]
+    if (value === undefined) return undefined
+    if (!(Number.isInteger(value) && value >= min && value <= max)) {
+      throw new TypeError(
+        `@nifrajs/node-engine: \`http2.${name}\` must be an integer from ${min} to ${max}`,
+      )
+    }
+    return value
+  }
+  return {
+    http2MaxConcurrentStreams: options.maxConcurrentStreams,
+    http2InitialWindowSize: bounded("initialWindowSize", 1, 0x7fff_ffff),
+    http2ConnectionWindowSize: bounded("connectionWindowSize", 65_535, 0x7fff_ffff),
+    http2MaxFrameSize: bounded("maxFrameSize", 16_384, 16_777_215),
+    http2HeaderTableSize: bounded("headerTableSize", 0, 65_536),
+    http2MaxSendBuffer: bounded("maxSendBuffer", 1, MAX_NATIVE_LENGTH),
+    http2PingIntervalMs: bounded("pingIntervalMs", 0, MAX_NATIVE_LENGTH),
+    http2PingTimeoutMs: bounded("pingTimeoutMs", 1, MAX_NATIVE_LENGTH),
+  }
+}
+
 let cachedAddon: RustAddon | undefined
 let cachedAddonKey: string | undefined
 
@@ -850,6 +882,23 @@ function terminateReqBodyStream(state: ReqBodyStreamState, err: Error): void {
   for (const wake of waiters) wake(true, err)
 }
 
+const SOURCE = Symbol("nifra.engine.source")
+type SourcedRequest = Request & { [SOURCE]?: RustBatchSource }
+
+/**
+ * HTTP/2 only: set the fields the response to `request` ends with, replacing any set before. Call it
+ * before the body ends, with the `Request` the engine made (`c.req` in a nifra route), not a copy.
+ * `false`, and nothing is set, on HTTP/1.1, once the response is complete, or when a name or value
+ * cannot be a trailer.
+ */
+export function setResponseTrailers(
+  request: Request,
+  trailers: Readonly<Record<string, string>>,
+): boolean {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the tag is optional, so an untagged Request reads as undefined
+  return (request as SourcedRequest)[SOURCE]?.setTrailers(trailers) ?? false
+}
+
 /** Request view backed by the zero-copy `inData` slice with lazy FFI fallback for headers/bodies. */
 class RustBatchSource {
   readonly method: string
@@ -1055,6 +1104,11 @@ class RustBatchSource {
       this.trailersValue = out
     }
     return this.trailersValue
+  }
+
+  setTrailers(trailers: Readonly<Record<string, string>>): boolean {
+    if (this.id < 0 || !this.isH2) return false
+    return this.server.setResponseTrailers(this.id, Object.entries(trailers).flat())
   }
 
   private toBytes(): Uint8Array | null {
@@ -1267,6 +1321,8 @@ class RustBatchSource {
         }
       }
       this.requestValue = new Request(this.url, init)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an HTTP/2 request is tagged with its own source
+      if (this.isH2) (this.requestValue as SourcedRequest)[SOURCE] = this
     }
     return this.requestValue
   }
@@ -2394,9 +2450,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
 
   let currentTls = options.tls
   const http2Enabled = options.http2 !== undefined && options.http2 !== false
-  const http2MaxStreams =
+  const rustHttp2 =
     typeof options.http2 === "object" && options.http2 !== null
-      ? options.http2.maxConcurrentStreams
+      ? toRustHttp2(options.http2)
       : undefined
   const idleTimeoutMs = optionalNonNegMs("idleTimeoutMs", options.engine?.idleTimeoutMs)
   const responseTimeoutMs = optionalNonNegMs("responseTimeoutMs", options.engine?.responseTimeoutMs)
@@ -2472,7 +2528,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       listenerFd,
       wsDeflate,
       http2: http2Enabled ? true : undefined,
-      http2MaxConcurrentStreams: http2MaxStreams,
+      ...rustHttp2,
       tls: rustTls,
     })
   } catch (cause) {

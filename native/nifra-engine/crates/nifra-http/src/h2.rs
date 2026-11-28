@@ -1,9 +1,12 @@
 //! Sans-I/O RFC 9113 HTTP/2 + RFC 7541 HPACK server engine with full Huffman decoding,
 //! multiplexed streams, flow control, graceful GOAWAY, and rapid-reset (CVE-2023-44487) guards.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::hpack_encoder::{encode_stateless, HpackEncoder};
 use crate::{is_valid_header_name, is_valid_host, method_to_idx};
 
 pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -59,6 +62,12 @@ const MAX_ALLOWED_FRAME_SIZE: usize = 16_777_215;
 const INITIAL_WINDOW_SIZE: i32 = 65_535;
 const CONN_RECV_WINDOW_TARGET: u32 = 4 * 1024 * 1024;
 const STREAM_RECV_WINDOW_TARGET: u32 = 1024 * 1024;
+const MAX_STREAM_ID: u32 = 0x7FFF_FFFF;
+/// Opaque `PING` payloads: which of the server's pings an acknowledgement answers.
+const PING_KEEPALIVE: &[u8; 8] = b"nifra-ka";
+const PING_SHUTDOWN: &[u8; 8] = b"nifra-sd";
+/// How long a shutdown waits for its `PING` to come back before the final `GOAWAY`.
+const SHUTDOWN_PING_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy)]
 pub struct H2Config {
@@ -75,6 +84,20 @@ pub struct H2Config {
     pub enable_connect_protocol: bool,
     /// Emit `H2Event::Request` on head arrival and stream body via `H2Event::StreamData`.
     pub stream_request_bodies: bool,
+    /// Advertised `SETTINGS_INITIAL_WINDOW_SIZE`: the receive window of each stream.
+    pub initial_window_size: u32,
+    /// The connection's receive window; no smaller than the 65,535 it starts with.
+    pub connection_window_size: u32,
+    /// Largest frame the peer may send (16,384 to 16,777,215).
+    pub max_frame_size: usize,
+    /// HPACK table for each direction.
+    pub header_table_size: usize,
+    /// Response bytes one connection may hold back for the peer's flow-control windows.
+    pub max_send_buffer: usize,
+    /// Probe a quiet connection with `PING` this often.
+    pub ping_interval: Option<Duration>,
+    /// Close the connection when a probe is not acknowledged in time.
+    pub ping_timeout: Duration,
 }
 
 impl Default for H2Config {
@@ -91,9 +114,20 @@ impl Default for H2Config {
             request_timeout: None,
             enable_connect_protocol: false,
             stream_request_bodies: false,
+            initial_window_size: STREAM_RECV_WINDOW_TARGET,
+            connection_window_size: CONN_RECV_WINDOW_TARGET,
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            header_table_size: HPACK_TABLE_LIMIT,
+            max_send_buffer: CONN_BACKLOG_LIMIT,
+            ping_interval: None,
+            ping_timeout: Duration::from_secs(20),
         }
     }
 }
+
+/// A field name or value, shared with the HPACK table so that a repeated field is not copied. The
+/// text is the wire bytes read as latin-1, one `char` per byte.
+pub type HeaderStr = Arc<str>;
 
 #[derive(Debug, Clone)]
 pub struct H2Request {
@@ -108,7 +142,7 @@ pub struct H2Request {
     pub over_max_body: bool,
     pub is_ws_upgrade: bool,
     pub streaming_body: bool,
-    pub headers: Vec<(String, String)>,
+    pub headers: Vec<(HeaderStr, HeaderStr)>,
     pub trailers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
@@ -143,7 +177,7 @@ struct InStream {
     path: String,
     query: String,
     authority: Option<String>,
-    headers: Vec<(String, String)>,
+    headers: Vec<(HeaderStr, HeaderStr)>,
     trailers: Vec<(String, String)>,
     is_json_ct: bool,
     body: Vec<u8>,
@@ -163,6 +197,8 @@ struct OutStream {
     sent: usize,
     end: bool,
     blocked: bool,
+    /// Encoded trailer block that closes the stream once `buf` has gone.
+    trailers: Option<Vec<u8>>,
 }
 
 /// RFC 3986 section 3.1.
@@ -197,6 +233,7 @@ impl OutStream {
             sent: 0,
             end: false,
             blocked: false,
+            trailers: None,
         }
     }
 
@@ -251,6 +288,13 @@ pub struct H2Conn {
     out_progress: Option<Instant>,
     /// Per-stream held `WINDOW_UPDATE` credit while application-level stream recv is paused.
     paused_recv_streams: HashMap<u32, u32>,
+    encoder: HpackEncoder,
+    /// Encoded trailer blocks for responses whose body has not ended yet.
+    response_trailers: HashMap<u32, Vec<u8>>,
+    shutdown_since: Option<Instant>,
+    ping_sent: Option<Instant>,
+    /// Last time the peer sent anything; kept only while keepalive is on.
+    last_heard: Option<Instant>,
 }
 
 impl H2Conn {
@@ -269,7 +313,13 @@ impl H2Conn {
             continuation: None,
             partial_head: None,
             draining: Vec::new(),
-            hpack: HpackDecoder::new(4096, cfg.max_header_list_size),
+            hpack: HpackDecoder::new(4096, cfg.max_header_list_size)
+                .with_table_limit(cfg.header_table_size.max(HPACK_TABLE_LIMIT)),
+            encoder: HpackEncoder::new(cfg.header_table_size),
+            response_trailers: HashMap::new(),
+            shutdown_since: None,
+            ping_sent: None,
+            last_heard: None,
             rst_count: 0,
             rst_window_start: None,
             clock: Instant::now,
@@ -466,6 +516,34 @@ impl H2Conn {
         }
     }
 
+    fn encode_response(
+        &mut self,
+        status: u16,
+        headers: &[(&str, &str)],
+        content_length: Option<&str>,
+        out: &mut Vec<u8>,
+    ) {
+        self.encoder.begin(out);
+        let mut digits = itoa::Buffer::new();
+        self.encoder
+            .field(":status", digits.format(status).as_bytes(), out);
+        for &(k, v) in headers {
+            let lower = k.to_ascii_lowercase();
+            if matches!(
+                lower.as_str(),
+                "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "proxy-connection"
+            ) || lower == "date"
+            {
+                continue;
+            }
+            self.encoder.field(&lower, v.as_bytes(), out);
+        }
+        self.encoder.field("date", &crate::date::now(), out);
+        if let Some(cl) = content_length {
+            self.encoder.field("content-length", cl.as_bytes(), out);
+        }
+    }
+
     fn queued_response_bytes(&self) -> usize {
         self.out_streams.values().map(OutStream::backlog).sum()
     }
@@ -481,27 +559,32 @@ impl H2Conn {
             return;
         }
         self.server_settings_sent = true;
-        // SETTINGS: MAX_CONCURRENT_STREAMS (3), INITIAL_WINDOW_SIZE (4), MAX_HEADER_LIST_SIZE (6)
-        // plus optional RFC 8441 ENABLE_CONNECT_PROTOCOL (8).
-        let mut payload = Vec::with_capacity(if self.cfg.enable_connect_protocol {
-            24
-        } else {
-            18
-        });
-        payload.extend_from_slice(&3u16.to_be_bytes());
-        payload.extend_from_slice(&self.cfg.max_concurrent_streams.to_be_bytes());
-        payload.extend_from_slice(&4u16.to_be_bytes());
-        payload.extend_from_slice(&STREAM_RECV_WINDOW_TARGET.to_be_bytes());
-        payload.extend_from_slice(&6u16.to_be_bytes());
-        payload.extend_from_slice(&(self.cfg.max_header_list_size as u32).to_be_bytes());
+        // MAX_CONCURRENT_STREAMS (3), INITIAL_WINDOW_SIZE (4), MAX_HEADER_LIST_SIZE (6), and the
+        // rest only when they differ from the protocol's defaults.
+        let mut payload = Vec::with_capacity(36);
+        let mut setting = |id: u16, value: u32| {
+            payload.extend_from_slice(&id.to_be_bytes());
+            payload.extend_from_slice(&value.to_be_bytes());
+        };
+        setting(3, self.cfg.max_concurrent_streams);
+        setting(4, self.cfg.initial_window_size);
+        setting(6, self.cfg.max_header_list_size as u32);
+        if self.cfg.header_table_size != HPACK_TABLE_LIMIT {
+            setting(1, self.cfg.header_table_size as u32);
+        }
+        if self.cfg.max_frame_size != DEFAULT_MAX_FRAME_SIZE {
+            setting(5, self.cfg.max_frame_size as u32);
+        }
         if self.cfg.enable_connect_protocol {
-            payload.extend_from_slice(&8u16.to_be_bytes());
-            payload.extend_from_slice(&1u32.to_be_bytes());
+            setting(8, 1);
         }
         write_frame(FRAME_SETTINGS, 0, 0, &payload, out);
 
-        // Increase connection-level receive window so large POSTs aren't throttled at 64 KiB.
-        let delta = CONN_RECV_WINDOW_TARGET.saturating_sub(INITIAL_WINDOW_SIZE as u32);
+        // The connection window only grows by WINDOW_UPDATE; large uploads need more than 64 KiB.
+        let delta = self
+            .cfg
+            .connection_window_size
+            .saturating_sub(INITIAL_WINDOW_SIZE as u32);
         if delta > 0 {
             write_frame(FRAME_WINDOW_UPDATE, 0, 0, &delta.to_be_bytes(), out);
         }
@@ -537,6 +620,9 @@ impl H2Conn {
             self.ensure_server_preface(write_buf);
         }
 
+        if self.cfg.ping_interval.is_some() && pos < buf.len() {
+            self.last_heard = Some((self.clock)());
+        }
         let first_frame = pos;
         while pos + 9 <= buf.len() {
             if self.rst_count > self.cfg.max_rst_streams {
@@ -554,7 +640,7 @@ impl H2Conn {
                 buf[pos + 8],
             ]);
 
-            if len > DEFAULT_MAX_FRAME_SIZE {
+            if len > self.cfg.max_frame_size {
                 self.send_goaway_internal(ERR_FRAME_SIZE_ERROR, write_buf);
                 res.consumed = buf.len();
                 res.close_after_write = true;
@@ -602,6 +688,10 @@ impl H2Conn {
                             res.close_after_write = true;
                             return res;
                         }
+                        // Blocks sent before this may still use the default table.
+                        if self.server_settings_sent {
+                            self.hpack.limit_table(self.cfg.header_table_size);
+                        }
                     } else {
                         if payload.len() % 6 != 0 {
                             self.send_goaway_internal(ERR_FRAME_SIZE_ERROR, write_buf);
@@ -614,9 +704,6 @@ impl H2Conn {
                             let id = u16::from_be_bytes([chunk[0], chunk[1]]);
                             let val = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
                             match id {
-                                // HEADER_TABLE_SIZE (1) sizes the peer's view of the table the server
-                                // encodes with, and the server encodes without indexing; the table this
-                                // side decodes with is the one it advertised (the 4096 default).
                                 4 => {
                                     // INITIAL_WINDOW_SIZE: moves every open stream's send window.
                                     if i64::from(val) > MAX_WINDOW {
@@ -661,6 +748,8 @@ impl H2Conn {
                                     }
                                     self.peer_max_frame_size = val as usize;
                                 }
+                                // HEADER_TABLE_SIZE: how much the peer's decoder will hold.
+                                1 => self.encoder.set_peer_max(val as usize),
                                 // ENABLE_PUSH (RFC 9113 §6.5.2).
                                 2 if val > 1 => {
                                     self.send_goaway_internal(ERR_PROTOCOL_ERROR, write_buf);
@@ -693,6 +782,16 @@ impl H2Conn {
                     }
                     if (flags & FLAG_ACK) == 0 {
                         write_frame(FRAME_PING, FLAG_ACK, 0, payload, write_buf);
+                    } else if payload == PING_KEEPALIVE {
+                        self.ping_sent = None;
+                    } else if payload == PING_SHUTDOWN && self.shutdown_since.is_some() {
+                        // Whatever the peer sent before seeing the first GOAWAY has arrived.
+                        self.send_goaway_internal(ERR_NO_ERROR, write_buf);
+                        if self.is_idle_connection() {
+                            res.consumed = pos;
+                            res.close_after_write = true;
+                            return res;
+                        }
                     }
                 }
                 FRAME_WINDOW_UPDATE => {
@@ -780,6 +879,7 @@ impl H2Conn {
                     self.active_streams.remove(&stream_id);
                     self.open_response_streams.remove(&stream_id);
                     self.out_streams.remove(&stream_id);
+                    self.response_trailers.remove(&stream_id);
                     self.early_credit.remove(&stream_id);
                     self.paused_recv_streams.remove(&stream_id);
                     res.events.push(H2Event::StreamReset(stream_id));
@@ -1115,26 +1215,6 @@ impl H2Conn {
             return Ok(());
         }
         self.note_opened(stream_id);
-        // The table is now in step with the peer's whatever the bytes were. A target or name that is
-        // not UTF-8 fails this request, not the connection and its streams.
-        let decoded: Option<Vec<(String, String)>> = decoded
-            .into_iter()
-            .map(|(name, value)| {
-                let name = String::from_utf8(name).ok()?;
-                let value = if name.starts_with(':') {
-                    String::from_utf8(value).ok()?
-                } else {
-                    crate::latin1(&value)
-                };
-                Some((name, value))
-            })
-            .collect();
-        let Some(decoded) = decoded else {
-            self.last_stream_id = self.last_stream_id.max(stream_id);
-            self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
-            return Ok(());
-        };
-
         // Check if this is trailing headers on an already-open stream.
         if let Some(st) = self.active_streams.get_mut(&stream_id) {
             if st.headers_done && end_stream && !st.is_ws_connect {
@@ -1165,7 +1245,7 @@ impl H2Conn {
                             if !decoded.is_empty() {
                                 res.events.push(H2Event::StreamTrailers {
                                     stream_id,
-                                    trailers: decoded,
+                                    trailers: owned_fields(&decoded),
                                 });
                             }
                             res.events.push(H2Event::StreamData {
@@ -1177,7 +1257,7 @@ impl H2Conn {
                     } else if st.declared_cl.is_some_and(|cl| cl != st.body.len() as u64) {
                         self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     } else {
-                        st.trailers = decoded;
+                        st.trailers = owned_fields(&decoded);
                         self.finalize_request(stream_id, st, write_buf, res);
                     }
                 }
@@ -1235,11 +1315,16 @@ impl H2Conn {
                 return Ok(());
             }
             if name.starts_with(':') {
+                // A pseudo-header's value is UTF-8; a regular field's stays latin-1.
+                let Some(val) = utf8_of(&val) else {
+                    self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
+                    return Ok(());
+                };
                 if seen_regular {
                     self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     return Ok(());
                 }
-                match name.as_str() {
+                match &*name {
                     ":method" => {
                         if method.is_some() || !is_valid_header_name(&val) {
                             self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
@@ -1293,23 +1378,23 @@ impl H2Conn {
                 self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                 return Ok(());
             }
-            if name == "host" {
+            if &*name == "host" {
                 if has_host {
                     self.fault(stream_id, ERR_PROTOCOL_ERROR, write_buf);
                     return Ok(());
                 }
                 has_host = true;
                 if authority.is_none() {
-                    authority = Some(val.clone());
+                    authority = Some(val.to_string());
                 }
-            } else if name == "content-type" {
+            } else if &*name == "content-type" {
                 // First occurrence wins, matching the HTTP/1 parser.
                 if !seen_content_type {
                     seen_content_type = true;
-                    let essence = val.split_once(';').map_or(val.as_str(), |(e, _)| e).trim();
+                    let essence = val.split_once(';').map_or(&*val, |(e, _)| e).trim();
                     is_json_ct = essence.eq_ignore_ascii_case("application/json");
                 }
-            } else if name == "content-length" {
+            } else if &*name == "content-length" {
                 let digits = val.trim();
                 let parsed = if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                     None
@@ -1360,7 +1445,7 @@ impl H2Conn {
         }
         if !has_host {
             if let Some(ref auth) = authority {
-                headers.push(("host".to_owned(), auth.clone()));
+                headers.push(("host".into(), auth.as_str().into()));
             }
         }
 
@@ -1421,7 +1506,7 @@ impl H2Conn {
             let host_valid = st
                 .headers
                 .iter()
-                .find(|(name, _)| name == "host")
+                .find(|(name, _)| &**name == "host")
                 .is_some_and(|(_, value)| is_valid_host(value));
             let method_idx = if is_ws_connect {
                 0
@@ -1475,7 +1560,7 @@ impl H2Conn {
         let host_valid = st
             .headers
             .iter()
-            .find(|(name, _)| name == "host")
+            .find(|(name, _)| &**name == "host")
             .is_some_and(|(_, value)| is_valid_host(value));
         let method_idx = method_to_idx(&st.method);
         res.events.push(H2Event::Request(H2Request {
@@ -1517,7 +1602,7 @@ impl H2Conn {
             body.unwrap_or(&[])
         };
         // Checked before the bytes are added, so one response of any size still goes out.
-        if !body_bytes.is_empty() && self.queued_response_bytes() >= CONN_BACKLOG_LIMIT {
+        if !body_bytes.is_empty() && self.queued_response_bytes() >= self.cfg.max_send_buffer {
             self.reset_stream(stream_id, ERR_ENHANCE_YOUR_CALM, out);
             return;
         }
@@ -1534,11 +1619,15 @@ impl H2Conn {
         } else {
             None
         };
-        encode_response_headers(status, headers, cl_str.as_deref(), &mut block);
-        let end_on_headers = body_bytes.is_empty();
+        self.encode_response(status, headers, cl_str.as_deref(), &mut block);
+        if bodyless {
+            self.response_trailers.remove(&stream_id);
+        }
+        let has_trailers = self.response_trailers.contains_key(&stream_id);
+        let end_on_headers = body_bytes.is_empty() && !has_trailers;
         let hflags = FLAG_END_HEADERS | if end_on_headers { FLAG_END_STREAM } else { 0 };
         write_header_frames(stream_id, hflags, &block, self.peer_max_frame_size, out);
-        if body_bytes.is_empty() {
+        if end_on_headers {
             self.early_credit.remove(&stream_id);
         } else {
             self.queue_data(stream_id, body_bytes, true, out);
@@ -1556,7 +1645,7 @@ impl H2Conn {
     ) {
         let mut block = Vec::with_capacity(128);
         let cl_str = content_length.map(|n| n.to_string());
-        encode_response_headers(status, headers, cl_str.as_deref(), &mut block);
+        self.encode_response(status, headers, cl_str.as_deref(), &mut block);
         write_header_frames(
             stream_id,
             FLAG_END_HEADERS,
@@ -1589,7 +1678,7 @@ impl H2Conn {
             self.open_response_streams.remove(&stream_id);
         }
         self.queue_data(stream_id, chunk, end_stream, out);
-        let crowded = self.queued_response_bytes() > CONN_BACKLOG_LIMIT;
+        let crowded = self.queued_response_bytes() > self.cfg.max_send_buffer;
         match self.out_streams.get_mut(&stream_id) {
             Some(os) if os.backlog() > STREAM_BACKLOG_LIMIT || (crowded && os.backlog() > 0) => {
                 os.blocked = true;
@@ -1612,8 +1701,16 @@ impl H2Conn {
                 .max(0) as usize;
             if end_stream && data.len() <= room {
                 self.early_credit.remove(&stream_id);
-                write_data_frames(stream_id, data, true, self.peer_max_frame_size, out);
-                self.conn_send_window -= data.len() as i64;
+                let trailers = self.response_trailers.remove(&stream_id);
+                if !data.is_empty() || trailers.is_none() {
+                    let end = trailers.is_none();
+                    write_data_frames(stream_id, data, end, self.peer_max_frame_size, out);
+                    self.conn_send_window -= data.len() as i64;
+                }
+                if let Some(block) = trailers {
+                    let max_frame = self.peer_max_frame_size;
+                    write_trailers(&mut self.encoder, stream_id, &block, max_frame, out);
+                }
                 return;
             }
             let os = self.new_out_stream(stream_id);
@@ -1625,6 +1722,9 @@ impl H2Conn {
         if let Some(os) = self.out_streams.get_mut(&stream_id) {
             os.buf.extend_from_slice(data);
             os.end |= end_stream;
+            if end_stream {
+                os.trailers = self.response_trailers.remove(&stream_id);
+            }
         }
         self.flush_stream(stream_id, out, &mut Vec::new());
     }
@@ -1651,7 +1751,7 @@ impl H2Conn {
                 break;
             }
             let n = os.backlog().min(room).min(max_frame);
-            let last = os.end && n == os.backlog();
+            let last = os.end && n == os.backlog() && os.trailers.is_none();
             write_frame(
                 FRAME_DATA,
                 if last { FLAG_END_STREAM } else { 0 },
@@ -1666,7 +1766,12 @@ impl H2Conn {
         }
         if os.backlog() == 0 {
             if os.end && !finished {
-                write_frame(FRAME_DATA, FLAG_END_STREAM, stream_id, &[], out);
+                match os.trailers.take() {
+                    Some(block) => {
+                        write_trailers(&mut self.encoder, stream_id, &block, max_frame, out);
+                    }
+                    None => write_frame(FRAME_DATA, FLAG_END_STREAM, stream_id, &[], out),
+                }
                 finished = true;
             }
             os.buf.clear();
@@ -1708,6 +1813,7 @@ impl H2Conn {
         }
         self.open_response_streams.remove(&stream_id);
         self.out_streams.remove(&stream_id);
+        self.response_trailers.remove(&stream_id);
         self.early_credit.remove(&stream_id);
         self.paused_recv_streams.remove(&stream_id);
         write_rst_stream(stream_id, error_code, out);
@@ -1724,7 +1830,7 @@ impl H2Conn {
             return false;
         }
         let mut block = Vec::with_capacity(64);
-        encode_response_headers(200, headers, None, &mut block);
+        self.encode_response(200, headers, None, &mut block);
         write_header_frames(
             stream_id,
             FLAG_END_HEADERS,
@@ -1750,7 +1856,84 @@ impl H2Conn {
         }
     }
 
-    /// Send `GOAWAY(NO_ERROR)` for graceful shutdown.
+    /// Fields to send after the response body on `stream_id`, set before the body ends. Returns
+    /// `false` when the stream takes no response, or a field cannot be a trailer.
+    pub fn set_response_trailers(&mut self, stream_id: u32, trailers: &[(&str, &str)]) -> bool {
+        if !self.open_response_streams.contains_key(&stream_id) {
+            return false;
+        }
+        let mut block = Vec::new();
+        for &(name, value) in trailers {
+            let name = name.to_ascii_lowercase();
+            if invalid_field(&name, value) || matches!(&*name, "content-length" | "host" | "te") {
+                return false;
+            }
+            encode_stateless(&name, value.as_bytes(), &mut block);
+        }
+        if block.is_empty() {
+            self.response_trailers.remove(&stream_id);
+        } else {
+            self.response_trailers.insert(stream_id, block);
+        }
+        true
+    }
+
+    fn is_idle_connection(&self) -> bool {
+        self.active_streams.is_empty()
+            && self.active_response_streams() == 0
+            && self.out_streams.is_empty()
+    }
+
+    /// Start a graceful shutdown (RFC 9113 section 6.8): a first `GOAWAY` that refuses nothing, and a
+    /// `PING` whose acknowledgement brings the final one. Requests crossing it are still served.
+    pub fn begin_shutdown(&mut self, out: &mut Vec<u8>) {
+        if self.goaway_sent || self.shutdown_since.is_some() {
+            return;
+        }
+        self.ensure_server_preface(out);
+        self.shutdown_since = Some((self.clock)());
+        let mut payload = [0u8; 8];
+        payload[..4].copy_from_slice(&MAX_STREAM_ID.to_be_bytes());
+        write_frame(FRAME_GOAWAY, 0, 0, &payload, out);
+        write_frame(FRAME_PING, 0, 0, PING_SHUTDOWN, out);
+    }
+
+    /// A graceful shutdown still waiting to send its final `GOAWAY`.
+    pub fn shutdown_pending(&self) -> bool {
+        self.shutdown_since.is_some() && !self.goaway_sent
+    }
+
+    /// A graceful shutdown with nothing left to send: close once the output has left.
+    pub fn shutdown_complete(&self) -> bool {
+        self.shutdown_since.is_some() && self.goaway_sent && self.is_idle_connection()
+    }
+
+    /// Timers of the connection itself. Returns `true` when it must close now, unsent output or not.
+    pub fn tick(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
+        if let Some(since) = self.shutdown_since {
+            if !self.goaway_sent {
+                if now.saturating_duration_since(since) >= SHUTDOWN_PING_WAIT {
+                    self.send_goaway_internal(ERR_NO_ERROR, out);
+                }
+                return false;
+            }
+        }
+        let Some(interval) = self.cfg.ping_interval else {
+            return false;
+        };
+        if let Some(sent) = self.ping_sent {
+            return now.saturating_duration_since(sent) >= self.cfg.ping_timeout;
+        }
+        let heard = *self.last_heard.get_or_insert(now);
+        if now.saturating_duration_since(heard) >= interval {
+            self.ensure_server_preface(out);
+            write_frame(FRAME_PING, 0, 0, PING_KEEPALIVE, out);
+            self.ping_sent = Some(now);
+        }
+        false
+    }
+
+    /// Send `GOAWAY(NO_ERROR)` at once.
     pub fn send_goaway(&mut self, error_code: u32, out: &mut Vec<u8>) {
         self.send_goaway_internal(error_code, out);
     }
@@ -1789,6 +1972,22 @@ fn write_rst_stream(stream_id: u32, error_code: u32, out: &mut Vec<u8>) {
         &error_code.to_be_bytes(),
         out,
     );
+}
+
+/// A trailer block is encoded when it is set but sent later, so a table size update owed to the peer
+/// is added here (RFC 7541 section 4.2).
+fn write_trailers(
+    encoder: &mut HpackEncoder,
+    stream_id: u32,
+    fields: &[u8],
+    max_frame: usize,
+    out: &mut Vec<u8>,
+) {
+    let mut block = Vec::with_capacity(fields.len() + 8);
+    encoder.begin(&mut block);
+    block.extend_from_slice(fields);
+    let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+    write_header_frames(stream_id, flags, &block, max_frame, out);
 }
 
 fn write_header_frames(
@@ -1898,50 +2097,7 @@ fn strip_headers_padding_and_priority(payload: &[u8], flags: u8, stream_id: u32)
 // RFC 7541 HPACK Encoder & Decoder
 // ---------------------------------------------------------------------------
 
-fn encode_response_headers(
-    status: u16,
-    headers: &[(&str, &str)],
-    content_length: Option<&str>,
-    out: &mut Vec<u8>,
-) {
-    // :status pseudo-header
-    match status {
-        200 => out.push(0x88),
-        204 => out.push(0x89),
-        206 => out.push(0x8a),
-        304 => out.push(0x8b),
-        400 => out.push(0x8c),
-        404 => out.push(0x8d),
-        500 => out.push(0x8e),
-        _ => {
-            let mut num = itoa::Buffer::new();
-            let s = num.format(status);
-            // Literal without indexing, indexed name :status (8)
-            out.push(0x08);
-            encode_hpack_str(s.as_bytes(), out);
-        }
-    }
-
-    for &(k, v) in headers {
-        let lower = k.to_ascii_lowercase();
-        if matches!(
-            lower.as_str(),
-            "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "proxy-connection"
-        ) {
-            continue;
-        }
-        if lower == "date" {
-            continue;
-        }
-        encode_header_pair(&lower, v.as_bytes(), out);
-    }
-
-    encode_header_pair("date", &crate::date::now(), out);
-    if let Some(cl) = content_length {
-        encode_header_pair("content-length", cl.as_bytes(), out);
-    }
-}
-
+#[cfg(test)]
 fn encode_header_pair(name_lower: &str, value: &[u8], out: &mut Vec<u8>) {
     let static_idx = match name_lower {
         "cache-control" => Some(24u8),
@@ -1965,7 +2121,12 @@ fn encode_header_pair(name_lower: &str, value: &[u8], out: &mut Vec<u8>) {
     encode_hpack_str(value, out);
 }
 
-fn encode_hpack_int(mut value: usize, prefix_bits: u8, first_mask: u8, out: &mut Vec<u8>) {
+pub(crate) fn encode_hpack_int(
+    mut value: usize,
+    prefix_bits: u8,
+    first_mask: u8,
+    out: &mut Vec<u8>,
+) {
     let max_prefix = (1usize << prefix_bits) - 1;
     if value < max_prefix {
         out.push(first_mask | (value as u8));
@@ -1980,21 +2141,58 @@ fn encode_hpack_int(mut value: usize, prefix_bits: u8, first_mask: u8, out: &mut
     out.push(value as u8);
 }
 
+#[cfg(test)]
 fn encode_hpack_str(bytes: &[u8], out: &mut Vec<u8>) {
     encode_hpack_int(bytes.len(), 7, 0x00, out);
     out.extend_from_slice(bytes);
 }
 
-/// One decoded header as raw bytes: `(name, value)`.
-type HeaderBytes = (Vec<u8>, Vec<u8>);
+/// One decoded header: `(name, value)`.
+type Field = (HeaderStr, HeaderStr);
+
+fn header_str(bytes: &[u8]) -> HeaderStr {
+    match std::str::from_utf8(bytes) {
+        Ok(text) if text.is_ascii() => text.into(),
+        _ => crate::latin1(bytes).into(),
+    }
+}
+
+/// How many bytes `text` took on the wire, which is what HPACK sizes count.
+fn wire_len(text: &str) -> usize {
+    text.chars().count()
+}
+
+/// The UTF-8 reading of the bytes `text` holds as latin-1.
+fn utf8_of(text: &str) -> Option<String> {
+    if text.is_ascii() {
+        return Some(text.to_owned());
+    }
+    String::from_utf8(text.chars().map(|c| c as u8).collect()).ok()
+}
+
+fn owned_fields(fields: &[Field]) -> Vec<(String, String)> {
+    fields
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+thread_local! {
+    static STATIC_FIELDS: Vec<Field> = STATIC_TABLE
+        .iter()
+        .map(|&(name, value)| (name.into(), value.into()))
+        .collect();
+}
 
 struct HpackDecoder {
-    // Bytes, not text: a header value is only required to be bytes, and the table must stay in step
-    // with the peer's whatever they hold.
-    dynamic: VecDeque<(Vec<u8>, Vec<u8>)>,
+    // Latin-1 holds any bytes: a header value is only required to be bytes, and the table must stay
+    // in step with the peer's whatever they hold.
+    dynamic: VecDeque<Field>,
     dynamic_size: usize,
     max_dynamic_size: usize,
     max_header_list_size: usize,
+    /// Largest table size the peer's encoder may announce.
+    table_limit: usize,
 }
 
 impl HpackDecoder {
@@ -2004,6 +2202,20 @@ impl HpackDecoder {
             dynamic_size: 0,
             max_dynamic_size,
             max_header_list_size,
+            table_limit: HPACK_TABLE_LIMIT,
+        }
+    }
+
+    fn with_table_limit(mut self, limit: usize) -> Self {
+        self.table_limit = limit;
+        self
+    }
+
+    /// Lower both the table and what the peer may resize it to (RFC 7541 section 4.2).
+    fn limit_table(&mut self, limit: usize) {
+        self.table_limit = limit;
+        if self.max_dynamic_size > limit {
+            self.set_max_table_size(limit);
         }
     }
 
@@ -2015,7 +2227,9 @@ impl HpackDecoder {
     fn evict(&mut self) {
         while self.dynamic_size > self.max_dynamic_size {
             if let Some((k, v)) = self.dynamic.pop_back() {
-                self.dynamic_size = self.dynamic_size.saturating_sub(k.len() + v.len() + 32);
+                self.dynamic_size = self
+                    .dynamic_size
+                    .saturating_sub(wire_len(&k) + wire_len(&v) + 32);
             } else {
                 self.dynamic_size = 0;
                 break;
@@ -2023,8 +2237,8 @@ impl HpackDecoder {
         }
     }
 
-    fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) {
-        let entry_size = name.len() + value.len() + 32;
+    fn insert(&mut self, name: HeaderStr, value: HeaderStr) {
+        let entry_size = wire_len(&name) + wire_len(&value) + 32;
         if entry_size > self.max_dynamic_size {
             self.dynamic.clear();
             self.dynamic_size = 0;
@@ -2035,20 +2249,18 @@ impl HpackDecoder {
         self.evict();
     }
 
-    fn get(&self, index: usize) -> Result<(&[u8], &[u8]), ()> {
+    fn get(&self, index: usize) -> Result<Field, ()> {
         if index == 0 {
             return Err(());
         }
         if index <= STATIC_TABLE.len() {
-            let (k, v) = STATIC_TABLE[index - 1];
-            return Ok((k.as_bytes(), v.as_bytes()));
+            return Ok(STATIC_FIELDS.with(|fields| fields[index - 1].clone()));
         }
         let dyn_idx = index - STATIC_TABLE.len() - 1;
-        let (k, v) = self.dynamic.get(dyn_idx).ok_or(())?;
-        Ok((k.as_slice(), v.as_slice()))
+        self.dynamic.get(dyn_idx).cloned().ok_or(())
     }
 
-    fn decode(&mut self, buf: &[u8]) -> Result<Vec<HeaderBytes>, ()> {
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<Field>, ()> {
         let mut out = Vec::with_capacity(16);
         let mut total_size = 0usize;
         let mut pos = 0usize;
@@ -2060,11 +2272,11 @@ impl HpackDecoder {
                 let (idx, used) = decode_hpack_int(&buf[pos..], 7)?;
                 pos += used;
                 let (k, v) = self.get(idx)?;
-                total_size += k.len() + v.len() + 32;
+                total_size += wire_len(&k) + wire_len(&v) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
-                out.push((k.to_owned(), v.to_owned()));
+                out.push((k, v));
             } else if (b & 0x40) != 0 {
                 // Literal with Incremental Indexing (RFC 7541 §6.2.1)
                 let (idx, used) = decode_hpack_int(&buf[pos..], 6)?;
@@ -2072,13 +2284,14 @@ impl HpackDecoder {
                 let name = if idx == 0 {
                     let (s, u) = decode_hpack_str(&buf[pos..])?;
                     pos += u;
-                    s
+                    header_str(&s)
                 } else {
-                    self.get(idx)?.0.to_owned()
+                    self.get(idx)?.0
                 };
                 let (val, u) = decode_hpack_str(&buf[pos..])?;
+                let val = header_str(&val);
                 pos += u;
-                total_size += name.len() + val.len() + 32;
+                total_size += wire_len(&name) + wire_len(&val) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
@@ -2091,7 +2304,7 @@ impl HpackDecoder {
                 }
                 let (new_max, used) = decode_hpack_int(&buf[pos..], 5)?;
                 pos += used;
-                if new_max > HPACK_TABLE_LIMIT {
+                if new_max > self.table_limit {
                     return Err(());
                 }
                 self.set_max_table_size(new_max);
@@ -2102,13 +2315,14 @@ impl HpackDecoder {
                 let name = if idx == 0 {
                     let (s, u) = decode_hpack_str(&buf[pos..])?;
                     pos += u;
-                    s
+                    header_str(&s)
                 } else {
-                    self.get(idx)?.0.to_owned()
+                    self.get(idx)?.0
                 };
                 let (val, u) = decode_hpack_str(&buf[pos..])?;
+                let val = header_str(&val);
                 pos += u;
-                total_size += name.len() + val.len() + 32;
+                total_size += wire_len(&name) + wire_len(&val) + 32;
                 if total_size > self.max_header_list_size {
                     return Err(());
                 }
@@ -2145,7 +2359,7 @@ fn decode_hpack_int(buf: &[u8], prefix_bits: u8) -> Result<(usize, usize), ()> {
     }
 }
 
-fn decode_hpack_str(buf: &[u8]) -> Result<(Vec<u8>, usize), ()> {
+fn decode_hpack_str(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), ()> {
     if buf.is_empty() {
         return Err(());
     }
@@ -2157,14 +2371,14 @@ fn decode_hpack_str(buf: &[u8]) -> Result<(Vec<u8>, usize), ()> {
     }
     let raw = &buf[used..end];
     let bytes = if huffman {
-        huffman_decode(raw)?
+        Cow::Owned(huffman_decode(raw)?)
     } else {
-        raw.to_vec()
+        Cow::Borrowed(raw)
     };
     Ok((bytes, end))
 }
 
-const STATIC_TABLE: [(&str, &str); 61] = [
+pub(crate) const STATIC_TABLE: [(&str, &str); 61] = [
     (":authority", ""),
     (":method", "GET"),
     (":method", "POST"),
@@ -2229,7 +2443,7 @@ const STATIC_TABLE: [(&str, &str); 61] = [
 ];
 
 // RFC 7541 Appendix B Huffman codes: `(code, bit_len)` for symbols 0..=255.
-const HUFFMAN_TABLE: [(u32, u8); 256] = [
+pub(crate) const HUFFMAN_TABLE: [(u32, u8); 256] = [
     (0x1ff8, 13),
     (0x7fffd8, 23),
     (0xfffffe2, 28),
@@ -2932,7 +3146,7 @@ mod tests {
         assert!(requests[1]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-token" && v == "v"));
+            .any(|(k, v)| &**k == "x-token" && &**v == "v"));
         assert!(!res.close_after_write);
 
         // A size update above what the server advertised is a compression error.
@@ -3007,7 +3221,7 @@ mod tests {
         assert!(served[0]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-ok" && v == "1"));
+            .any(|(k, v)| &**k == "x-ok" && &**v == "1"));
     }
 
     /// A `GET` header block with literal, unindexed fields after the pseudo-headers.
@@ -3044,6 +3258,35 @@ mod tests {
 
     const WHOLE: u8 = FLAG_END_HEADERS | FLAG_END_STREAM;
 
+    /// A literal with incremental indexing and a new name (RFC 7541 section 6.2.1).
+    fn indexed_literal(name: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut block = vec![0x40];
+        encode_hpack_str(name, &mut block);
+        encode_hpack_str(value, &mut block);
+        block
+    }
+
+    #[test]
+    fn hpack_shares_a_repeated_field_with_its_table_entry() {
+        let mut decoder = HpackDecoder::new(4096, 64 * 1024);
+        let first = decoder.decode(&indexed_literal(b"x-a", b"one")).unwrap();
+        let again = decoder.decode(&[0xbe]).unwrap();
+        assert!(Arc::ptr_eq(&first[0].0, &again[0].0));
+        assert!(Arc::ptr_eq(&first[0].1, &again[0].1));
+    }
+
+    #[test]
+    fn hpack_sizes_count_wire_bytes_not_the_bytes_of_the_text() {
+        // 3 + 4 + 32 octets on the wire; the value's text is 8 bytes of UTF-8.
+        let mut decoder = HpackDecoder::new(39, 39);
+        let literal = indexed_literal(b"x-a", &[0xe9; 4]);
+        assert_eq!(
+            &*decoder.decode(&literal).unwrap()[0].1,
+            "\u{e9}\u{e9}\u{e9}\u{e9}"
+        );
+        assert_eq!(&*decoder.decode(&[0xbe]).unwrap()[0].0, "x-a");
+    }
+
     #[test]
     fn h2_header_values_are_latin1() {
         let (mut conn, mut wire) = open_wire();
@@ -3057,7 +3300,7 @@ mod tests {
         assert!(requests(&res)[0]
             .headers
             .iter()
-            .any(|(k, v)| k == "x-raw" && v == "\u{e9}\u{ff}"));
+            .any(|(k, v)| &**k == "x-raw" && &**v == "\u{e9}\u{ff}"));
     }
 
     #[test]
@@ -3226,6 +3469,303 @@ mod tests {
             .iter()
             .any(|(ty, _, _, p)| *ty == FRAME_GOAWAY
                 && p[4..8] == ERR_ENHANCE_YOUR_CALM.to_be_bytes()));
+    }
+
+    /// A connection on a clock the test moves, with one request waiting on stream 1.
+    fn waiting_conn(cfg: H2Config, clock: fn() -> Instant) -> H2Conn {
+        let mut conn = ready_conn(cfg);
+        conn.clock = clock;
+        let get = frame(
+            FRAME_HEADERS,
+            FLAG_END_HEADERS | FLAG_END_STREAM,
+            1,
+            &get_headers(&[]),
+        );
+        conn.feed(&get, &mut Vec::new());
+        conn
+    }
+
+    fn response_fields(decoder: &mut HpackDecoder, out: &[u8]) -> Vec<Vec<(String, String)>> {
+        frames(out)
+            .iter()
+            .filter(|f| f.0 == FRAME_HEADERS)
+            .map(|f| {
+                decoder
+                    .decode(&f.3)
+                    .unwrap()
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn response_headers_compress_and_decode_across_blocks_and_table_resizes() {
+        let mut conn = ready_conn(H2Config::default());
+        let mut decoder = HpackDecoder::new(4096, 1 << 20);
+        let headers = [
+            ("content-type", "application/json; charset=utf-8"),
+            (
+                "strict-transport-security",
+                "max-age=31536000; includeSubDomains",
+            ),
+            ("set-cookie", "session=s3cret-value; HttpOnly"),
+            ("x-latin", "caf\u{e9} \u{1}\u{7f}"),
+        ];
+        let mut sizes = Vec::new();
+        for round in 0..200u32 {
+            let stream = round * 2 + 1;
+            // The peer shrinks and grows its table between responses.
+            if let Some(size) = [(50, 0u32), (90, 80), (120, 4096)]
+                .iter()
+                .find(|(at, _)| *at == round)
+            {
+                let setting = [&1u16.to_be_bytes()[..], &size.1.to_be_bytes()].concat();
+                conn.feed(&frame(FRAME_SETTINGS, 0, 0, &setting), &mut Vec::new());
+            }
+            let get = get_headers(&[]);
+            let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+            conn.feed(&frame(FRAME_HEADERS, flags, stream, &get), &mut Vec::new());
+            let unique = format!("request-{round}-{}", "z".repeat(round as usize % 70));
+            let mut sent = headers.to_vec();
+            sent.push(("x-request-id", &unique));
+            let mut out = Vec::new();
+            conn.write_response(
+                stream,
+                200 + (round % 3) as u16,
+                &sent,
+                Some(b"ok"),
+                &mut out,
+            );
+            sizes.push(frames(&out)[0].3.len());
+            let got = response_fields(&mut decoder, &out).remove(0);
+            assert_eq!(got[0].0, ":status");
+            for (name, value) in &sent {
+                let expected: String = value.bytes().map(char::from).collect();
+                assert!(
+                    got.contains(&(name.to_string(), expected)),
+                    "round {round}: {name} in {got:?}"
+                );
+            }
+        }
+        // Repeated fields come from the table after the first response.
+        assert!(sizes[1] * 2 < sizes[0], "{} then {}", sizes[0], sizes[1]);
+        assert!(!decoder
+            .dynamic
+            .iter()
+            .any(|(name, _)| &**name == "set-cookie"));
+    }
+
+    #[test]
+    fn response_trailers_close_the_stream_after_the_body() {
+        let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+        for (body, window) in [(&b"payload"[..], 65_535u32), (b"", 65_535), (b"payload", 0)] {
+            let mut conn = ready_conn(H2Config::default());
+            let setting = [&4u16.to_be_bytes()[..], &window.to_be_bytes()].concat();
+            conn.feed(&frame(FRAME_SETTINGS, 0, 0, &setting), &mut Vec::new());
+            let get = get_headers(&[]);
+            conn.feed(&frame(FRAME_HEADERS, end, 1, &get), &mut Vec::new());
+            assert!(conn.set_response_trailers(1, &[("Grpc-Status", "0")]));
+            assert!(!conn.set_response_trailers(1, &[(":status", "200")]));
+            assert!(!conn.set_response_trailers(1, &[("content-length", "1")]));
+            let mut out = Vec::new();
+            conn.write_response(1, 200, &[], Some(body), &mut out);
+            if window == 0 {
+                // Nothing may end the stream while the body waits for the peer's window.
+                assert!(!frames(&out).iter().any(|f| f.1 & FLAG_END_STREAM != 0));
+                let credit = frame(FRAME_WINDOW_UPDATE, 0, 1, &100u32.to_be_bytes());
+                conn.feed(&credit, &mut out);
+            }
+            let sent = frames(&out);
+            let data: Vec<u8> = sent
+                .iter()
+                .filter(|f| f.0 == FRAME_DATA)
+                .flat_map(|f| f.3.clone())
+                .collect();
+            assert_eq!(data, body);
+            let last = sent.last().unwrap();
+            assert_eq!((last.0, last.1, last.2), (FRAME_HEADERS, end, 1));
+            assert_eq!(
+                sent.iter()
+                    .filter(|f| f.1 & FLAG_END_STREAM != 0 && f.2 == 1)
+                    .count(),
+                1
+            );
+            let mut decoder = HpackDecoder::new(4096, 1 << 20);
+            let blocks = response_fields(&mut decoder, &out);
+            assert_eq!(blocks[1], [("grpc-status".to_string(), "0".to_string())]);
+            assert_eq!(conn.active_response_streams(), 0);
+            assert!(!conn.set_response_trailers(1, &[("grpc-status", "0")]));
+        }
+    }
+
+    #[test]
+    fn the_advertised_decoder_table_applies_once_it_is_acknowledged() {
+        let mut conn = ready_conn(H2Config {
+            header_table_size: 0,
+            ..H2Config::default()
+        });
+        assert_eq!(conn.hpack.table_limit, HPACK_TABLE_LIMIT);
+        conn.feed(&frame(FRAME_SETTINGS, FLAG_ACK, 0, &[]), &mut Vec::new());
+        assert_eq!(
+            (conn.hpack.table_limit, conn.hpack.max_dynamic_size),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn a_bodyless_status_drops_its_trailers() {
+        for status in [204, 205, 304] {
+            let mut conn = ready_conn(H2Config::default());
+            let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+            conn.feed(
+                &frame(FRAME_HEADERS, end, 1, &get_headers(&[])),
+                &mut Vec::new(),
+            );
+            assert!(conn.set_response_trailers(1, &[("x-checksum", "abc")]));
+            let mut out = Vec::new();
+            conn.write_response(1, status, &[], None, &mut out);
+            let sent = frames(&out);
+            assert_eq!((sent.len(), sent[0].0, sent[0].1), (1, FRAME_HEADERS, end));
+        }
+    }
+
+    #[test]
+    fn trailers_lead_with_an_owed_table_size_update_and_keep_secrets_unindexed() {
+        let mut conn = ready_conn(H2Config::default());
+        let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+        conn.feed(
+            &frame(FRAME_HEADERS, end, 1, &get_headers(&[])),
+            &mut Vec::new(),
+        );
+        assert!(conn.set_response_trailers(1, &[("set-cookie", "id=1")]));
+        conn.write_stream_head(1, 200, &[], None, &mut Vec::new());
+        let setting = [&1u16.to_be_bytes()[..], &0u32.to_be_bytes()].concat();
+        conn.feed(&frame(FRAME_SETTINGS, 0, 0, &setting), &mut Vec::new());
+        let mut out = Vec::new();
+        conn.write_stream_data(1, b"", true, &mut out);
+        let sent = frames(&out);
+        let block = &sent.last().expect("trailers").3;
+        // Size update to 0, then a never-indexed literal naming static entry 55.
+        assert_eq!(block[..3], [0x20, 0x1f, 55 - 15]);
+    }
+
+    #[test]
+    fn graceful_shutdown_serves_what_crossed_it_then_refuses_the_rest() {
+        let end = FLAG_END_HEADERS | FLAG_END_STREAM;
+        let get = |stream| frame(FRAME_HEADERS, end, stream, &get_headers(&[]));
+        let mut conn = waiting_conn(H2Config::default(), Instant::now);
+        let mut out = Vec::new();
+        conn.begin_shutdown(&mut out);
+        let sent = frames(&out);
+        assert_eq!(
+            (sent[0].0, &sent[0].3[..4]),
+            (FRAME_GOAWAY, &MAX_STREAM_ID.to_be_bytes()[..])
+        );
+        assert_eq!(
+            (sent[1].0, &sent[1].3[..]),
+            (FRAME_PING, &PING_SHUTDOWN[..])
+        );
+        assert_eq!(requests(&conn.feed(&get(3), &mut Vec::new())).len(), 1);
+
+        out.clear();
+        let ack = frame(FRAME_PING, FLAG_ACK, 0, PING_SHUTDOWN);
+        assert!(
+            !conn.feed(&ack, &mut out).close_after_write,
+            "responses are still owed"
+        );
+        assert_eq!(
+            (frames(&out)[0].0, &frames(&out)[0].3[..4]),
+            (FRAME_GOAWAY, &3u32.to_be_bytes()[..])
+        );
+        let refused = conn.feed(&get(5), &mut out);
+        assert!(requests(&refused).is_empty());
+        for stream in [1, 3] {
+            assert!(!conn.shutdown_complete());
+            conn.write_response(stream, 200, &[], Some(b"ok"), &mut out);
+        }
+        assert!(conn.shutdown_complete());
+        assert!(!conn.tick(Instant::now(), &mut out));
+    }
+
+    #[test]
+    fn graceful_shutdown_does_not_wait_forever_for_the_ping() {
+        let mut conn = ready_conn(H2Config::default());
+        conn.begin_shutdown(&mut Vec::new());
+        let mut out = Vec::new();
+        assert!(!conn.tick(Instant::now(), &mut out));
+        assert!(out.is_empty());
+        assert!(!conn.tick(Instant::now() + SHUTDOWN_PING_WAIT, &mut out));
+        assert_eq!(frames(&out)[0].0, FRAME_GOAWAY);
+        assert!(conn.shutdown_complete());
+    }
+
+    #[test]
+    fn keepalive_pings_a_quiet_peer_and_drops_a_silent_one() {
+        let second = Duration::from_secs(1);
+        let mut conn = ready_conn(H2Config {
+            ping_interval: Some(10 * second),
+            ping_timeout: 5 * second,
+            ..H2Config::default()
+        });
+        let start = conn.last_heard.unwrap();
+        let mut out = Vec::new();
+        assert!(!conn.tick(start + 9 * second, &mut out));
+        assert!(out.is_empty());
+        assert!(!conn.tick(start + 10 * second, &mut out));
+        assert_eq!(
+            (frames(&out)[0].0, &frames(&out)[0].3[..]),
+            (FRAME_PING, &PING_KEEPALIVE[..])
+        );
+        assert!(!conn.tick(start + 14 * second, &mut out));
+        conn.feed(&frame(FRAME_PING, FLAG_ACK, 0, PING_KEEPALIVE), &mut out);
+        // The answer restarts the quiet period; the next unanswered probe ends the connection.
+        let asked = conn.last_heard.unwrap() + 10 * second;
+        out.clear();
+        assert!(!conn.tick(asked - second, &mut out));
+        assert!(out.is_empty());
+        assert!(!conn.tick(asked, &mut out));
+        assert!(!conn.tick(asked + 4 * second, &mut out));
+        assert!(conn.tick(asked + 5 * second, &mut out));
+    }
+
+    #[test]
+    fn configured_windows_frame_and_table_sizes_are_advertised_and_enforced() {
+        let cfg = H2Config {
+            initial_window_size: 70_000,
+            connection_window_size: 100_000,
+            max_frame_size: 32_768,
+            header_table_size: 8192,
+            ..H2Config::default()
+        };
+        let mut conn = H2Conn::new(cfg);
+        let mut out = Vec::new();
+        conn.ensure_server_preface(&mut out);
+        let sent = frames(&out);
+        let settings: Vec<(u16, u32)> = sent[0]
+            .3
+            .chunks(6)
+            .map(|c| {
+                (
+                    u16::from_be_bytes([c[0], c[1]]),
+                    u32::from_be_bytes([c[2], c[3], c[4], c[5]]),
+                )
+            })
+            .collect();
+        for expected in [(1, 8192), (4, 70_000), (5, 32_768)] {
+            assert!(settings.contains(&expected), "{settings:?}");
+        }
+        assert_eq!(sent[1].3, (100_000u32 - 65_535).to_be_bytes());
+
+        let big = vec![0u8; 20_000];
+        for (cfg, closes) in [(cfg, false), (H2Config::default(), true)] {
+            let mut conn = ready_conn(cfg);
+            let post = frame(FRAME_HEADERS, FLAG_END_HEADERS, 1, &get_headers(&[]));
+            conn.feed(&post, &mut Vec::new());
+            let data = frame(FRAME_DATA, FLAG_END_STREAM, 1, &big);
+            assert_eq!(conn.feed(&data, &mut Vec::new()).close_after_write, closes);
+        }
     }
 
     fn open_and_reset(stream: u32) -> Vec<u8> {

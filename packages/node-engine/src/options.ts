@@ -123,6 +123,27 @@ export interface WsDeflateOptions {
 /** HTTP/2 settings the server advertises. */
 export interface Http2Options {
   readonly maxConcurrentStreams?: number
+  /** Flow-control window of each request body, in bytes. Default 1 MiB. */
+  readonly initialWindowSize?: number
+  /** Flow-control window of the whole connection, 65535 or more. Default 4 MiB. */
+  readonly connectionWindowSize?: number
+  /** Largest frame accepted, 16384 to 16777215. Default 16384. */
+  readonly maxFrameSize?: number
+  /** Bytes of each HPACK table, request and response side; 0 to 65536. Default 4096. */
+  readonly headerTableSize?: number
+  /**
+   * Queued response bytes per connection. At this limit the next buffered response with a body is
+   * reset with `ENHANCE_YOUR_CALM`, and past it a streamed one is told to wait. Default 16 MiB.
+   */
+  readonly maxSendBuffer?: number
+  /**
+   * Send a `PING` to a connection quiet for this long, and close it when no answer comes. A peer that
+   * answers is not idle, so set this below `idleTimeoutMs` to keep a live one open. Timers are checked
+   * once a second. Off by default (`0`).
+   */
+  readonly pingIntervalMs?: number
+  /** Budget in ms for that answer. Default 20 s. */
+  readonly pingTimeoutMs?: number
 }
 
 /** Engine limits and timeouts beyond the first-class options. */
@@ -232,7 +253,7 @@ export interface ServeOptions extends HostPolicyOptions {
   /**
    * HTTP/2 beside HTTP/1.1 on the same port: negotiated by ALPN when {@link tls} is set, by prior
    * knowledge (a client opening with the HTTP/2 preface) when it is not. `true` takes the engine's
-   * defaults; an object sets the settings it advertises. WebSocket upgrades are not served over HTTP/2.
+   * defaults; an object sets its settings.
    */
   readonly http2?: boolean | Http2Options
   /**

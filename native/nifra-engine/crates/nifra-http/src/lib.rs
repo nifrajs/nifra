@@ -5,6 +5,7 @@
 pub mod compress;
 pub mod date;
 pub mod h2;
+mod hpack_encoder;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

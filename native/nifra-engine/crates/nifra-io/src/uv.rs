@@ -80,6 +80,10 @@ pub trait UvCallbacks {
     fn output_stalled_since(&self, _conn_id: u32) -> Option<std::time::Instant> {
         None
     }
+    /// A protocol that has nothing more to send: the sweep closes it once its output is written.
+    fn finished(&self, _conn_id: u32) -> bool {
+        false
+    }
     /// An idle connection about to be closed. `true` sends it a Ping and gives it another window.
     fn probe_idle(&self, _conn_id: u32) -> bool {
         false

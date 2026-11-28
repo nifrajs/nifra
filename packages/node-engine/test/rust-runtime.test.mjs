@@ -364,11 +364,18 @@ test("Rust closes connections beyond maxConnections", nativeTest, async () => {
     const freed = closed(open[0])
     open[0].destroy()
     await freed
-    const wire = await converse(
-      running.port,
-      (socket) => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
-      (received) => received.includes('"ok"'),
-    )
+    // The server may not have seen that close yet, so an early attempt can still be shed.
+    let wire = ""
+    for (let attempt = 0; attempt < 200 && wire === ""; attempt++) {
+      wire = await converse(
+        running.port,
+        (socket) => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        (received) => received.includes('"ok"'),
+      ).catch((error) => {
+        if (error.code !== "ECONNRESET" && error.code !== "EPIPE") throw error
+        return ""
+      })
+    }
     assert.match(wire, /^HTTP\/1\.1 200 /)
   } finally {
     for (const socket of open) socket.destroy()
