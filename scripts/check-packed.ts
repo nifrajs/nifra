@@ -125,18 +125,6 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
   const dest = mkdtempSync(join(tmpdir(), "nifra-check-packed-"))
   try {
     for (const pkg of options.packages) {
-      const pkgManifest = JSON.parse(
-        readFileSync(join(options.root, pkg.dir, "package.json"), "utf8"),
-      ) as { readonly nifra?: { readonly nativePrebuild?: string } }
-      const isPrebuildPkg = typeof pkgManifest.nifra?.nativePrebuild === "string"
-      const hasBinary = existsSync(join(options.root, pkg.dir, "nifra_napi.node"))
-      if (isPrebuildPkg && !hasBinary) {
-        if (requireNative) {
-          failures.push(`${pkg.name}: missing staged nifra_napi.node`)
-        } else {
-          optionalMissingNative.add(pkg.name)
-        }
-      }
       const out = join(dest, pkg.dir.replaceAll("/", "_"))
       const packed = spawnSync(
         process.execPath,
@@ -153,6 +141,27 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
       }
       const files = readTarball(join(out, tgz))
       const paths = files.map((file) => file.path)
+      const manifestFile = files.find((file) => file.path === "package.json")
+      const manifest: unknown =
+        manifestFile === undefined
+          ? undefined
+          : JSON.parse(new TextDecoder().decode(manifestFile.bytes))
+      const nifra =
+        typeof manifest === "object" && manifest !== null && "nifra" in manifest
+          ? manifest.nifra
+          : undefined
+      const isPrebuildPkg =
+        typeof nifra === "object" &&
+        nifra !== null &&
+        "nativePrebuild" in nifra &&
+        typeof nifra.nativePrebuild === "string"
+      if (isPrebuildPkg && !paths.includes("nifra_napi.node")) {
+        if (requireNative || existsSync(join(options.root, pkg.dir, "nifra_napi.node"))) {
+          failures.push(`${pkg.name}: package is missing nifra_napi.node`)
+        } else {
+          optionalMissingNative.add(pkg.name)
+        }
+      }
       snapshot[pkg.name] = paths
       fileCount += paths.length
       // Every package is MIT, and the license asks for its text in every copy.
@@ -187,21 +196,23 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
     failures.push("npm is not on PATH: cannot confirm npm publishes the scanned files")
   else notes.push("npm comparison skipped (npm not on PATH)")
 
+  // Release preparation runs before CI builds the platform addons. Record their expected filenames.
+  const releaseSnapshot = { ...snapshot }
+  for (const name of optionalMissingNative) {
+    releaseSnapshot[name] = [...(snapshot[name] ?? []), "nifra_napi.node"].sort(codeUnitOrder)
+  }
   const snapshotPath = join(options.root, SNAPSHOT_FILE)
   if (options.update) {
-    writeFileSync(snapshotPath, renderSnapshot(snapshot))
+    writeFileSync(snapshotPath, renderSnapshot(releaseSnapshot))
     notes.push(`wrote ${SNAPSHOT_FILE}`)
   } else {
     const committed: PackedSnapshot = existsSync(snapshotPath)
       ? JSON.parse(readFileSync(snapshotPath, "utf8"))
       : {}
-    const names = [...new Set([...Object.keys(committed), ...Object.keys(snapshot)])]
+    const names = [...new Set([...Object.keys(committed), ...Object.keys(releaseSnapshot)])]
     const drift = names.flatMap((name) => {
       const expected = committed[name]
-      const actual =
-        optionalMissingNative.has(name) && expected?.includes("nifra_napi.node")
-          ? [...(snapshot[name] ?? []), "nifra_napi.node"].sort(codeUnitOrder)
-          : (snapshot[name] ?? [])
+      const actual = releaseSnapshot[name] ?? []
       return describeDrift(name, fileListDrift(expected, actual)) ?? []
     })
     if (drift.length > 0) {

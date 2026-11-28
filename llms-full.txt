@@ -21951,33 +21951,65 @@ ROOT="$PWD" MORO_DIR="$PWD/packages/node-engine/bench/moro" NIFRA_RUST_ENGINE_PA
 
 Numbers that are reported come from the `Engine compare` workflow (manual dispatch), not from a developer machine. Configuration is environment: `ROUNDS`, `DURATION`, `TARGETS`, `WORKLOADS`, `OUT`.
 
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
+
 ## @nifrajs/node-engine-darwin-arm64
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `darwin-arm64`.
+
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
 
 ## @nifrajs/node-engine-darwin-x64
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `darwin-x64`.
 
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
+
 ## @nifrajs/node-engine-linux-arm64-gnu
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `linux-arm64-gnu`.
+
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
 
 ## @nifrajs/node-engine-linux-arm64-musl
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `linux-arm64-musl`.
 
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
+
 ## @nifrajs/node-engine-linux-x64-gnu
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `linux-x64-gnu`.
+
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
 
 ## @nifrajs/node-engine-linux-x64-musl
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `linux-x64-musl`.
 
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
+
 ## @nifrajs/node-engine-win32-x64
 
 Prebuilt native Rust engine binary for `@nifrajs/node-engine` on `win32-x64`.
+
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).
 
 ## @nifrajs/node-uws
 

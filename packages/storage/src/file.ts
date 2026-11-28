@@ -398,6 +398,12 @@ export class FileStorage implements StreamableStorageAdapter {
     return null
   }
 
+  private async openKey(key: string): Promise<OpenedPath | null> {
+    await this.pinRoot(key)
+    const path = this.pathFor(key)
+    return this.openObject(this.root, path, key)
+  }
+
   /**
    * Open an existing file without following its final component, then prove the descriptor is the file
    * still reachable through a symlink-free path below the same root inode. Reads use the descriptor,
@@ -681,9 +687,7 @@ export class FileStorage implements StreamableStorageAdapter {
   /** Objects and their metadata each have a 16 MiB buffered-read limit by default.
    * Oversized reads throw a RangeError. */
   async get(key: string): Promise<StorageObject | null> {
-    await this.pinRoot(key)
-    const path = this.pathFor(key)
-    const opened = await this.openObject(this.root, path, key)
+    const opened = await this.openKey(key)
     if (opened === null) return null
     const { handle: bodyHandle, info } = opened
     let body: Uint8Array
@@ -703,9 +707,7 @@ export class FileStorage implements StreamableStorageAdapter {
   }
 
   async head(key: string): Promise<StorageObjectMetadata | null> {
-    await this.pinRoot(key)
-    const path = this.pathFor(key)
-    const opened = await this.openObject(this.root, path, key)
+    const opened = await this.openKey(key)
     if (opened === null) return null
     const { handle, info } = opened
     const identity: FileIdentity = { dev: String(info.dev), ino: String(info.ino) }
@@ -718,9 +720,7 @@ export class FileStorage implements StreamableStorageAdapter {
   }
 
   async getStream(key: string): Promise<StorageStreamObject | null> {
-    await this.pinRoot(key)
-    const path = this.pathFor(key)
-    const opened = await this.openObject(this.root, path, key)
+    const opened = await this.openKey(key)
     if (opened === null) return null
     const { handle, info } = opened
     const identity: FileIdentity = { dev: String(info.dev), ino: String(info.ino) }
@@ -814,9 +814,7 @@ export class FileStorage implements StreamableStorageAdapter {
   }
 
   async exists(key: string): Promise<boolean> {
-    await this.pinRoot(key)
-    const path = this.pathFor(key)
-    const opened = await this.openObject(this.root, path, key)
+    const opened = await this.openKey(key)
     if (opened === null) return false
     await opened.handle.close()
     return true

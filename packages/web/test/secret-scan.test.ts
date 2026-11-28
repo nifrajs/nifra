@@ -590,7 +590,7 @@ describe("prerender", () => {
 
 describe("secret-scan boundary and encoding edge cases", () => {
   test("base64url variant is detected when standard base64 contains + or /", () => {
-    const raw = "secret+value?with/url_chars-99"
+    const raw = "aa>aa?synthetic-token-99"
     const base64url = btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
     expect(base64url).not.toBe(btoa(raw).replaceAll("=", ""))
     const findings = scanForSecrets({

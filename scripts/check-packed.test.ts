@@ -56,6 +56,27 @@ test("--update records what each package packs, and a clean release run then pas
   expect(release.fileCount).toBe(8)
 }, 60_000)
 
+test("a release snapshot records a platform binary before CI stages it", async () => {
+  write(
+    "packages/b/package.json",
+    JSON.stringify({
+      name: "@x/b",
+      version: "1.0.0",
+      files: ["nifra_napi.node", "CHANGELOG.md"],
+      nifra: { nativePrebuild: "darwin-arm64" },
+    }),
+  )
+  const updated = await run({ update: true })
+  expect(updated.failures).toEqual([])
+  expect(updated.snapshot["@x/b"]).not.toContain("nifra_napi.node")
+  expect(readFileSync(join(root, "packed-files.json"), "utf8")).toContain('"nifra_napi.node"')
+
+  write("packages/b/nifra_napi.node", "fixture")
+  const staged = await run({ release: true, npm: true })
+  expect(staged.failures).toEqual([])
+  expect(staged.snapshot["@x/b"]).toContain("nifra_napi.node")
+}, 60_000)
+
 test("a file the record lacks is only reported outside a release, and fails a release", async () => {
   await run({ update: true })
   write("packages/b/dist/extra.js", "export {}")

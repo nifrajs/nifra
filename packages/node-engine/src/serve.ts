@@ -210,7 +210,7 @@ interface RustUvServer {
   getTrailers(reqId: number): string[]
   setResponseTrailers(reqId: number, flatTrailers: string[]): boolean
   writeInformational(reqId: number, status: number, flatHeaders?: string[] | null): boolean
-  getBody(reqId: number): Buffer | null
+  getBody(reqId: number): Buffer<ArrayBuffer> | null
   getRemoteAddress(reqId: number): string | null
   getPeerCertificates(reqId: number): Buffer[]
   setConnectCallbacks(
@@ -883,13 +883,13 @@ function parseJsonBytes(bytes: Uint8Array): unknown {
 }
 
 interface ReqBodyStreamState {
-  controller?: ReadableStreamDefaultController<Uint8Array> | undefined
-  readonly queue: Uint8Array[]
+  controller?: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined
+  readonly queue: Uint8Array<ArrayBuffer>[]
   queuedBytes: number
   paused: boolean
   ended: boolean
   cancelled: boolean
-  stream?: ReadableStream<Uint8Array> | undefined
+  stream?: ReadableStream<Uint8Array<ArrayBuffer>> | undefined
   waiters: Array<(done: boolean, error?: Error) => void>
 }
 
@@ -939,14 +939,10 @@ const RawMethodRequest = /* @__PURE__ */ (() => {
     readonly duplex = "half" as const
     declare readonly textStream: Request["textStream"]
     private bodyConsumed = false
-    private bodyValue: ReadableStream<Uint8Array> | null
+    private bodyValue: Request["body"]
     private readonly readerSource: RustBatchSource
 
-    constructor(
-      source: RustBatchSource,
-      signal: AbortSignal,
-      body: ReadableStream<Uint8Array> | null,
-    ) {
+    constructor(source: RustBatchSource, signal: AbortSignal, body: Request["body"]) {
       this.readerSource = source
       this.method = source.method
       this.url = source.url
@@ -955,7 +951,7 @@ const RawMethodRequest = /* @__PURE__ */ (() => {
       this.bodyValue = body
     }
 
-    get body(): ReadableStream<Uint8Array> | null {
+    get body(): Request["body"] {
       return this.bodyValue
     }
 
@@ -973,7 +969,7 @@ const RawMethodRequest = /* @__PURE__ */ (() => {
       return this.readerSource.arrayBuffer()
     }
 
-    bytes(): Promise<Uint8Array> {
+    bytes(): Promise<Uint8Array<ArrayBuffer>> {
       this.consume()
       return this.readerSource.bytes()
     }
@@ -1072,9 +1068,8 @@ function buildPeerCertificate(
     fingerprint512: x509.fingerprint512,
     raw: x509.raw,
     x509,
-    ...(next !== null ? { issuerCertificate: next } : {}),
   }
-  return info
+  return next === null ? info : { ...info, issuerCertificate: next }
 }
 
 /**
@@ -1107,7 +1102,7 @@ class RustBatchSource {
   private readonly authority: string | undefined
   private readonly bodyLen: number
   private bodyText: string | null
-  private bodyBytes: Uint8Array | null | undefined
+  private bodyBytes: Uint8Array<ArrayBuffer> | null | undefined
   private streamState: ReqBodyStreamState | undefined
   /** The request's first `Content-Type`: `null` when it had none, `undefined` when not carried (ask the engine). */
   private readonly contentType: string | null | undefined
@@ -1131,7 +1126,7 @@ class RustBatchSource {
     protocol: string,
     bodyLen: number,
     bodyText: string | null,
-    bodyBytes: Uint8Array | null | undefined,
+    bodyBytes: Uint8Array<ArrayBuffer> | null | undefined,
     contentType: string | null | undefined,
   ) {
     this.server = server
@@ -1340,7 +1335,7 @@ class RustBatchSource {
     return this.server.writeInformational(this.id, status, flat)
   }
 
-  private toBytes(): Uint8Array | null {
+  private toBytes(): Uint8Array<ArrayBuffer> | null {
     if (this.bodyBytes !== undefined) return this.bodyBytes
     if (this.bodyText !== null) {
       this.bodyBytes = Buffer.from(this.bodyText)
@@ -1383,12 +1378,12 @@ class RustBatchSource {
     return parts.length === 1 ? (parts[0] ?? NO_BODY_BYTES) : Buffer.concat(parts)
   }
 
-  get body(): ReadableStream<Uint8Array> | null {
+  get body(): Request["body"] {
     const state = this.streamState
     if (state !== undefined) {
       if (state.stream !== undefined) return state.stream
       const source = this
-      state.stream = new ReadableStream<Uint8Array>(
+      state.stream = new ReadableStream<Uint8Array<ArrayBuffer>>(
         {
           start(controller) {
             state.controller = controller
@@ -1433,7 +1428,7 @@ class RustBatchSource {
     }
     const bytes = this.toBytes()
     if (bytes === null) return null
-    return new ReadableStream<Uint8Array>({
+    return new ReadableStream<Uint8Array<ArrayBuffer>>({
       start(controller) {
         if (bytes.byteLength > 0) controller.enqueue(bytes)
         controller.close()
@@ -1457,7 +1452,7 @@ class RustBatchSource {
     return Promise.resolve(copy.buffer)
   }
 
-  bytes(): Promise<Uint8Array> {
+  bytes(): Promise<Uint8Array<ArrayBuffer>> {
     if (this.streamState !== undefined) {
       return this.drainStreamBytes().then((bytes) => new Uint8Array(bytes))
     }
@@ -1556,7 +1551,7 @@ class RustBatchSource {
               this.streamState !== undefined
                 ? this.body
                 : bytes !== null && bytes.byteLength > 0
-                  ? new ReadableStream<Uint8Array>({
+                  ? new ReadableStream<Uint8Array<ArrayBuffer>>({
                       start(ctrl) {
                         ctrl.enqueue(bytes.slice())
                         ctrl.close()
@@ -2540,7 +2535,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     const search = queryStart === -1 ? "" : target.slice(queryStart)
 
     let bodyText: string | null = null
-    let bodyBytes: Uint8Array | null | undefined
+    let bodyBytes: Uint8Array<ArrayBuffer> | null | undefined
     if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
       if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
         bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)

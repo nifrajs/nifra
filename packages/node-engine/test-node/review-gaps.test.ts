@@ -161,19 +161,13 @@ test("AsyncLocalStorage.enterWith() never leaks across requests or connections a
   }
   const running = await als.run("serve-outer", () => serve(app, { port: 0 }))
   try {
-    const first = (await (
+    const first: unknown = await (
       await fetch(`http://127.0.0.1:${running.port}/enter?val=alice`)
-    ).json()) as {
-      initial: string
-      current: string
-    }
-    assert.equal(first.initial, "serve-outer")
-    assert.equal(first.current, "alice")
+    ).json()
+    assert.deepEqual(first, { initial: "serve-outer", current: "alice" })
 
-    const second = (await (await fetch(`http://127.0.0.1:${running.port}/read`)).json()) as {
-      initial: string
-    }
-    assert.equal(second.initial, "serve-outer")
+    const second: unknown = await (await fetch(`http://127.0.0.1:${running.port}/read`)).json()
+    assert.deepEqual(second, { initial: "serve-outer" })
 
     // Raw TCP keep-alive pipeline: send two requests back-to-back on the SAME connection (same batch).
     const pipelined = await new Promise<string>((resolve, reject) => {
@@ -392,13 +386,12 @@ test("mTLS getPeerCertificate exposes client certificate fields to apps", async 
       sock.on("error", reject)
       sock.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
     })
-    const json = JSON.parse(body.split("\r\n\r\n")[1] ?? "{}") as {
-      present: boolean
-      subject: string
-      fingerprint256: string
-    }
-    assert.equal(json.present, true)
-    assert.ok(json.subject.includes("client-alice"))
+    const json: unknown = JSON.parse(body.split("\r\n\r\n")[1] ?? "{}")
+    assert.ok(typeof json === "object" && json !== null)
+    assert.ok("present" in json && json.present === true)
+    assert.ok("subject" in json && typeof json.subject === "string")
+    assert.match(json.subject, /client-alice/)
+    assert.ok("fingerprint256" in json && typeof json.fingerprint256 === "string")
     assert.ok(json.fingerprint256.length > 20)
   } finally {
     await srv.stop()
@@ -484,8 +477,9 @@ test("node:http bridge runs Express-style handlers/middlewares and publishes dia
   const events: Array<{ channel: string; status: number }> = []
   const onStart = () => events.push({ channel: "start", status: 0 })
   const onFinish = (msg: unknown) => {
-    const m = msg as { readonly response: { readonly statusCode: number } }
-    events.push({ channel: "finish", status: m.response.statusCode })
+    assert.ok(typeof msg === "object" && msg !== null && "response" in msg)
+    assert.ok(msg.response instanceof ServerResponse)
+    events.push({ channel: "finish", status: msg.response.statusCode })
   }
   diagnosticsChannel.subscribe("http.server.request.start", onStart)
   diagnosticsChannel.subscribe("http.server.response.finish", onFinish)
@@ -533,7 +527,8 @@ test("node:http bridge runs Express-style handlers/middlewares and publishes dia
       const chunks: Buffer[] = []
       req.on("data", (c: Buffer) => chunks.push(c))
       req.on("end", () => {
-        ;(res as ServerResponse & { jsonBody(v: unknown): void }).jsonBody({
+        assert.ok("jsonBody" in res && typeof res.jsonBody === "function")
+        res.jsonBody({
           method: req.method,
           body: Buffer.concat(chunks).toString("utf8"),
         })

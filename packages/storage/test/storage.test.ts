@@ -31,6 +31,7 @@ import {
   type StoragePresignedUrl,
   type StoragePresignOperation,
   type StoragePresignOptions,
+  type StreamableStorageAdapter,
   toBytes,
 } from "../src/index.ts"
 import { racePuts } from "./race-puts.ts"
@@ -112,11 +113,14 @@ class FakeR2 implements R2BucketLike {
   head(key: string): Promise<R2ObjectLike | null> {
     const e = this.m.get(key)
     if (e === undefined) return Promise.resolve(null)
-    return Promise.resolve({
-      size: e.body.byteLength,
-      ...(e.ct !== undefined ? { httpMetadata: { contentType: e.ct } } : {}),
-      ...(e.meta !== undefined ? { customMetadata: e.meta } : {}),
-    })
+    const metadata: {
+      size: number
+      httpMetadata?: { contentType: string }
+      customMetadata?: Record<string, string>
+    } = { size: e.body.byteLength }
+    if (e.ct !== undefined) metadata.httpMetadata = { contentType: e.ct }
+    if (e.meta !== undefined) metadata.customMetadata = e.meta
+    return Promise.resolve(metadata)
   }
 
   delete(key: string): Promise<void> {
@@ -218,7 +222,7 @@ function present<T>(value: T | null): T {
   return value
 }
 
-const adapters: Array<[string, () => Promise<StorageAdapter>]> = [
+const adapters: Array<[string, () => Promise<StreamableStorageAdapter>]> = [
   ["MemoryStorage", () => Promise.resolve(new MemoryStorage())],
   ["FileStorage", () => freshFileStorage()],
   ["R2Storage(fake)", () => Promise.resolve(new R2Storage(new FakeR2()))],
@@ -276,7 +280,7 @@ for (const [name, make] of adapters) {
     })
 
     test("head, putStream, and getStream round-trip bytes and metadata", async () => {
-      const s = (await make()) as MemoryStorage | FileStorage | R2Storage
+      const s = await make()
       expect(await s.head("missing")).toBeNull()
       expect(await s.getStream("missing")).toBeNull()
       const chunks = [new TextEncoder().encode("hello "), new TextEncoder().encode("stream")]

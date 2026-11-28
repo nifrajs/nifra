@@ -3250,42 +3250,49 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-darwin-x64": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-linux-arm64-gnu": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-linux-arm64-musl": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-linux-x64-gnu": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-linux-x64-musl": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-engine-win32-x64": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "nifra_napi.node",
     "package.json"
   ],
   "@nifrajs/node-uws": [

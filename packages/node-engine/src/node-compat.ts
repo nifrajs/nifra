@@ -20,6 +20,22 @@ export function hasHttpDiagnosticsSubscribers(): boolean {
   )
 }
 
+function createIncomingMessage(
+  request: Request,
+  url: URL,
+  socket: CompatSocket,
+  control: EngineRequestControl | undefined,
+): IncomingMessage {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion lint/plugin/noChainedTypeAssertions: IncomingMessage uses the stream methods and peer fields provided by CompatSocket; Rust owns the real socket.
+  const req = new IncomingMessage(socket as unknown as Socket)
+  req.method = request.method
+  req.url = `${url.pathname}${url.search}`
+  req.httpVersion = control?.isH2 ? "2.0" : "1.1"
+  req.httpVersionMajor = control?.isH2 ? 2 : 1
+  req.httpVersionMinor = control?.isH2 ? 0 : 1
+  return req
+}
+
 /**
  * Publish Node's `http.server.response.created`, `http.server.request.start`, and
  * `http.server.response.finish` diagnostics channels for auto-instrumentation agents when subscribed.
@@ -37,13 +53,7 @@ export function beginHttpDiagnostics(
     () => {},
     () => {},
   )
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: CompatSocket satisfies the net.Socket shape expected by IncomingMessage
-  const req = new IncomingMessage(socket as unknown as Socket)
-  req.method = request.method
-  req.url = `${parsedUrl.pathname}${parsedUrl.search}`
-  req.httpVersion = control?.isH2 ? "2.0" : "1.1"
-  req.httpVersionMajor = control?.isH2 ? 2 : 1
-  req.httpVersionMinor = control?.isH2 ? 0 : 1
+  const req = createIncomingMessage(request, parsedUrl, socket, control)
   const rawHeaders: string[] = []
   request.headers.forEach((value, name) => {
     rawHeaders.push(name, value)
@@ -265,7 +275,7 @@ export function createNodeCompat(request: Request): NodeCompatPair {
   const control = (request as SourcedWebRequest)[SOURCE]
   const parsedUrl = new URL(request.url)
   const bufferedChunks: Buffer[] = []
-  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+  let streamController: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined
   let responseResolved = false
   let streamEnded = false
   let resolveResponse!: (res: Response) => void
@@ -273,9 +283,7 @@ export function createNodeCompat(request: Request): NodeCompatPair {
     resolveResponse = resolve
   })
 
-  const buildResponse = (
-    body: string | Uint8Array | ReadableStream<Uint8Array> | null,
-  ): Response => {
+  const buildResponse = (body: ConstructorParameters<typeof Response>[0]): Response => {
     const status = res.statusCode || 200
     const headers = buildHeadersFromOutgoing(res.getHeaders())
     if (request.method === "HEAD" || BODYLESS_STATUSES.has(status)) {
@@ -287,7 +295,7 @@ export function createNodeCompat(request: Request): NodeCompatPair {
   const startStreamingIfNeeded = (): void => {
     if (responseResolved) return
     responseResolved = true
-    const stream = new ReadableStream<Uint8Array>({
+    const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
       start(controller) {
         streamController = controller
         for (const chunk of bufferedChunks) {
@@ -334,14 +342,7 @@ export function createNodeCompat(request: Request): NodeCompatPair {
     },
   )
 
-  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: CompatSocket implements the net.Socket interface methods required by IncomingMessage
-  const netSocket = socket as unknown as Socket
-  const req = new IncomingMessage(netSocket)
-  req.method = request.method
-  req.url = `${parsedUrl.pathname}${parsedUrl.search}`
-  req.httpVersion = control?.isH2 ? "2.0" : "1.1"
-  req.httpVersionMajor = control?.isH2 ? 2 : 1
-  req.httpVersionMinor = control?.isH2 ? 0 : 1
+  const req = createIncomingMessage(request, parsedUrl, socket, control)
   const rawHeaders: string[] = []
   request.headers.forEach((value, name) => {
     rawHeaders.push(name, value)
@@ -422,7 +423,7 @@ export function createNodeCompat(request: Request): NodeCompatPair {
 
   const res = new ServerResponse(req)
   res.useChunkedEncodingByDefault = false
-  res.assignSocket(netSocket)
+  res.assignSocket(req.socket)
   res.on("finish", () => {
     if (!socket.writableEnded) socket.end()
   })
