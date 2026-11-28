@@ -15,7 +15,6 @@ use napi_derive::napi;
 use nifra_http::abi::{IN_SLOT_U32S, OUT_SLOT_U32S};
 use nifra_http::h2::{
     H2Config, H2Conn, H2Event, H2Request, HeaderStr, CLIENT_PREFACE, ERR_INTERNAL_ERROR,
-    ERR_NO_ERROR,
 };
 use nifra_http::{
     awaits_continue, collect_headers_in_head, parse_http1, parse_http1_resume,
@@ -599,6 +598,13 @@ pub struct UvServerOptions {
     pub ws_deflate: Option<WsDeflateOptions>,
     pub http2: Option<bool>,
     pub http2_max_concurrent_streams: Option<u32>,
+    pub http2_initial_window_size: Option<u32>,
+    pub http2_connection_window_size: Option<u32>,
+    pub http2_max_frame_size: Option<u32>,
+    pub http2_header_table_size: Option<u32>,
+    pub http2_max_send_buffer: Option<u32>,
+    pub http2_ping_interval_ms: Option<u32>,
+    pub http2_ping_timeout_ms: Option<u32>,
     pub stream_request_bodies: Option<bool>,
     pub compression: Option<CompressionOptions>,
     pub unix_path: Option<String>,
@@ -2563,7 +2569,8 @@ impl UvCallbacks for HttpUvCallbacks {
             else {
                 return false;
             };
-            h2.drain_expired_streams(now, out)
+            let (close_conn, expired_streams) = h2.drain_expired_streams(now, out);
+            (h2.tick(now, out) || close_conn, expired_streams)
         };
         if !expired_streams.is_empty() {
             let mut st = self.shared.borrow_mut();
@@ -3427,6 +3434,28 @@ impl UvHttpServer {
         let st = self.shared.borrow();
         let pending = st.pending.get(req_id)?;
         pending.body().map(Buffer::from)
+    }
+
+    /// Set the fields an HTTP/2 response ends with, as `[name, value, ...]`, before its body ends.
+    /// `false` on HTTP/1, once the response is complete, or for a field that cannot be a trailer.
+    #[napi(catch_unwind)]
+    pub fn set_response_trailers(&self, req_id: u32, flat_trailers: Vec<String>) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some((conn_id, stream_id)) = st
+            .pending
+            .get(req_id)
+            .and_then(|p| Some((p.conn_id, p.h2_stream_id()?)))
+        else {
+            return false;
+        };
+        let pairs: Vec<(&str, &str)> = flat_trailers
+            .chunks_exact(2)
+            .map(|c| (c[0].as_str(), c[1].as_str()))
+            .collect();
+        st.conn_meta
+            .get_mut(conn_id)
+            .and_then(|s| s.h2.as_deref_mut())
+            .is_some_and(|h2| h2.set_response_trailers(stream_id, &pairs))
     }
 
     /// Return validated HTTP/1.1 chunked or HTTP/2 trailing headers as `[name, value, ...]`.
@@ -4684,14 +4713,14 @@ impl UvHttpServer {
         let st = self.shared.borrow();
         st.conn_meta.slots.iter().any(|s| {
             s.h2.as_ref()
-                .is_some_and(|h| h.active_response_streams() > 0)
+                .is_some_and(|h| h.active_response_streams() > 0 || h.shutdown_pending())
         })
     }
 
     #[napi(catch_unwind)]
     pub fn stop_listening(&self) {
         self.server.stop_listening();
-        // Send HTTP/2 GOAWAY(NO_ERROR) so open H2 sessions finish in-flight streams and close.
+        // HTTP/2 sessions finish their in-flight streams and close; requests crossing this are served.
         let mut st = self.shared.borrow_mut();
         let UvHttpShared {
             ref mut conn_meta,
@@ -4706,9 +4735,8 @@ impl UvHttpServer {
         for cid in conn_ids {
             if let Some(h2) = conn_meta.get_mut(cid).and_then(|s| s.h2.as_deref_mut()) {
                 scratch_frame.clear();
-                h2.send_goaway(ERR_NO_ERROR, scratch_frame);
-                let close_now = h2.active_response_streams() == 0;
-                let _ = self.server.write_to_conn(cid, scratch_frame, close_now);
+                h2.begin_shutdown(scratch_frame);
+                let _ = self.server.write_to_conn(cid, scratch_frame, false);
             }
         }
     }
@@ -5343,6 +5371,27 @@ pub fn create_uv_server(
         }
         if let Some(h2) = opts.http2 {
             http2_enabled = h2;
+        }
+        // Out-of-range values are clamped to what the protocol allows; the adapter refuses them.
+        if let Some(v) = opts.http2_initial_window_size {
+            h2_cfg.initial_window_size = v.min(0x7FFF_FFFF);
+        }
+        if let Some(v) = opts.http2_connection_window_size {
+            h2_cfg.connection_window_size = v.clamp(65_535, 0x7FFF_FFFF);
+        }
+        if let Some(v) = opts.http2_max_frame_size {
+            h2_cfg.max_frame_size = (v as usize).clamp(16_384, 16_777_215);
+        }
+        if let Some(v) = opts.http2_header_table_size {
+            h2_cfg.header_table_size = (v as usize).min(65_536);
+        }
+        if let Some(v) = opts.http2_max_send_buffer {
+            h2_cfg.max_send_buffer = (v as usize).max(1);
+        }
+        let millis = |v: u32| std::time::Duration::from_millis(u64::from(v));
+        h2_cfg.ping_interval = opts.http2_ping_interval_ms.filter(|&v| v > 0).map(millis);
+        if let Some(v) = opts.http2_ping_timeout_ms.filter(|&v| v > 0) {
+            h2_cfg.ping_timeout = millis(v);
         }
         if let Some(mcs) = opts.http2_max_concurrent_streams {
             h2_cfg.max_concurrent_streams = mcs.max(1);
