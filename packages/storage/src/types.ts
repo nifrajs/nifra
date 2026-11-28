@@ -15,12 +15,21 @@ export interface PutOptions {
   readonly metadata?: Readonly<Record<string, string>>
 }
 
-/** An object read back from storage. `body` is buffered (not streamed) - fine for typical uploads. */
-export interface StorageObject {
-  readonly body: Uint8Array
+/** Metadata for a stored object, without buffering its bytes. */
+export interface StorageObjectMetadata {
   readonly size: number
   readonly contentType?: string
   readonly metadata?: Readonly<Record<string, string>>
+}
+
+/** An object read back from storage. `body` is buffered (not streamed) - fine for typical uploads. */
+export interface StorageObject extends StorageObjectMetadata {
+  readonly body: Uint8Array
+}
+
+/** A streamed object read back from storage without buffering the full payload in memory. */
+export interface StorageStreamObject extends StorageObjectMetadata {
+  readonly body: ReadableStream<Uint8Array>
 }
 
 export interface ListOptions {
@@ -76,6 +85,16 @@ export interface StorageAdapter {
   exists(key: string): Promise<boolean>
   /** List stored keys (optionally filtered by prefix + capped). */
   list(options?: ListOptions): Promise<string[]>
+}
+
+/** Optional streaming and metadata-only capability for large objects without full-body buffering. */
+export interface StreamableStorageAdapter extends StorageAdapter {
+  /** Read object size and metadata without reading its bytes, or `null` if absent. */
+  head(key: string): Promise<StorageObjectMetadata | null>
+  /** Read the object at `key` as a byte stream, or `null` if it doesn't exist. */
+  getStream(key: string): Promise<StorageStreamObject | null>
+  /** Store a byte stream under `key`, overwriting any existing object. */
+  putStream(key: string, stream: ReadableStream<Uint8Array>, options?: PutOptions): Promise<void>
 }
 
 /** Optional cursor-listing capability. Kept out of {@link StorageAdapter} for simple stores. */

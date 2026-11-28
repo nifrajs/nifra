@@ -617,9 +617,46 @@
         "@nifrajs/node": "workspace:*",
         "typescript": "^6.0.3",
       },
+      "optionalDependencies": {
+        "@nifrajs/node-engine-darwin-arm64": "workspace:*",
+        "@nifrajs/node-engine-darwin-x64": "workspace:*",
+        "@nifrajs/node-engine-linux-arm64-gnu": "workspace:*",
+        "@nifrajs/node-engine-linux-arm64-musl": "workspace:*",
+        "@nifrajs/node-engine-linux-x64-gnu": "workspace:*",
+        "@nifrajs/node-engine-linux-x64-musl": "workspace:*",
+        "@nifrajs/node-engine-win32-x64": "workspace:*",
+      },
       "peerDependencies": {
         "@nifrajs/node": "^5.14.0",
       },
+    },
+    "packages/node-engine-darwin-arm64": {
+      "name": "@nifrajs/node-engine-darwin-arm64",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-darwin-x64": {
+      "name": "@nifrajs/node-engine-darwin-x64",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-linux-arm64-gnu": {
+      "name": "@nifrajs/node-engine-linux-arm64-gnu",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-linux-arm64-musl": {
+      "name": "@nifrajs/node-engine-linux-arm64-musl",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-linux-x64-gnu": {
+      "name": "@nifrajs/node-engine-linux-x64-gnu",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-linux-x64-musl": {
+      "name": "@nifrajs/node-engine-linux-x64-musl",
+      "version": "5.17.0",
+    },
+    "packages/node-engine-win32-x64": {
+      "name": "@nifrajs/node-engine-win32-x64",
+      "version": "5.17.0",
     },
     "packages/node-uws": {
       "name": "@nifrajs/node-uws",
@@ -1458,6 +1495,20 @@
     "@nifrajs/node": ["@nifrajs/node@workspace:packages/node"],
 
     "@nifrajs/node-engine": ["@nifrajs/node-engine@workspace:packages/node-engine"],
+
+    "@nifrajs/node-engine-darwin-arm64": ["@nifrajs/node-engine-darwin-arm64@workspace:packages/node-engine-darwin-arm64"],
+
+    "@nifrajs/node-engine-darwin-x64": ["@nifrajs/node-engine-darwin-x64@workspace:packages/node-engine-darwin-x64"],
+
+    "@nifrajs/node-engine-linux-arm64-gnu": ["@nifrajs/node-engine-linux-arm64-gnu@workspace:packages/node-engine-linux-arm64-gnu"],
+
+    "@nifrajs/node-engine-linux-arm64-musl": ["@nifrajs/node-engine-linux-arm64-musl@workspace:packages/node-engine-linux-arm64-musl"],
+
+    "@nifrajs/node-engine-linux-x64-gnu": ["@nifrajs/node-engine-linux-x64-gnu@workspace:packages/node-engine-linux-x64-gnu"],
+
+    "@nifrajs/node-engine-linux-x64-musl": ["@nifrajs/node-engine-linux-x64-musl@workspace:packages/node-engine-linux-x64-musl"],
+
+    "@nifrajs/node-engine-win32-x64": ["@nifrajs/node-engine-win32-x64@workspace:packages/node-engine-win32-x64"],
 
     "@nifrajs/node-uws": ["@nifrajs/node-uws@workspace:packages/node-uws"],
 

@@ -81,7 +81,7 @@ const head = (method: string, path: string, extra = ""): string =>
 const cases: Array<[string, string | Buffer]> = [
   ["GET with fixed headers", head("GET", "/ping")],
   ["GET with a query", head("GET", "/ping?a=1&b=%20")],
-  ["POST with a body", Buffer.from(head("POST", "/ping", "content-length: 3\r\n") + "abc")],
+  ["POST with a body", Buffer.from(`${head("POST", "/ping", "content-length: 3\r\n")}abc`)],
   [
     "POST with a body over the 1 MB cap",
     Buffer.concat([

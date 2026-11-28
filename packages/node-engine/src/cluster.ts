@@ -1,5 +1,5 @@
 /**
- * EXPERIMENTAL - not for release. One nifra app on every core: a primary process supervises worker
+ * One nifra app on every core: a primary process supervises worker
  * processes that each run the engine on the same port with `SO_REUSEPORT`, so the kernel spreads
  * accepted connections across them.
  *

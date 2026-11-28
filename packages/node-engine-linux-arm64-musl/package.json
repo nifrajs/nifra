@@ -1,0 +1,46 @@
+{
+  "name": "@nifrajs/node-engine-linux-arm64-musl",
+  "version": "5.17.0",
+  "description": "Prebuilt native binary for @nifrajs/node-engine (linux-arm64-musl).",
+  "keywords": [
+    "nifra",
+    "node-engine",
+    "native",
+    "prebuilt",
+    "linux-arm64-musl"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "preferUnplugged": true,
+  "nifra": {
+    "nativePrebuild": "linux-arm64-musl"
+  },
+  "files": [
+    "nifra_napi.node",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/node-engine-linux-arm64-musl"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

@@ -25,7 +25,7 @@ Blob storage mechanics for nifra - traversal-safe memory, filesystem, and R2 ada
 - **PresignableStorageAdapter** _(interface)_ - `interface PresignableStorageAdapter`
 - **PutOptions** _(interface)_ - `interface PutOptions`
 
-_…and 15 more - see [`api-reference.md`](../../api-reference.md#nifrajsstorage) for the complete list._
+_…and 18 more - see [`api-reference.md`](../../api-reference.md#nifrajsstorage) for the complete list._
 
 ## Footguns
 

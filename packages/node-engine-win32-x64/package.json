@@ -1,0 +1,43 @@
+{
+  "name": "@nifrajs/node-engine-win32-x64",
+  "version": "5.17.0",
+  "description": "Prebuilt native binary for @nifrajs/node-engine (win32-x64).",
+  "keywords": [
+    "nifra",
+    "node-engine",
+    "native",
+    "prebuilt",
+    "win32-x64"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "preferUnplugged": true,
+  "nifra": {
+    "nativePrebuild": "win32-x64"
+  },
+  "files": [
+    "nifra_napi.node",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/node-engine-win32-x64"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

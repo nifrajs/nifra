@@ -136,7 +136,7 @@ jobs:
   # Passes only when every group passed. A run cancelled by a newer push reports nothing here.
   release-verification:
     name: release-verification
-    needs: verify-release-pr
+    needs: [verify-release-pr, build-native]
     if: >-
       !cancelled() &&
       github.event_name == 'pull_request' &&
@@ -146,10 +146,88 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Every release verification group passed
-        run: test "$RESULT" = success
+      - name: Every release verification group and native build passed
+        run: test "$RESULT" = success && test "$NATIVE_RESULT" = success
         env:
           RESULT: ${{ needs.verify-release-pr.result }}
+          NATIVE_RESULT: ${{ needs.build-native.result }}
+
+  build-native:
+    name: build-native (${{ matrix.tag }})
+    needs: [prove-release]
+    if: >-
+      always() && !cancelled() &&
+      ((github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')) ||
+      needs.prove-release.outputs.is_release == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: darwin-arm64, os: macos-latest, triple: aarch64-apple-darwin }
+          - { tag: darwin-x64, os: macos-latest, triple: x86_64-apple-darwin }
+          - { tag: linux-x64-gnu, os: ubuntu-26.04, triple: x86_64-unknown-linux-gnu }
+          - { tag: linux-x64-musl, os: ubuntu-26.04, triple: x86_64-unknown-linux-musl }
+          - { tag: linux-arm64-gnu, os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-gnu }
+          - { tag: linux-arm64-musl, os: ubuntu-24.04-arm, triple: aarch64-unknown-linux-musl }
+          - { tag: win32-x64, os: windows-latest, triple: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the validated release commit
+        if: needs.prove-release.outputs.is_release == 'true'
+        env:
+          RELEASE_SHA: ${{ needs.prove-release.outputs.publish_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          expected_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git checkout --detach "$expected_sha"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+          no-cache: true
+
+      - name: Install musl toolchain on Linux musl legs
+        if: endsWith(matrix.tag, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.triple }}"
+
+      - name: Build native addon
+        run: >-
+          RUSTFLAGS="--remap-path-prefix=$PWD=nifra --remap-path-prefix=$HOME=builder"
+          cargo build --release --locked --manifest-path native/nifra-engine/Cargo.toml
+          --target "${{ matrix.triple }}" -p nifra-napi
+
+      - name: Stage native addon into platform package
+        run: bun run scripts/stage-native-addon.ts --package --target "${{ matrix.triple }}" --tag "${{ matrix.tag }}"
+
+      - name: Upload native addon
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-addon-${{ matrix.tag }}
+          path: packages/node-engine-${{ matrix.tag }}/nifra_napi.node
+          if-no-files-found: error
+          retention-days: 1
 
   prove-release:
     name: prove-release
@@ -359,7 +437,7 @@ jobs:
 
   publish:
     name: publish-release
-    needs: [prove-release, build-release]
+    needs: [prove-release, build-release, build-native]
     if: needs.prove-release.outputs.is_release == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -431,6 +509,23 @@ jobs:
           digest-mismatch: error
           merge-multiple: true
           path: packages
+
+      - name: Download prebuilt native engine binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: native-addon-*
+          merge-multiple: false
+          path: .native-addons
+
+      - name: Stage prebuilt native engine binaries into packages
+        run: |
+          set -euo pipefail
+          for tag in darwin-arm64 darwin-x64 linux-arm64-gnu linux-arm64-musl linux-x64-gnu linux-x64-musl win32-x64; do
+            src=".native-addons/native-addon-${tag}/nifra_napi.node"
+            test -s "$src"
+            cp "$src" "packages/node-engine-${tag}/nifra_napi.node"
+          done
+          rm -rf .native-addons
 
       # Ignoring scripts keeps a package's prepack build out of this job too.
       - name: Publish versioned packages

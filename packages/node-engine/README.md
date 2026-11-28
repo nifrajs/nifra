@@ -256,3 +256,7 @@ ROOT="$PWD" MORO_DIR="$PWD/packages/node-engine/bench/moro" NIFRA_RUST_ENGINE_PA
 ```
 
 Numbers that are reported come from the `Engine compare` workflow (manual dispatch), not from a developer machine. Configuration is environment: `ROUNDS`, `DURATION`, `TARGETS`, `WORKLOADS`, `OUT`.
+
+## For AI agents
+
+See the [package contract card](./LLM.md) and the [full Nifra corpus](../../llms-full.txt).

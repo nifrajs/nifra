@@ -848,3 +848,32 @@ describe("multipartBody on every body lane", () => {
     })
   }
 })
+
+describe("multipartBody KMP and empty-part edge cases", () => {
+  test("handles multi-character self-overlapping boundary past linear fallback", async () => {
+    const boundary = "abababx"
+    const parts: Part[] = [
+      { name: "pad", filename: "pad.bin", value: "ab".repeat(2_000) },
+      { name: "ok", value: "yes" },
+    ]
+    const response = await echo({ maxFields: 1, maxFiles: 1 }).fetch(
+      upload(encode(parts, boundary), `multipart/form-data; boundary=${boundary}`),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: "yes" })
+  })
+
+  test("distinguishes empty parts from non-empty parts with CR/LF boundary values", async () => {
+    const response = await echo({ maxFields: 2, maxFiles: 1 }).fetch(
+      upload(
+        encode([
+          { name: "a", value: "\r" },
+          { name: "b", value: "\n" },
+          { name: "empty", filename: "", type: "application/octet-stream", value: "" },
+        ]),
+      ),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ a: "\r", b: "\n" })
+  })
+})

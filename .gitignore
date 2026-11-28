@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+packages/node-engine/prebuilds/
+packages/node-engine-*/nifra_napi.node
 *.tgz
 *.tsbuildinfo
 .astro/

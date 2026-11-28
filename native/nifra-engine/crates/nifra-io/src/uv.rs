@@ -303,6 +303,17 @@ impl UvServer {
         }
     }
 
+    /// Return the DER-encoded client certificate chain (leaf first) if mTLS presented one.
+    pub fn peer_certs_der(&self, conn_id: u32) -> Option<Vec<Vec<u8>>> {
+        match &self.backend {
+            ServerBackend::Uv(state) => UvPollState::peer_certs_der(state, conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Epoll(ep) => ep.peer_certs_der(conn_id),
+            #[cfg(target_os = "linux")]
+            ServerBackend::Uring(ur) => ur.peer_certs_der(conn_id),
+        }
+    }
+
     /// Queue plaintext HTTP/WS/H2 bytes to write to `conn_id` (encrypted automatically when TLS is active).
     pub fn write_to_conn(&self, conn_id: u32, bytes: &[u8], close_after: bool) -> WriteResult {
         match &self.backend {
@@ -707,6 +718,14 @@ impl UvPollState {
             .conns
             .get(conn_id)
             .and_then(|c| c.core.alpn_protocol())
+    }
+
+    fn peer_certs_der(state: &Rc<RefCell<Self>>, conn_id: u32) -> Option<Vec<Vec<u8>>> {
+        state
+            .borrow()
+            .conns
+            .get(conn_id)
+            .and_then(|c| c.core.peer_certs_der())
     }
 
     fn write_to_conn(

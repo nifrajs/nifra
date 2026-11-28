@@ -1,11 +1,29 @@
 /**
- * EXPERIMENTAL - not for release. Option and handler types for `@nifrajs/node-engine`, and the
+ * Option and handler types for `@nifrajs/node-engine`, and the
  * app-introspection helpers the server reads its limits from.
  */
+import type { X509Certificate } from "node:crypto"
+import type { Duplex } from "node:stream"
 import type { HostPolicyOptions, NodeServeOutcome, NodeStopOptions } from "@nifrajs/node/transport"
 import type { WsUpgradeOutcome } from "./generated/ws-types.ts"
 
 export type { NodeStopOptions } from "@nifrajs/node/transport"
+
+/** Parsed mTLS peer certificate information exposed by {@link getPeerCertificate}. */
+export interface PeerCertificateInfo {
+  readonly subject: string
+  readonly issuer: string
+  readonly subjectAltName: string | undefined
+  readonly validFrom: string
+  readonly validTo: string
+  readonly serialNumber: string
+  readonly fingerprint: string
+  readonly fingerprint256: string
+  readonly fingerprint512: string
+  readonly raw: Buffer
+  readonly x509: X509Certificate
+  readonly issuerCertificate?: PeerCertificateInfo
+}
 
 /**
  * What `ws.raw` is on this transport: the engine keeps no socket object to hand out, so this is the
@@ -21,6 +39,8 @@ export interface EngineSocket {
   remoteAddress(): string | undefined
   /** Queued outbound socket bytes currently waiting for the peer to read. */
   getBufferedAmount(): number
+  /** The mTLS client certificate presented on the underlying TLS connection, or `null`. */
+  getPeerCertificate?(detailed?: boolean): PeerCertificateInfo | null
 }
 
 /** Per-hostname certificate entry for TLS Server Name Indication (SNI), matching exact or single-level wildcard (`*.example.com`). */
@@ -207,6 +227,13 @@ export interface FetchHandler {
   ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
 
+/** Handler invoked for HTTP/1.1 or HTTP/2 `CONNECT` tunnel requests. */
+export type ConnectHandler = (
+  request: Request,
+  socket: Duplex,
+  head: Buffer,
+) => undefined | Response | Promise<undefined | Response>
+
 export interface ServeOptions extends HostPolicyOptions {
   /** TCP port to bind (`0` for ephemeral). Omit for {@link path} or an inherited listener descriptor. */
   readonly port?: number
@@ -267,6 +294,8 @@ export interface ServeOptions extends HostPolicyOptions {
   readonly wsDeflate?: boolean | WsDeflateOptions
   /** Any other engine limit or timeout, passed through as given. */
   readonly engine?: EngineTuning
+  /** Optional handler for HTTP/1.1 and HTTP/2 `CONNECT` tunnel requests. */
+  readonly onConnect?: ConnectHandler
   /** SIGTERM/SIGINT call `stop()`; off by default, as in `@nifrajs/node`. */
   readonly gracefulSignals?: boolean | NodeStopOptions
 }

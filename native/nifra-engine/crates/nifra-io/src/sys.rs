@@ -969,6 +969,14 @@ impl ConnCore {
             .as_ref()
             .and_then(|t| t.alpn_protocol().map(|p| p.to_vec()))
     }
+
+    pub fn peer_certs_der(&self) -> Option<Vec<Vec<u8>>> {
+        self.tls
+            .as_ref()?
+            .peer_certificates()
+            .filter(|certs| !certs.is_empty())
+            .map(|certs| certs.iter().map(|c| c.as_ref().to_vec()).collect())
+    }
 }
 
 /// How long a refused peer has to read its answer and stop sending.

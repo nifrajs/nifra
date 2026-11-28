@@ -31,6 +31,7 @@ import {
   type StoragePresignedUrl,
   type StoragePresignOperation,
   type StoragePresignOptions,
+  type StreamableStorageAdapter,
   toBytes,
 } from "../src/index.ts"
 import { racePuts } from "./race-puts.ts"
@@ -43,15 +44,38 @@ class FakeR2 implements R2BucketLike {
     { body: Uint8Array; ct?: string; meta?: Record<string, string> }
   >()
 
-  put(
+  async put(
     key: string,
-    value: ArrayBuffer | ArrayBufferView,
+    value: ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>,
     options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
   ): Promise<unknown> {
-    const body =
-      value instanceof ArrayBuffer
-        ? new Uint8Array(value)
-        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    let body: Uint8Array
+    if (value instanceof ReadableStream) {
+      const reader = value.getReader()
+      const chunks: Uint8Array[] = []
+      let total = 0
+      try {
+        for (;;) {
+          const { done, value: chunk } = await reader.read()
+          if (done) break
+          chunks.push(chunk)
+          total += chunk.byteLength
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      body = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        body.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+    } else {
+      body =
+        value instanceof ArrayBuffer
+          ? new Uint8Array(value)
+          : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    }
     const ct = options?.httpMetadata?.contentType
     const meta = options?.customMetadata
     this.m.set(key, {
@@ -59,15 +83,28 @@ class FakeR2 implements R2BucketLike {
       ...(ct !== undefined ? { ct } : {}),
       ...(meta !== undefined ? { meta } : {}),
     })
-    return Promise.resolve(undefined)
+    return undefined
   }
 
-  get(key: string): Promise<(R2ObjectLike & { arrayBuffer(): Promise<ArrayBuffer> }) | null> {
+  get(key: string): Promise<
+    | (R2ObjectLike & {
+        readonly body?: ReadableStream<Uint8Array>
+        arrayBuffer(): Promise<ArrayBuffer>
+      })
+    | null
+  > {
     const e = this.m.get(key)
     if (e === undefined) return Promise.resolve(null)
+    const snapshot = e.body.slice()
     return Promise.resolve({
-      size: e.body.byteLength,
-      arrayBuffer: () => Promise.resolve(e.body.slice().buffer),
+      size: snapshot.byteLength,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (snapshot.byteLength > 0) controller.enqueue(snapshot)
+          controller.close()
+        },
+      }),
+      arrayBuffer: () => Promise.resolve(snapshot.buffer),
       ...(e.ct !== undefined ? { httpMetadata: { contentType: e.ct } } : {}),
       ...(e.meta !== undefined ? { customMetadata: e.meta } : {}),
     })
@@ -75,7 +112,15 @@ class FakeR2 implements R2BucketLike {
 
   head(key: string): Promise<R2ObjectLike | null> {
     const e = this.m.get(key)
-    return Promise.resolve(e === undefined ? null : { size: e.body.byteLength })
+    if (e === undefined) return Promise.resolve(null)
+    const metadata: {
+      size: number
+      httpMetadata?: { contentType: string }
+      customMetadata?: Record<string, string>
+    } = { size: e.body.byteLength }
+    if (e.ct !== undefined) metadata.httpMetadata = { contentType: e.ct }
+    if (e.meta !== undefined) metadata.customMetadata = e.meta
+    return Promise.resolve(metadata)
   }
 
   delete(key: string): Promise<void> {
@@ -177,7 +222,7 @@ function present<T>(value: T | null): T {
   return value
 }
 
-const adapters: Array<[string, () => Promise<StorageAdapter>]> = [
+const adapters: Array<[string, () => Promise<StreamableStorageAdapter>]> = [
   ["MemoryStorage", () => Promise.resolve(new MemoryStorage())],
   ["FileStorage", () => freshFileStorage()],
   ["R2Storage(fake)", () => Promise.resolve(new R2Storage(new FakeR2()))],
@@ -232,6 +277,34 @@ for (const [name, make] of adapters) {
     test("rejects unsafe keys (traversal)", async () => {
       const s = await make()
       await expect(s.put("../escape", "x")).rejects.toThrow()
+    })
+
+    test("head, putStream, and getStream round-trip bytes and metadata", async () => {
+      const s = await make()
+      expect(await s.head("missing")).toBeNull()
+      expect(await s.getStream("missing")).toBeNull()
+      const chunks = [new TextEncoder().encode("hello "), new TextEncoder().encode("stream")]
+      const input = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk)
+          controller.close()
+        },
+      })
+      await s.putStream("streamed/data.txt", input, {
+        contentType: "text/plain",
+        metadata: { mode: "stream" },
+      })
+      const meta = present(await s.head("streamed/data.txt"))
+      expect(meta.size).toBe(12)
+      expect(meta.contentType).toBe("text/plain")
+      expect(meta.metadata).toEqual({ mode: "stream" })
+
+      const streamed = present(await s.getStream("streamed/data.txt"))
+      expect(streamed.size).toBe(12)
+      expect(streamed.contentType).toBe("text/plain")
+      expect(streamed.metadata).toEqual({ mode: "stream" })
+      const text = await new Response(streamed.body).text()
+      expect(text).toBe("hello stream")
     })
   })
 }

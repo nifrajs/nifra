@@ -1,8 +1,19 @@
 {
   "name": "@nifrajs/node-engine",
   "version": "5.17.0",
-  "private": true,
-  "description": "EXPERIMENTAL, not for release: serve a nifra app from Node on the in-repo Rust engine (native/nifra-engine) - the node-direct lane over a libuv-polled native HTTP/1.1, HTTP/2, TLS and WebSocket server.",
+  "description": "Serve a nifra app from Node on Nifra's native Rust engine (HTTP/1.1, HTTP/2, TLS, WebSocket, and CONNECT tunnels over libuv/epoll/io_uring).",
+  "keywords": [
+    "nifra",
+    "node",
+    "http",
+    "http2",
+    "websocket",
+    "tls",
+    "native",
+    "rust",
+    "adapter",
+    "server"
+  ],
   "type": "module",
   "nifra": {
     "environment": "backend"
@@ -22,7 +33,9 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "scripts": {
@@ -34,10 +47,31 @@
   "peerDependencies": {
     "@nifrajs/node": "^5.14.0"
   },
+  "optionalDependencies": {
+    "@nifrajs/node-engine-darwin-arm64": "workspace:*",
+    "@nifrajs/node-engine-darwin-x64": "workspace:*",
+    "@nifrajs/node-engine-linux-arm64-gnu": "workspace:*",
+    "@nifrajs/node-engine-linux-arm64-musl": "workspace:*",
+    "@nifrajs/node-engine-linux-x64-gnu": "workspace:*",
+    "@nifrajs/node-engine-linux-x64-musl": "workspace:*",
+    "@nifrajs/node-engine-win32-x64": "workspace:*"
+  },
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
     "@nifrajs/node": "workspace:*",
     "typescript": "^6.0.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/node-engine"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
 }

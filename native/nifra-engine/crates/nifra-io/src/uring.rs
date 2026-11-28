@@ -538,6 +538,14 @@ impl UringServer {
             .and_then(|c| c.core.alpn_protocol())
     }
 
+    pub fn peer_certs_der(&self, conn_id: u32) -> Option<Vec<Vec<u8>>> {
+        self.state
+            .borrow()
+            .conns
+            .get(conn_id)
+            .and_then(|c| c.core.peer_certs_der())
+    }
+
     pub fn write_to_conn(
         &self,
         conn_id: u32,

@@ -1,5 +1,5 @@
 /**
- * EXPERIMENTAL - not for release. Serve a nifra app on Nifra's Rust `libuv` engine (`nifra-napi`):
+ * Serve a nifra app on Nifra's Rust engine (`nifra-napi`):
  * zero-copy `inMeta`/`inData` and `outMeta`/`outData` shared buffers, lazy header/body accessors, and
  * back-pressure-aware streaming over HTTP/1.1, HTTP/2, TLS and WebSocket.
  *
@@ -10,10 +10,12 @@
  * can hold (plus `oversizeWindow`, for answering a body only a little over it); set it to the largest
  * body any route accepts.
  */
-import { createPrivateKey } from "node:crypto"
+import { AsyncResource } from "node:async_hooks"
+import { createPrivateKey, X509Certificate } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { createRequire, Module } from "node:module"
 import { dirname, join, resolve } from "node:path"
+import { Duplex } from "node:stream"
 import { fileURLToPath } from "node:url"
 import { serve as serveNode } from "@nifrajs/node"
 import {
@@ -35,6 +37,12 @@ import { declarativeRoutes, isServerView } from "./generated/declarative-routes.
 import { assertCloseArgs, exceedsPayloadCap } from "./generated/ws-close.ts"
 import type { NifraWs, NifraWsData, WsUpgradeOutcome } from "./generated/ws-types.ts"
 import {
+  beginHttpDiagnostics,
+  type HttpDiagnosticsHandle,
+  hasHttpDiagnosticsSubscribers,
+  SOURCE,
+} from "./node-compat.ts"
+import {
   bodyCeiling,
   type CompressionOptions,
   type EngineServer,
@@ -43,6 +51,7 @@ import {
   type Http2Options,
   isCap,
   mayServeSockets,
+  type PeerCertificateInfo,
   type ProbeResult,
   payloadCeiling,
   type ServeOptions,
@@ -181,6 +190,7 @@ interface RustUvServer {
   wsGetHeaders(socketId: number): string[]
   wsGetQuery(socketId: number): string
   wsGetRemoteAddress(socketId: number): string | null
+  wsGetPeerCertificates(socketId: number): Buffer[]
   wsGetBufferedAmount(socketId: number): number
   wsCorkBegin(socketId: number): boolean
   wsCorkEnd(socketId: number): boolean
@@ -199,8 +209,25 @@ interface RustUvServer {
   getHeaders(reqId: number): string[]
   getTrailers(reqId: number): string[]
   setResponseTrailers(reqId: number, flatTrailers: string[]): boolean
-  getBody(reqId: number): Buffer | null
+  writeInformational(reqId: number, status: number, flatHeaders?: string[] | null): boolean
+  getBody(reqId: number): Buffer<ArrayBuffer> | null
   getRemoteAddress(reqId: number): string | null
+  getPeerCertificates(reqId: number): Buffer[]
+  setConnectCallbacks(
+    onData?: ((tunnelId: number, chunk: Buffer) => void) | null,
+    onEnd?: ((tunnelId: number) => void) | null,
+    onDrain?: ((tunnelId: number) => void) | null,
+  ): void
+  acceptConnect(
+    reqId: number,
+    status?: number | null,
+    flatHeaders?: string[] | null,
+  ): { readonly tunnelId: number; readonly head: Buffer } | null
+  tunnelWrite(tunnelId: number, chunk: Buffer): number
+  tunnelEnd(tunnelId: number): boolean
+  tunnelDestroy(tunnelId: number): boolean
+  tunnelPause(tunnelId: number): boolean
+  tunnelResume(tunnelId: number): boolean
   setStaticRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
   setStaticPostRoute(path: string, status: number, flatHeaders: string[], body: Buffer): void
   setParamRoute(prefix: string, suffix: string, status: number, flatHeaders: string[]): void
@@ -856,13 +883,13 @@ function parseJsonBytes(bytes: Uint8Array): unknown {
 }
 
 interface ReqBodyStreamState {
-  controller?: ReadableStreamDefaultController<Uint8Array> | undefined
-  readonly queue: Uint8Array[]
+  controller?: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined
+  readonly queue: Uint8Array<ArrayBuffer>[]
   queuedBytes: number
   paused: boolean
   ended: boolean
   cancelled: boolean
-  stream?: ReadableStream<Uint8Array> | undefined
+  stream?: ReadableStream<Uint8Array<ArrayBuffer>> | undefined
   waiters: Array<(done: boolean, error?: Error) => void>
 }
 
@@ -882,8 +909,106 @@ function terminateReqBodyStream(state: ReqBodyStreamState, err: Error): void {
   for (const wake of waiters) wake(true, err)
 }
 
-const SOURCE = Symbol("nifra.engine.source")
 type SourcedRequest = Request & { [SOURCE]?: RustBatchSource }
+
+const FORBIDDEN_FETCH_METHODS = new Set(["CONNECT", "TRACE", "TRACK"])
+const EMPTY_UINT8 = new Uint8Array(0)
+
+/**
+ * Node's Fetch `new Request(url, { method })` throws on `TRACE`/`CONNECT`/`TRACK` per the Fetch
+ * spec, even though raw HTTP servers (`node:http`, `Bun.serve`) deliver them into handlers.
+ * Prototype-chaining onto `Request.prototype` preserves `instanceof Request` and standard getters
+ * so plain `{ fetch }` handlers can answer `TRACE` (etc.) without a forced 500.
+ */
+const RawMethodRequest = /* @__PURE__ */ (() => {
+  const NativeRequest = globalThis.Request
+  class RawMethodRequest implements Request {
+    readonly method: string
+    readonly url: string
+    readonly headers: Headers
+    readonly signal: AbortSignal
+    readonly cache: Request["cache"] = "default"
+    readonly credentials: Request["credentials"] = "same-origin"
+    readonly destination: Request["destination"] = ""
+    readonly integrity = ""
+    readonly keepalive = false
+    readonly mode: Request["mode"] = "cors"
+    readonly redirect: Request["redirect"] = "follow"
+    readonly referrer = "about:client"
+    readonly referrerPolicy: Request["referrerPolicy"] = ""
+    readonly duplex = "half" as const
+    declare readonly textStream: Request["textStream"]
+    private bodyConsumed = false
+    private bodyValue: Request["body"]
+    private readonly readerSource: RustBatchSource
+
+    constructor(source: RustBatchSource, signal: AbortSignal, body: Request["body"]) {
+      this.readerSource = source
+      this.method = source.method
+      this.url = source.url
+      this.headers = source.headers
+      this.signal = signal
+      this.bodyValue = body
+    }
+
+    get body(): Request["body"] {
+      return this.bodyValue
+    }
+
+    get bodyUsed(): boolean {
+      return this.bodyConsumed || (this.bodyValue?.locked ?? false)
+    }
+
+    private consume(): void {
+      if (this.bodyConsumed) throw new TypeError("Body already used")
+      this.bodyConsumed = true
+    }
+
+    arrayBuffer(): Promise<ArrayBuffer> {
+      this.consume()
+      return this.readerSource.arrayBuffer()
+    }
+
+    bytes(): Promise<Uint8Array<ArrayBuffer>> {
+      this.consume()
+      return this.readerSource.bytes()
+    }
+
+    text(): Promise<string> {
+      this.consume()
+      return this.readerSource
+        .bytes()
+        .then((b) => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("utf8"))
+    }
+
+    json(): Promise<unknown> {
+      this.consume()
+      return this.readerSource.json()
+    }
+
+    blob(): Promise<Blob> {
+      this.consume()
+      const type = this.headers.get("content-type") ?? ""
+      return this.readerSource.bytes().then((b) => new Blob([Uint8Array.from(b)], { type }))
+    }
+
+    formData(): ReturnType<Request["formData"]> {
+      this.consume()
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: undici FormData type in global vs undici-types overlaps identically at runtime
+      return new Response(this.bodyValue ?? EMPTY_UINT8, {
+        headers: this.headers,
+      }).formData() as ReturnType<Request["formData"]>
+    }
+
+    clone(): Request {
+      if (this.bodyUsed) throw new TypeError("Request body is already used")
+      const nextBody = this.bodyValue === null ? null : this.bodyValue.tee()[1]
+      return new RawMethodRequest(this.readerSource, this.signal, nextBody)
+    }
+  }
+  Object.setPrototypeOf(RawMethodRequest.prototype, NativeRequest.prototype)
+  return RawMethodRequest
+})()
 
 /**
  * HTTP/2 only: set the fields the response to `request` ends with, replacing any set before. Call it
@@ -899,6 +1024,63 @@ export function setResponseTrailers(
   return (request as SourcedRequest)[SOURCE]?.setTrailers(trailers) ?? false
 }
 
+/**
+ * Send an HTTP `1xx` informational response (such as `103 Early Hints`) before the final response
+ * is sent for `request`. Supports HTTP/1.1 (including pipelining) and HTTP/2.
+ */
+export function writeInformational(
+  request: Request,
+  status: number,
+  headers: Readonly<Record<string, string | readonly string[]>> = {},
+): boolean {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the tag is optional, so an untagged Request reads as undefined
+  return (request as SourcedRequest)[SOURCE]?.writeInformational(status, headers) ?? false
+}
+
+/**
+ * Send a `103 Early Hints` informational response before the final response for `request`.
+ */
+export function writeEarlyHints(
+  request: Request,
+  hints: Readonly<Record<string, string | readonly string[]>>,
+): boolean {
+  return writeInformational(request, 103, hints)
+}
+
+function buildPeerCertificate(
+  derChain: readonly Buffer[],
+  detailed: boolean,
+  index = 0,
+): PeerCertificateInfo | null {
+  const der = derChain[index]
+  if (der === undefined) return null
+  const x509 = new X509Certificate(der)
+  const next = detailed ? buildPeerCertificate(derChain, true, index + 1) : null
+  const info: PeerCertificateInfo = {
+    subject: x509.subject,
+    issuer: x509.issuer,
+    subjectAltName: x509.subjectAltName,
+    validFrom: x509.validFrom,
+    validTo: x509.validTo,
+    serialNumber: x509.serialNumber,
+    fingerprint: x509.fingerprint,
+    fingerprint256: x509.fingerprint256,
+    fingerprint512: x509.fingerprint512,
+    raw: x509.raw,
+    x509,
+  }
+  return next === null ? info : { ...info, issuerCertificate: next }
+}
+
+/**
+ * Return the client certificate presented on an mTLS connection for `request`, or `null` when
+ * the request did not arrive over TLS with a client certificate.
+ */
+export function getPeerCertificate(request: Request, detailed = false): PeerCertificateInfo | null {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the tag is optional, so an untagged Request reads as undefined
+  return (request as SourcedRequest)[SOURCE]?.getPeerCertificate(detailed) ?? null
+}
+
 /** Request view backed by the zero-copy `inData` slice with lazy FFI fallback for headers/bodies. */
 class RustBatchSource {
   readonly method: string
@@ -906,6 +1088,9 @@ class RustBatchSource {
   aborted = false
   settled = false
   headWritten = false
+  responseStatus = 200
+  diag: HttpDiagnosticsHandle | undefined
+  asyncScope: AsyncResource | undefined
   onAbort: (() => void) | undefined
   onWritable: (() => void) | undefined
 
@@ -917,11 +1102,12 @@ class RustBatchSource {
   private readonly authority: string | undefined
   private readonly bodyLen: number
   private bodyText: string | null
-  private bodyBytes: Uint8Array | null | undefined
+  private bodyBytes: Uint8Array<ArrayBuffer> | null | undefined
   private streamState: ReqBodyStreamState | undefined
   /** The request's first `Content-Type`: `null` when it had none, `undefined` when not carried (ask the engine). */
   private readonly contentType: string | null | undefined
   private peer: string | undefined
+  private peerCertChain: readonly Buffer[] | undefined
   private urlValue: string | undefined
   private headersValue: Headers | undefined
   private trailersValue: Record<string, string> | undefined
@@ -940,7 +1126,7 @@ class RustBatchSource {
     protocol: string,
     bodyLen: number,
     bodyText: string | null,
-    bodyBytes: Uint8Array | null | undefined,
+    bodyBytes: Uint8Array<ArrayBuffer> | null | undefined,
     contentType: string | null | undefined,
   ) {
     this.server = server
@@ -1044,13 +1230,32 @@ class RustBatchSource {
     return this.peer
   }
 
+  getPeerCertificate(detailed = false): PeerCertificateInfo | null {
+    if (this.peerCertChain === undefined && this.id >= 0) {
+      this.peerCertChain = this.server.getPeerCertificates(this.id)
+    }
+    return this.peerCertChain === undefined
+      ? null
+      : buildPeerCertificate(this.peerCertChain, detailed)
+  }
+
   get url(): string {
     if (this.urlValue === undefined) {
-      const host =
-        this.authority ??
-        (this.id >= 0 ? this.server.getHeader(this.id, "host") : null) ??
-        "localhost"
-      this.urlValue = `${this.protocol}://${host}${this.target}`
+      if (this.method === "CONNECT") {
+        const target =
+          this.target === "/"
+            ? (this.authority ??
+              (this.id >= 0 ? this.server.getHeader(this.id, "host") : null) ??
+              "localhost")
+            : this.target
+        this.urlValue = `${this.protocol}://${target}`
+      } else {
+        const host =
+          this.authority ??
+          (this.id >= 0 ? this.server.getHeader(this.id, "host") : null) ??
+          "localhost"
+        this.urlValue = `${this.protocol}://${host}${this.target}`
+      }
     }
     return this.urlValue
   }
@@ -1111,7 +1316,26 @@ class RustBatchSource {
     return this.server.setResponseTrailers(this.id, Object.entries(trailers).flat())
   }
 
-  private toBytes(): Uint8Array | null {
+  writeInformational(
+    status: number,
+    headers: Readonly<Record<string, string | readonly string[]>>,
+  ): boolean {
+    if (this.id < 0 || this.aborted || this.settled || this.headWritten) return false
+    if (!Number.isInteger(status) || status < 100 || status > 199 || status === 101) return false
+    const flat: string[] = []
+    for (const [name, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          flat.push(name, String(item))
+        }
+      } else {
+        flat.push(name, String(value))
+      }
+    }
+    return this.server.writeInformational(this.id, status, flat)
+  }
+
+  private toBytes(): Uint8Array<ArrayBuffer> | null {
     if (this.bodyBytes !== undefined) return this.bodyBytes
     if (this.bodyText !== null) {
       this.bodyBytes = Buffer.from(this.bodyText)
@@ -1154,12 +1378,12 @@ class RustBatchSource {
     return parts.length === 1 ? (parts[0] ?? NO_BODY_BYTES) : Buffer.concat(parts)
   }
 
-  get body(): ReadableStream<Uint8Array> | null {
+  get body(): Request["body"] {
     const state = this.streamState
     if (state !== undefined) {
       if (state.stream !== undefined) return state.stream
       const source = this
-      state.stream = new ReadableStream<Uint8Array>(
+      state.stream = new ReadableStream<Uint8Array<ArrayBuffer>>(
         {
           start(controller) {
             state.controller = controller
@@ -1204,7 +1428,7 @@ class RustBatchSource {
     }
     const bytes = this.toBytes()
     if (bytes === null) return null
-    return new ReadableStream<Uint8Array>({
+    return new ReadableStream<Uint8Array<ArrayBuffer>>({
       start(controller) {
         if (bytes.byteLength > 0) controller.enqueue(bytes)
         controller.close()
@@ -1228,7 +1452,7 @@ class RustBatchSource {
     return Promise.resolve(copy.buffer)
   }
 
-  bytes(): Promise<Uint8Array> {
+  bytes(): Promise<Uint8Array<ArrayBuffer>> {
     if (this.streamState !== undefined) {
       return this.drainStreamBytes().then((bytes) => new Uint8Array(bytes))
     }
@@ -1320,9 +1544,27 @@ class RustBatchSource {
           if (bytes !== null) init.body = bytes.slice()
         }
       }
-      this.requestValue = new Request(this.url, init)
-      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: an HTTP/2 request is tagged with its own source
-      if (this.isH2) (this.requestValue as SourcedRequest)[SOURCE] = this
+      const built: Request = FORBIDDEN_FETCH_METHODS.has(this.method.toUpperCase())
+        ? (() => {
+            const bytes = this.toBytes()
+            const rawBody =
+              this.streamState !== undefined
+                ? this.body
+                : bytes !== null && bytes.byteLength > 0
+                  ? new ReadableStream<Uint8Array<ArrayBuffer>>({
+                      start(ctrl) {
+                        ctrl.enqueue(bytes.slice())
+                        ctrl.close()
+                      },
+                    })
+                  : null
+            return new RawMethodRequest(this, controller.signal, rawBody)
+          })()
+        : new Request(this.url, init)
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every engine-served request is tagged with its source for per-request controls (trailers, early hints, mTLS peer cert)
+      ;(built as SourcedRequest)[SOURCE] = this
+      this.requestValue = built
+      return built
     }
     return this.requestValue
   }
@@ -1331,6 +1573,7 @@ class RustBatchSource {
 interface RustWsEntry {
   readonly nifra: NifraWs
   readonly upgrade: WsUpgrade
+  readonly asyncScope: AsyncResource
   state: number
   sentClose: readonly [number, string] | undefined
   readonly safe: (call: () => void | Promise<void>) => void
@@ -1486,6 +1729,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   if (options.validateHost !== undefined && typeof options.validateHost !== "boolean") {
     throw new TypeError("@nifrajs/node-engine: `validateHost` must be a boolean")
   }
+  if (options.onConnect !== undefined && typeof options.onConnect !== "function") {
+    throw new TypeError("@nifrajs/node-engine: `onConnect` must be a function")
+  }
   const hasHostPolicy = options.allowedHosts !== undefined || options.canonicalHost !== undefined
   if (options.validateHost === false && hasHostPolicy) {
     throw new TypeError(
@@ -1511,6 +1757,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     throw err
   }
   activateAsyncContextFrame()
+  // Capture the caller's AsyncLocalStorage store at `serve()` time so callbacks invoked directly
+  // from native code inherit it without leaking `enterWith()` mutations across requests.
+  const serveScope = new AsyncResource("nifra.node-engine.serve")
+  let currentRequestScope: AsyncResource | undefined
   enableNodeDirect(app)
   const reporter = errorReporterOf(app)
   // Reporting happens inside recovery paths, which a throwing logger must not cut short.
@@ -1567,6 +1817,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   let bufs: RustBatchBuffers
   const inflight = new Map<number, RustBatchSource>()
   const wsSockets = new Map<number, RustWsEntry>()
+  const connectTunnels = new Map<number, ConnectTunnelSocket>()
+  let serverHandleRef: EngineServer = {
+    port: 0,
+    stop: async () => {},
+    reloadTls: () => {},
+    addServerName: () => {},
+    removeServerName: () => false,
+    [Symbol.asyncDispose]: async () => {},
+  }
   let openingWs: WsUpgrade | undefined
   const jsonTemplates = new Map<number, number>()
   const textTemplates = new Map<number, number>()
@@ -1596,6 +1855,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   const finish = (source: RustBatchSource): void => {
     if (source.settled) return
     source.settled = true
+    source.diag?.finish(source.responseStatus)
     inflight.delete(source.requestId)
     source.release()
   }
@@ -1609,6 +1869,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           // A clean end would tell the client (and any cache) the truncated body is whole.
           uvServer.abortStream(source.requestId)
         } else {
+          source.responseStatus = 500
           uvServer.respondPrepared(source.requestId, tpl500, INTERNAL_ERROR_BUF)
           source.headWritten = true
         }
@@ -1629,6 +1890,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     defaultType: string | undefined,
     headLength?: number,
   ): void => {
+    source.responseStatus = status
     const bodyless = isBodyless(status)
     const flat = validateAndBuildFlatHeaders(
       status,
@@ -1819,6 +2081,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     try {
       if (outcome.kind === "json" || outcome.kind === "body") {
         const { body, headers, status } = outcome
+        source.responseStatus = status
         const cookies = outcome.kind === "json" ? outcome.cookies : undefined
         const type = outcome.kind === "json" ? JSON_CONTENT_TYPE : defaultBodyType
         const len = typeof body === "string" ? Buffer.byteLength(body) : (body?.byteLength ?? 0)
@@ -1867,6 +2130,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       })
       const cookies = response.headers.getSetCookie()
       const status = response.status
+      source.responseStatus = status
       const stream = response.body
       if (stream === null || isBodyless(status)) {
         writeBuffered(
@@ -1903,6 +2167,151 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       )
     } catch (err) {
       fail(source, err)
+    }
+  }
+
+  class ConnectTunnelSocket extends Duplex {
+    tunnelId: number | undefined
+    accepted = false
+    private paused = false
+    private drainCallback: ((error?: Error | null) => void) | undefined
+    readonly source: RustBatchSource
+    readonly asyncScope: AsyncResource
+
+    constructor(source: RustBatchSource, asyncScope: AsyncResource) {
+      super()
+      this.source = source
+      this.asyncScope = asyncScope
+    }
+
+    ensureAccepted(): boolean {
+      if (this.accepted) return this.tunnelId !== undefined
+      this.accepted = true
+      if (closed || this.source.aborted || this.source.settled) return false
+      const res = uvServer.acceptConnect(this.source.requestId)
+      inflight.delete(this.source.requestId)
+      this.source.settled = true
+      this.source.headWritten = true
+      this.source.release()
+      if (res === null) return false
+      this.tunnelId = res.tunnelId
+      connectTunnels.set(res.tunnelId, this)
+      if (res.head.byteLength > 0 && !this.push(res.head)) {
+        this.paused = true
+        uvServer.tunnelPause(res.tunnelId)
+      }
+      return true
+    }
+
+    override _read(): void {
+      if (this.paused && this.tunnelId !== undefined) {
+        this.paused = false
+        uvServer.tunnelResume(this.tunnelId)
+      }
+    }
+
+    override _write(
+      chunk: Buffer | Uint8Array | string,
+      encoding: BufferEncoding,
+      callback: (error?: Error | null) => void,
+    ): void {
+      if (!this.ensureAccepted() || this.tunnelId === undefined) {
+        callback(new Error("CONNECT tunnel closed"))
+        return
+      }
+      const buf = Buffer.isBuffer(chunk)
+        ? chunk
+        : typeof chunk === "string"
+          ? Buffer.from(chunk, encoding)
+          : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+      const res = uvServer.tunnelWrite(this.tunnelId, buf)
+      if (res < 0) {
+        callback(new Error("CONNECT tunnel closed"))
+      } else if (res === 1) {
+        callback()
+      } else {
+        this.drainCallback = callback
+      }
+    }
+
+    override _final(callback: (error?: Error | null) => void): void {
+      if (this.tunnelId !== undefined) {
+        uvServer.tunnelEnd(this.tunnelId)
+      }
+      callback()
+    }
+
+    override _destroy(err: Error | null, callback: (error?: Error | null) => void): void {
+      const cb = this.drainCallback
+      this.drainCallback = undefined
+      if (cb !== undefined) cb(err ?? new Error("CONNECT tunnel destroyed"))
+      if (this.tunnelId !== undefined) {
+        connectTunnels.delete(this.tunnelId)
+        uvServer.tunnelDestroy(this.tunnelId)
+        this.tunnelId = undefined
+      } else if (!this.source.settled && !this.source.aborted) {
+        fail(this.source, err ?? new Error("CONNECT tunnel destroyed"))
+      }
+      callback(err)
+    }
+
+    onEngineData(chunk: Buffer): void {
+      if (this.destroyed) return
+      if (!this.push(chunk)) {
+        this.paused = true
+        if (this.tunnelId !== undefined) uvServer.tunnelPause(this.tunnelId)
+      }
+    }
+
+    onEngineEnd(): void {
+      if (this.tunnelId !== undefined) {
+        connectTunnels.delete(this.tunnelId)
+      }
+      const cb = this.drainCallback
+      this.drainCallback = undefined
+      if (cb !== undefined) cb(new Error("CONNECT tunnel closed"))
+      this.push(null)
+    }
+
+    onEngineDrain(): void {
+      const cb = this.drainCallback
+      this.drainCallback = undefined
+      if (cb !== undefined) cb()
+    }
+  }
+
+  const dispatchConnect = (
+    source: RustBatchSource,
+    handler: NonNullable<ServeOptions["onConnect"]>,
+  ): void => {
+    const scope = source.asyncScope ?? serveScope
+    const socket = new ConnectTunnelSocket(source, scope)
+    const settle = (settled: Response | undefined): void => {
+      if (settled instanceof Response) {
+        if (!socket.accepted && !source.settled && !source.aborted) {
+          settleOutcome(source, { kind: "response", response: settled }, false)
+        } else {
+          socket.destroy()
+        }
+        return
+      }
+      if (!socket.accepted && !source.settled && !source.aborted) {
+        if (!socket.ensureAccepted()) socket.destroy()
+      }
+    }
+    try {
+      const out = handler(source.request, socket, Buffer.alloc(0))
+      if (out instanceof Promise) {
+        out.then(settle, (err: unknown) => {
+          if (!socket.accepted && !source.settled && !source.aborted) fail(source, err)
+          else socket.destroy(err instanceof Error ? err : undefined)
+        })
+      } else {
+        settle(out)
+      }
+    } catch (err) {
+      if (!socket.accepted && !source.settled && !source.aborted) fail(source, err)
+      else socket.destroy(err instanceof Error ? err : undefined)
     }
   }
 
@@ -2046,6 +2455,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     // Runs from promise continuations too, where a throw would be an unhandled rejection.
     try {
       if (!source.aborted && !source.settled && queueOutcome(source.requestId, outcome, isHead)) {
+        source.responseStatus =
+          outcome.kind === "response" ? outcome.response.status : outcome.status
         finish(source)
         flushSoon()
         return
@@ -2124,7 +2535,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     const search = queryStart === -1 ? "" : target.slice(queryStart)
 
     let bodyText: string | null = null
-    let bodyBytes: Uint8Array | null | undefined
+    let bodyBytes: Uint8Array<ArrayBuffer> | null | undefined
     if ((flags & FLAG_HAS_BODY) !== 0 && (flags & (FLAG_LARGE_BODY | FLAG_STREAM_BODY)) === 0) {
       if ((flags & FLAG_IS_ASCII_BODY) !== 0) {
         bodyText = inData.toString("latin1", bodyOff, bodyOff + bodyLen)
@@ -2165,6 +2576,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       bodyBytes,
       contentType,
     )
+    source.asyncScope = currentRequestScope
+    if (hasHttpDiagnosticsSubscribers()) {
+      source.diag = beginHttpDiagnostics(source.request, source, serverHandleRef)
+    }
 
     if (staticResolver !== undefined && (methodIdx === 0 || methodIdx === 5)) {
       let staticAnswer: NodeServeOutcome | Promise<NodeServeOutcome | undefined> | undefined
@@ -2209,6 +2624,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       return
     }
 
+    if (method === "CONNECT" && options.onConnect !== undefined) {
+      inflight.set(reqId, source)
+      dispatchConnect(source, options.onConnect)
+      return
+    }
+
     try {
       const outcome = outcomeOf(source)
 
@@ -2219,6 +2640,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
           (err: unknown) => fail(source, err),
         )
       } else if (queueOutcome(reqId, outcome, isHead)) {
+        source.responseStatus =
+          outcome.kind === "response" ? outcome.response.status : outcome.status
+        source.diag?.finish(source.responseStatus)
         source.settled = true
         source.release()
       } else {
@@ -2233,19 +2657,32 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     }
   }
 
-  const onBatch = (count: number): void => {
-    for (let i = 0; i < count; i++) {
-      try {
-        dispatchBatched(i)
-      } catch (error) {
-        // An exception out of this callback is uncaught and ends the process.
-        report?.(error)
-        const reqId = bufs.inMeta[i * bufs.inSlotU32s] ?? 0
-        const source = inflight.get(reqId)
-        if (source === undefined) queueSync(reqId, tpl500, INTERNAL_ERROR_BODY)
-        else fail(source, error)
-      }
+  const dispatchIsolated = (index: number): void => {
+    const reqScope = new AsyncResource("nifra.node-engine.request")
+    const prev = currentRequestScope
+    currentRequestScope = reqScope
+    try {
+      reqScope.runInAsyncScope(dispatchBatched, undefined, index)
+    } finally {
+      currentRequestScope = prev
     }
+  }
+
+  const onBatch = (count: number): void => {
+    serveScope.runInAsyncScope(() => {
+      for (let i = 0; i < count; i++) {
+        try {
+          dispatchIsolated(i)
+        } catch (error) {
+          // An exception out of this callback is uncaught and ends the process.
+          report?.(error)
+          const reqId = bufs.inMeta[i * bufs.inSlotU32s] ?? 0
+          const source = inflight.get(reqId)
+          if (source === undefined) queueSync(reqId, tpl500, INTERNAL_ERROR_BODY)
+          else fail(source, error)
+        }
+      }
+    })
 
     flush()
   }
@@ -2399,6 +2836,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       query: () => uvServer.wsGetQuery(id),
       remoteAddress: () => uvServer.wsGetRemoteAddress(id) ?? undefined,
       getBufferedAmount: () => (entry.state === WS_OPEN ? uvServer.wsGetBufferedAmount(id) : 0),
+      getPeerCertificate: (detailed = false) =>
+        buildPeerCertificate(uvServer.wsGetPeerCertificates(id), detailed),
     }
     const nifra: NifraWs = {
       send: upgrade.sender === undefined ? rawSend : upgrade.sender(handler, rawSend, reportError),
@@ -2435,9 +2874,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       data,
       raw: handle,
     }
+    const wsScope = new AsyncResource("nifra.node-engine.ws")
     const entry: RustWsEntry = {
       nifra,
       upgrade,
+      asyncScope: wsScope,
       state: WS_OPEN,
       sentClose: undefined,
       safe,
@@ -2445,7 +2886,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       closeSocket,
     }
     wsSockets.set(id, entry)
-    safe(() => handler.open?.(nifra))
+    new AsyncResource("nifra.node-engine.ws-event").runInAsyncScope(() => {
+      safe(() => handler.open?.(nifra))
+    })
   }
 
   let currentTls = options.tls
@@ -2600,40 +3043,87 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
         report?.(error)
       }
     }
+  const runInWsEventScope = (entry: RustWsEntry, fn: () => void): void => {
+    entry.asyncScope.runInAsyncScope(() => {
+      new AsyncResource("nifra.node-engine.ws-event").runInAsyncScope(fn)
+    })
+  }
+
   uvServer.setStreamCallbacks(
-    guarded((reqId) => inflight.get(reqId)?.onWritable?.()),
-    guarded(abortRequest),
+    guarded((reqId) => {
+      const source = inflight.get(reqId)
+      if (source === undefined) return
+      const scope = source.asyncScope ?? serveScope
+      scope.runInAsyncScope(() => source.onWritable?.())
+    }),
+    guarded((reqId) => {
+      const source = inflight.get(reqId)
+      const scope = source?.asyncScope ?? serveScope
+      scope.runInAsyncScope(abortRequest, undefined, reqId)
+    }),
   )
   if (streamRequestBodies === true) {
     uvServer.setReqBodyCallback(
       guarded((reqId, chunk, isLast) => {
-        inflight.get(reqId)?.pushBodyChunk(chunk, isLast)
+        const source = inflight.get(reqId)
+        if (source === undefined) return
+        const scope = source.asyncScope ?? serveScope
+        scope.runInAsyncScope(() => source.pushBodyChunk(chunk, isLast))
       }),
     )
   }
   uvServer.setWsCallbacks(
     guarded((socketId) => {
-      if (openingWs !== undefined) openWs(socketId, openingWs)
+      if (openingWs !== undefined) {
+        const scope = AsyncResource.bind((id: number, upgrade: WsUpgrade) => openWs(id, upgrade))
+        scope(socketId, openingWs)
+      }
     }),
     guarded((socketId, data) => {
       const entry = wsSockets.get(socketId)
       if (entry === undefined || entry.state !== WS_OPEN) return
       const { handler, maxPayloadBytes } = entry.upgrade
       if (maxPayloadBytes !== undefined && exceedsPayloadCap(data, maxPayloadBytes)) {
-        entry.closeSocket(1009, "message too large")
+        runInWsEventScope(entry, () => entry.closeSocket(1009, "message too large"))
         return
       }
       const payload: NifraWsData = typeof data === "string" ? data : new Uint8Array(data)
-      entry.safe(() => handler.message?.(entry.nifra, payload))
+      runInWsEventScope(entry, () => entry.safe(() => handler.message?.(entry.nifra, payload)))
     }),
-    guarded(finishSocket),
+    guarded((socketId, code, peerReason) => {
+      const entry = wsSockets.get(socketId)
+      if (entry === undefined) {
+        finishSocket(socketId, code, peerReason)
+        return
+      }
+      runInWsEventScope(entry, () => finishSocket(socketId, code, peerReason))
+    }),
     guarded((socketId) => {
       const entry = wsSockets.get(socketId)
       if (entry === undefined || entry.state !== WS_OPEN) return
       const { handler } = entry.upgrade
-      entry.safe(() => handler.drain?.(entry.nifra))
+      runInWsEventScope(entry, () => entry.safe(() => handler.drain?.(entry.nifra)))
     }),
   )
+  if (options.onConnect !== undefined) {
+    uvServer.setConnectCallbacks(
+      guarded((tunnelId, chunk) => {
+        const tunnel = connectTunnels.get(tunnelId)
+        if (tunnel === undefined) return
+        tunnel.asyncScope.runInAsyncScope(() => tunnel.onEngineData(chunk))
+      }),
+      guarded((tunnelId) => {
+        const tunnel = connectTunnels.get(tunnelId)
+        if (tunnel === undefined) return
+        tunnel.asyncScope.runInAsyncScope(() => tunnel.onEngineEnd())
+      }),
+      guarded((tunnelId) => {
+        const tunnel = connectTunnels.get(tunnelId)
+        if (tunnel === undefined) return
+        tunnel.asyncScope.runInAsyncScope(() => tunnel.onEngineDrain())
+      }),
+    )
+  }
   bufs = uvServer.getBatchBuffers()
   outMeta = bufs.outMeta
   outData = bufs.outData
@@ -2718,6 +3208,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
       uvServer.close()
       for (const reqId of inflight.keys()) abortRequest(reqId)
       for (const socketId of wsSockets.keys()) finishSocket(socketId, 1006, "")
+      for (const tunnel of [...connectTunnels.values()]) tunnel.destroy()
     }
     await lifecycle("stopped")
   }
@@ -2779,5 +3270,6 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     [Symbol.asyncDispose]: () => stop(),
   }
   if (unixPath !== undefined) serverHandle.path = unixPath
+  serverHandleRef = serverHandle
   return Promise.resolve(serverHandle)
 }

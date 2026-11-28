@@ -343,6 +343,47 @@ unsafe fn call_js_req_body(
     let _ = sys::napi_close_handle_scope(raw_env, scope);
 }
 
+unsafe fn call_js_connect_data(
+    raw_env: sys::napi_env,
+    cb_ref: sys::napi_ref,
+    tunnel_id: u32,
+    chunk: &[u8],
+) {
+    if cb_ref.is_null() || chunk.is_empty() {
+        return;
+    }
+    let mut scope = std::ptr::null_mut();
+    if sys::napi_open_handle_scope(raw_env, &mut scope) != sys::Status::napi_ok {
+        return;
+    }
+    let mut cb = std::ptr::null_mut();
+    let mut undef = std::ptr::null_mut();
+    let mut arg0 = std::ptr::null_mut();
+    let mut arg1 = std::ptr::null_mut();
+    let mut ptr = std::ptr::null_mut();
+    if sys::napi_create_buffer_copy(
+        raw_env,
+        chunk.len(),
+        chunk.as_ptr().cast(),
+        &mut ptr,
+        &mut arg1,
+    ) == sys::Status::napi_ok
+        && sys::napi_get_reference_value(raw_env, cb_ref, &mut cb) == sys::Status::napi_ok
+        && sys::napi_get_undefined(raw_env, &mut undef) == sys::Status::napi_ok
+        && sys::napi_create_uint32(raw_env, tunnel_id, &mut arg0) == sys::Status::napi_ok
+    {
+        let args = [arg0, arg1];
+        call_js(raw_env, undef, cb, &args);
+    }
+    let _ = sys::napi_close_handle_scope(raw_env, scope);
+}
+
+#[napi(object)]
+pub struct ConnectAcceptResult {
+    pub tunnel_id: u32,
+    pub head: Buffer,
+}
+
 #[napi(object)]
 pub struct EngineCapabilities {
     pub http2: bool,
@@ -657,6 +698,7 @@ const PENDING_CHUNKED: u8 = 1 << 2;
 const PENDING_H2: u8 = 1 << 3;
 /// The request was HTTP/1.0, which has no chunked framing to answer with.
 const PENDING_HTTP10: u8 = 1 << 4;
+const PENDING_CONNECT: u8 = 1 << 5;
 
 #[derive(Default)]
 struct PendingCold {
@@ -745,6 +787,11 @@ impl PendingReq {
     }
 
     #[inline]
+    fn is_connect(&self) -> bool {
+        (self.flags & PENDING_CONNECT) != 0
+    }
+
+    #[inline]
     fn h2_headers(&self) -> Option<&Vec<(HeaderStr, HeaderStr)>> {
         self.cold.as_ref().and_then(|c| c.h2_headers.as_ref())
     }
@@ -818,6 +865,16 @@ struct H1StreamBody {
     decoder: H1BodyDecoder,
 }
 
+struct ConnectTunnel {
+    id: u32,
+}
+
+#[derive(Clone, Copy)]
+enum TunnelLoc {
+    H1 { conn_id: u32 },
+    H2 { conn_id: u32, stream_id: u32 },
+}
+
 #[derive(Default)]
 struct ConnMetaSlot {
     gen_id: u32,
@@ -826,9 +883,14 @@ struct ConnMetaSlot {
     h1_overflow: Option<Box<H1Order>>,
     chunk_resume: Option<Box<ChunkResume>>,
     h1_body_stream: Option<H1StreamBody>,
+    h1_connect_pending: bool,
+    h1_connect_req_id: u32,
+    h1_connect_head: Vec<u8>,
+    h1_tunnel: Option<ConnectTunnel>,
     ws: Option<Box<WsConnState>>,
     h2: Option<Box<H2Conn>>,
     h2_ws: HashMap<u32, (u32, Box<WsConnState>)>,
+    h2_tunnels: HashMap<u32, ConnectTunnel>,
     /// A terminal parse error is queued behind earlier answers: whatever the peer sends next is dropped.
     refuse_input: bool,
     /// The request being received was already looked at for `Expect: 100-continue`.
@@ -844,9 +906,14 @@ impl ConnMetaSlot {
         self.h1_overflow = None;
         self.chunk_resume = None;
         self.h1_body_stream = None;
+        self.h1_connect_pending = false;
+        self.h1_connect_req_id = 0;
+        self.h1_connect_head.clear();
+        self.h1_tunnel = None;
         self.ws = None;
         self.h2 = None;
         self.h2_ws.clear();
+        self.h2_tunnels.clear();
         self.refuse_input = false;
         self.continue_checked = false;
     }
@@ -955,12 +1022,16 @@ impl ConnMetaTable {
     fn clear_conn(
         &mut self,
         conn_id: u32,
-    ) -> (Option<Box<WsConnState>>, Vec<(u32, Box<WsConnState>)>) {
+    ) -> (
+        Option<Box<WsConnState>>,
+        Vec<(u32, Box<WsConnState>)>,
+        Vec<u32>,
+    ) {
         let Some(slot) = self.slots.get_mut(conn_slot(conn_id)) else {
-            return (None, Vec::new());
+            return (None, Vec::new(), Vec::new());
         };
         if slot.gen_id != conn_id {
-            return (None, Vec::new());
+            return (None, Vec::new(), Vec::new());
         }
         slot.gen_id = 0;
         slot.pending_head = 0;
@@ -968,9 +1039,16 @@ impl ConnMetaTable {
         slot.h1_overflow = None;
         slot.chunk_resume = None;
         slot.h1_body_stream = None;
+        slot.h1_connect_pending = false;
+        slot.h1_connect_req_id = 0;
+        slot.h1_connect_head.clear();
         slot.h2 = None;
         let h2_ws: Vec<(u32, Box<WsConnState>)> = slot.h2_ws.drain().map(|(_, v)| v).collect();
-        (slot.ws.take(), h2_ws)
+        let mut tunnels: Vec<u32> = slot.h2_tunnels.drain().map(|(_, t)| t.id).collect();
+        if let Some(t) = slot.h1_tunnel.take() {
+            tunnels.push(t.id);
+        }
+        (slot.ws.take(), h2_ws, tunnels)
     }
 
     fn clear_all(&mut self) {
@@ -1366,6 +1444,9 @@ struct UvHttpShared {
     on_ws_message_ref: sys::napi_ref,
     on_ws_close_ref: sys::napi_ref,
     on_ws_drain_ref: sys::napi_ref,
+    on_connect_data_ref: sys::napi_ref,
+    on_connect_end_ref: sys::napi_ref,
+    on_connect_drain_ref: sys::napi_ref,
     ws_max_message_size: usize,
     ws_max_backpressure: usize,
     ws_close_on_backpressure_limit: bool,
@@ -1373,9 +1454,11 @@ struct UvHttpShared {
     ws_shared_pool: Option<SharedCompressorPool>,
     ws_topics: HashMap<String, Vec<u32>>,
     h2_ws_map: HashMap<u32, (u32, u32)>,
+    tunnel_map: HashMap<u32, TunnelLoc>,
     h2_cork_conns: HashMap<u32, (u32, u32)>,
     pending_aborted: Vec<u32>,
     h2_ws_seq: u32,
+    tunnel_seq: u32,
     compression: CompressionCfg,
     http2_enabled: bool,
     h2_cfg: H2Config,
@@ -1415,7 +1498,17 @@ impl UvHttpShared {
 
     #[inline]
     fn remove_pending(&mut self, req_id: u32) -> Option<PendingReq> {
-        self.pending.remove(&mut self.conn_meta, req_id)
+        let req = self.pending.remove(&mut self.conn_meta, req_id)?;
+        if req.is_connect() && req.h2_stream_id().is_none() {
+            if let Some(slot) = self.conn_meta.get_mut(req.conn_id) {
+                if slot.h1_connect_req_id == req_id {
+                    slot.h1_connect_pending = false;
+                    slot.h1_connect_req_id = 0;
+                    slot.h1_connect_head.clear();
+                }
+            }
+        }
+        Some(req)
     }
 
     fn disconnect_pending(&mut self, conn_id: u32) -> Vec<u32> {
@@ -1838,6 +1931,40 @@ impl HttpUvCallbacks {
             };
         }
 
+        // Active HTTP/1.1 CONNECT tunnel: forward raw socket bytes directly to JS.
+        if let Some(tunnel_id) = st
+            .conn_meta
+            .get(conn_id)
+            .and_then(|s| s.h1_tunnel.as_ref().map(|t| t.id))
+        {
+            let raw_env = st.raw_env;
+            let data_ref = st.on_connect_data_ref;
+            drop(st);
+            unsafe { call_js_connect_data(raw_env, data_ref, tunnel_id, read_buf) };
+            return ConnAction::Continue {
+                consumed: read_buf.len(),
+            };
+        }
+
+        // Pending HTTP/1.1 CONNECT awaiting JS accept/reject: hold extra tunnel bytes instead of parsing HTTP.
+        if st
+            .conn_meta
+            .get(conn_id)
+            .is_some_and(|s| s.h1_connect_pending)
+        {
+            let max_head = st.limits.max_body_size.max(64 * 1024);
+            if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                let avail = max_head.saturating_sub(slot.h1_connect_head.len());
+                let take = read_buf.len().min(avail);
+                if take > 0 {
+                    slot.h1_connect_head.extend_from_slice(&read_buf[..take]);
+                }
+            }
+            return ConnAction::Continue {
+                consumed: read_buf.len(),
+            };
+        }
+
         // Check HTTP/2 (existing H2 connection or incoming client preface when http2 is enabled).
         let h2_mode = if st.conn_meta.get(conn_id).is_some_and(|s| s.h2.is_some()) {
             1u8 // active H2
@@ -2021,6 +2148,65 @@ impl HttpUvCallbacks {
                             continue;
                         }
 
+                        // Active HTTP/2 CONNECT tunnel DATA delivery.
+                        enum H2ConnectAction {
+                            Data(u32, sys::napi_env, sys::napi_ref, bool, sys::napi_ref),
+                            PendingHead,
+                            NotTunnel,
+                        }
+                        let connect_action = {
+                            let mut st = self.shared.borrow_mut();
+                            let raw_env = st.raw_env;
+                            let data_ref = st.on_connect_data_ref;
+                            let end_ref = st.on_connect_end_ref;
+                            if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                                if let Some(tunnel) = slot.h2_tunnels.get(&stream_id) {
+                                    let tid = tunnel.id;
+                                    if end_stream {
+                                        slot.h2_tunnels.remove(&stream_id);
+                                        st.tunnel_map.remove(&tid);
+                                    }
+                                    H2ConnectAction::Data(tid, raw_env, data_ref, end_stream, end_ref)
+                                } else {
+                                    let head_cap = st.limits.max_body_size.max(64 * 1024);
+                                    let pending_head = st.conn_meta.pending_head(conn_id);
+                                    let pending_id = st
+                                        .pending
+                                        .iter_connection(pending_head)
+                                        .find(|(_, p)| p.is_connect() && p.h2_stream_id() == Some(stream_id))
+                                        .map(|(id, _)| id);
+                                    if let Some(req_id) = pending_id {
+                                        if let Some(pending) = st.pending.get_mut(req_id) {
+                                            if !data.is_empty() {
+                                                let cold = pending.cold.get_or_insert_with(Default::default);
+                                                let buf = cold.body.get_or_insert_with(Vec::new);
+                                                let take = data.len().min(head_cap.saturating_sub(buf.len()));
+                                                buf.extend_from_slice(&data[..take]);
+                                            }
+                                        }
+                                        H2ConnectAction::PendingHead
+                                    } else {
+                                        H2ConnectAction::NotTunnel
+                                    }
+                                }
+                            } else {
+                                H2ConnectAction::NotTunnel
+                            }
+                        };
+                        match connect_action {
+                            H2ConnectAction::Data(tid, raw_env, data_ref, ended, end_ref) => {
+                                if !data.is_empty() {
+                                    unsafe { call_js_connect_data(raw_env, data_ref, tid, &data) };
+                                }
+                                if ended && !end_ref.is_null() {
+                                    unsafe { call_js_u32(raw_env, end_ref, tid) };
+                                }
+                                continue;
+                            }
+                            H2ConnectAction::PendingHead => continue,
+                            H2ConnectAction::NotTunnel => {}
+                        }
+
                         // Regular HTTP/2 streaming request body chunk.
                         let target = {
                             let st = self.shared.borrow();
@@ -2058,7 +2244,7 @@ impl HttpUvCallbacks {
                         }
                     }
                     H2Event::StreamReset(stream_id) => {
-                        let (aborted, ws_closed) = {
+                        let (aborted, ws_closed, tunnel_closed) = {
                             let mut st = self.shared.borrow_mut();
                             let ids: Vec<u32> = st
                                 .pending
@@ -2091,11 +2277,24 @@ impl HttpUvCallbacks {
                                         st.on_ws_close_ref,
                                     ))
                                 });
-                            (aborted, ws_closed)
+                            let tunnel_closed = st
+                                .conn_meta
+                                .get_mut(conn_id)
+                                .and_then(|s| s.h2_tunnels.remove(&stream_id))
+                                .map(|tunnel| {
+                                    st.tunnel_map.remove(&tunnel.id);
+                                    (tunnel.id, st.raw_env, st.on_connect_end_ref)
+                                });
+                            (aborted, ws_closed, tunnel_closed)
                         };
                         notify_each(&self.shared, aborted, |st| st.on_aborted_ref);
                         if let Some((socket_id, raw_env, close_ref)) = ws_closed {
                             unsafe { call_js_ws_close(raw_env, close_ref, socket_id, 1006, "") };
+                        }
+                        if let Some((tunnel_id, raw_env, end_ref)) = tunnel_closed {
+                            if !end_ref.is_null() {
+                                unsafe { call_js_u32(raw_env, end_ref, tunnel_id) };
+                            }
                         }
                     }
                     H2Event::GoAway => {}
@@ -2103,7 +2302,7 @@ impl HttpUvCallbacks {
             }
             // Streams whose response backlog drained after a WINDOW_UPDATE may write again.
             for stream_id in feed.writable {
-                let (ids, drain_ws) = {
+                let (ids, drain_ws, drain_tunnel) = {
                     let st = self.shared.borrow();
                     let ids: Vec<u32> = st
                         .pending
@@ -2120,11 +2319,21 @@ impl HttpUvCallbacks {
                         .get(conn_id)
                         .and_then(|s| s.h2_ws.get(&stream_id))
                         .map(|(socket_id, _)| (*socket_id, st.raw_env, st.on_ws_drain_ref));
-                    (ids, drain_ws)
+                    let drain_tunnel = st
+                        .conn_meta
+                        .get(conn_id)
+                        .and_then(|s| s.h2_tunnels.get(&stream_id))
+                        .map(|t| (t.id, st.raw_env, st.on_connect_drain_ref));
+                    (ids, drain_ws, drain_tunnel)
                 };
                 notify_each(&self.shared, ids, |st| st.on_writable_ref);
                 if let Some((socket_id, raw_env, drain_ref)) = drain_ws {
                     unsafe { call_js_ws_drain(raw_env, drain_ref, socket_id) };
+                }
+                if let Some((tunnel_id, raw_env, drain_ref)) = drain_tunnel {
+                    if !drain_ref.is_null() {
+                        unsafe { call_js_u32(raw_env, drain_ref, tunnel_id) };
+                    }
                 }
             }
             return if feed.close_after_write {
@@ -2313,9 +2522,13 @@ impl HttpUvCallbacks {
                         off: head_off,
                         len: req_head.len() as u32,
                     };
+                    let is_h1_connect = req.method == "CONNECT";
                     let mut pending = PendingReq::new(conn_id, req.keep_alive, raw_head, cold);
                     if req.http10 {
                         pending.flags |= PENDING_HTTP10;
+                    }
+                    if is_h1_connect {
+                        pending.flags |= PENDING_CONNECT;
                     }
                     let req_id = st.insert_pending(pending);
                     if pack_into_shared(&mut st, req_id, &req) {
@@ -2337,6 +2550,20 @@ impl HttpUvCallbacks {
 
                     if resume.is_active() {
                         resume = ChunkResume::default();
+                    }
+                    if is_h1_connect {
+                        let max_head = st.limits.max_body_size.max(64 * 1024);
+                        let slot = st.conn_meta.ensure(conn_id);
+                        slot.h1_connect_pending = true;
+                        slot.h1_connect_req_id = req_id;
+                        if consumed < read_buf.len() {
+                            let avail = max_head.saturating_sub(slot.h1_connect_head.len());
+                            let take = (read_buf.len() - consumed).min(avail);
+                            slot.h1_connect_head
+                                .extend_from_slice(&read_buf[consumed..consumed + take]);
+                            consumed = read_buf.len();
+                        }
+                        break;
                     }
                     if !req.keep_alive {
                         st.conn_meta.ensure(conn_id).refuse_input = true;
@@ -2622,7 +2849,7 @@ impl UvCallbacks for HttpUvCallbacks {
             .borrow()
             .conn_meta
             .get(conn_id)
-            .is_some_and(|s| s.ws.is_some() || s.h2.is_some())
+            .is_some_and(|s| s.ws.is_some() || s.h2.is_some() || s.h1_tunnel.is_some())
     }
 
     fn output_stalled_since(&self, conn_id: u32) -> Option<std::time::Instant> {
@@ -2663,6 +2890,8 @@ impl UvCallbacks for HttpUvCallbacks {
         st.conn_meta.get(conn_id).is_some_and(|s| {
             s.pending_head != 0
                 || s.has_h1_pending()
+                || s.h1_tunnel.is_some()
+                || !s.h2_tunnels.is_empty()
                 || s.h2
                     .as_ref()
                     .is_some_and(|conn| conn.active_response_streams() > 0)
@@ -2674,7 +2903,7 @@ impl UvCallbacks for HttpUvCallbacks {
             .borrow()
             .conn_meta
             .get(conn_id)
-            .is_some_and(|s| s.ws.is_some())
+            .is_some_and(|s| s.ws.is_some() || s.h1_tunnel.is_some())
     }
 
     fn without_pending(&self, ids: Vec<u32>) -> Vec<u32> {
@@ -2684,6 +2913,8 @@ impl UvCallbacks for HttpUvCallbacks {
                 !st.conn_meta.get(id).is_some_and(|s| {
                     s.pending_head != 0
                         || s.has_h1_pending()
+                        || s.h1_tunnel.is_some()
+                        || !s.h2_tunnels.is_empty()
                         || s.h2
                             .as_ref()
                             .is_some_and(|conn| conn.active_response_streams() > 0)
@@ -2693,7 +2924,7 @@ impl UvCallbacks for HttpUvCallbacks {
     }
 
     fn on_writable(&mut self, conn_id: u32) {
-        let (mut req_ids, ws_drain) = {
+        let (mut req_ids, ws_drain, h1_tunnel_drain) = {
             let st = self.shared.borrow();
             let req_ids: Vec<u32> = if st.on_writable_ref.is_null() {
                 Vec::new()
@@ -2711,20 +2942,34 @@ impl UvCallbacks for HttpUvCallbacks {
             } else {
                 None
             };
-            (req_ids, ws_drain)
+            let h1_tunnel_drain = if !st.on_connect_drain_ref.is_null() {
+                st.conn_meta
+                    .get(conn_id)
+                    .and_then(|s| s.h1_tunnel.as_ref())
+                    .map(|t| (t.id, st.raw_env, st.on_connect_drain_ref))
+            } else {
+                None
+            };
+            (req_ids, ws_drain, h1_tunnel_drain)
         };
         req_ids.sort_unstable();
         notify_each(&self.shared, req_ids, |st| st.on_writable_ref);
         if let Some((raw_env, drain_ref)) = ws_drain {
             unsafe { call_js_ws_drain(raw_env, drain_ref, conn_id) };
         }
+        if let Some((tunnel_id, raw_env, drain_ref)) = h1_tunnel_drain {
+            unsafe { call_js_u32(raw_env, drain_ref, tunnel_id) };
+        }
     }
 
     fn on_disconnect(&mut self, conn_id: u32) {
-        let (aborted_ids, ws_closes) = {
+        let (aborted_ids, ws_closes, tunnel_ends) = {
             let mut st = self.shared.borrow_mut();
             let ids = st.disconnect_pending(conn_id);
-            let (ws_h1, ws_h2) = st.conn_meta.clear_conn(conn_id);
+            let (ws_h1, ws_h2, tunnels) = st.conn_meta.clear_conn(conn_id);
+            for tid in &tunnels {
+                st.tunnel_map.remove(tid);
+            }
             let mut closes = Vec::new();
             if let Some(mut ws) = ws_h1 {
                 let topics = std::mem::take(&mut ws.topics);
@@ -2743,7 +2988,7 @@ impl UvCallbacks for HttpUvCallbacks {
                 }
             }
             st.h2_cork_conns.retain(|_, (cid, _)| *cid != conn_id);
-            (ids, closes)
+            (ids, closes, tunnels)
         };
         notify_each(&self.shared, aborted_ids, |st| st.on_aborted_ref);
         for (socket_id, code, reason) in ws_closes {
@@ -2753,6 +2998,15 @@ impl UvCallbacks for HttpUvCallbacks {
                 (st.raw_env, st.on_ws_close_ref)
             };
             unsafe { call_js_ws_close(raw_env, ws_close_ref, socket_id, code, &reason) };
+        }
+        for tunnel_id in tunnel_ends {
+            let (raw_env, end_ref) = {
+                let st = self.shared.borrow();
+                (st.raw_env, st.on_connect_end_ref)
+            };
+            if !end_ref.is_null() {
+                unsafe { call_js_u32(raw_env, end_ref, tunnel_id) };
+            }
         }
     }
 }
@@ -2956,12 +3210,16 @@ fn pack_h2_into_shared(st: &mut UvHttpShared, conn_id: u32, req: H2Request) -> b
         query: (req.is_ws_upgrade && !req.query.is_empty()).then(|| Box::<str>::from(req.query)),
         body: (!inline_body && !req.streaming_body && !req.is_ws_upgrade).then_some(req.body),
     });
-    let req_id = st.insert_pending(PendingReq::new(
+    let mut pending = PendingReq::new(
         conn_id,
         true,
         HeadStorage::Empty,
         Some(cold),
-    ));
+    );
+    if req.is_connect_tunnel {
+        pending.flags |= PENDING_CONNECT;
+    }
+    let req_id = st.insert_pending(pending);
     let meta = unsafe { st.in_meta.as_u32_mut() };
     meta[slot_base] = req_id;
     meta[slot_base + 1] = flags;
@@ -3074,24 +3332,32 @@ fn negotiate_compression_payload(
     pairs: &[(&str, &str)],
     body: &[u8],
 ) -> Option<CompressedPayload> {
-    if !compression.enabled || status < 200 || status == 204 || status == 304 {
+    if !compression.enabled || status < 200 || matches!(status, 204 | 205 | 304) {
         return None;
     }
     if body.is_empty() || body.len() < compression.min_bytes {
         return None;
     }
     let mut has_ce = false;
+    let mut no_transform = false;
     let mut content_type: Option<&str> = None;
     for &(k, v) in pairs {
         if k.eq_ignore_ascii_case("content-encoding") {
             has_ce = true;
             break;
         }
+        if k.eq_ignore_ascii_case("cache-control")
+            && v.split(',')
+                .any(|dir| dir.trim().eq_ignore_ascii_case("no-transform"))
+        {
+            no_transform = true;
+            break;
+        }
         if content_type.is_none() && k.eq_ignore_ascii_case("content-type") {
             content_type = Some(v);
         }
     }
-    if has_ce || !nifra_http::compress::is_compressible_content_type(content_type) {
+    if has_ce || no_transform || !nifra_http::compress::is_compressible_content_type(content_type) {
         return None;
     }
     let append_vary = header_needs_vary_ae(pairs);
@@ -3181,6 +3447,9 @@ fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, clo
         std::mem::replace(&mut st.on_ws_message_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_ws_close_ref, std::ptr::null_mut()),
         std::mem::replace(&mut st.on_ws_drain_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_connect_data_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_connect_end_ref, std::ptr::null_mut()),
+        std::mem::replace(&mut st.on_connect_drain_ref, std::ptr::null_mut()),
     ];
     for r in refs {
         if !r.is_null() {
@@ -3191,6 +3460,7 @@ fn shutdown_uv_server(server: &UvServer, shared: &Rc<RefCell<UvHttpShared>>, clo
     }
     st.ws_topics.clear();
     st.h2_ws_map.clear();
+    st.tunnel_map.clear();
     st.pending.clear();
     st.conn_meta.clear_all();
 }
@@ -3499,6 +3769,340 @@ impl UvHttpServer {
         }
     }
 
+    /// Register `CONNECT` tunnel data, end, and drain callbacks.
+    #[napi(catch_unwind)]
+    pub fn set_connect_callbacks(
+        &self,
+        env: Env,
+        on_data: Option<JsFunction>,
+        on_end: Option<JsFunction>,
+        on_drain: Option<JsFunction>,
+    ) -> Result<()> {
+        let mut st = self.shared.borrow_mut();
+        let raw_env = st.raw_env;
+        for r in [
+            std::mem::replace(&mut st.on_connect_data_ref, std::ptr::null_mut()),
+            std::mem::replace(&mut st.on_connect_end_ref, std::ptr::null_mut()),
+            std::mem::replace(&mut st.on_connect_drain_ref, std::ptr::null_mut()),
+        ] {
+            if !r.is_null() {
+                unsafe {
+                    let _ = sys::napi_delete_reference(raw_env, r);
+                }
+            }
+        }
+        if let Some(cb) = on_data {
+            let mut r = std::ptr::null_mut();
+            if unsafe { sys::napi_create_reference(env.raw(), cb.raw(), 1, &mut r) }
+                != sys::Status::napi_ok
+            {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "failed to ref onConnectData",
+                ));
+            }
+            st.on_connect_data_ref = r;
+        }
+        if let Some(cb) = on_end {
+            let mut r = std::ptr::null_mut();
+            if unsafe { sys::napi_create_reference(env.raw(), cb.raw(), 1, &mut r) }
+                != sys::Status::napi_ok
+            {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "failed to ref onConnectEnd",
+                ));
+            }
+            st.on_connect_end_ref = r;
+        }
+        if let Some(cb) = on_drain {
+            let mut r = std::ptr::null_mut();
+            if unsafe { sys::napi_create_reference(env.raw(), cb.raw(), 1, &mut r) }
+                != sys::Status::napi_ok
+            {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "failed to ref onConnectDrain",
+                ));
+            }
+            st.on_connect_drain_ref = r;
+        }
+        Ok(())
+    }
+
+    /// Accept a pending HTTP/1.1 or HTTP/2 `CONNECT` request as a bidirectional byte tunnel.
+    #[napi(catch_unwind)]
+    pub fn accept_connect(
+        &self,
+        req_id: u32,
+        status: Option<u16>,
+        flat_headers: Option<Vec<String>>,
+    ) -> Option<ConnectAcceptResult> {
+        let code = status.unwrap_or(200);
+        if !(200..=299).contains(&code) {
+            return None;
+        }
+        let hdr_vec = flat_headers.unwrap_or_default();
+        if hdr_vec.len() % 2 != 0 {
+            return None;
+        }
+        let mut st = self.shared.borrow_mut();
+        let (conn_id, h2_stream_id, is_connect) = {
+            let p = st.pending.get(req_id)?;
+            (p.conn_id, p.h2_stream_id(), p.is_connect())
+        };
+        if !is_connect {
+            return None;
+        }
+        if h2_stream_id.is_none() {
+            let owed_earlier = st.conn_meta.get(conn_id).is_some_and(|slot| {
+                (slot.h1_head != 0 && slot.h1_head != req_id)
+                    || slot
+                        .h1_overflow
+                        .as_ref()
+                        .is_some_and(|o| o.queue.iter().any(|&queued| queued != req_id))
+            });
+            if owed_earlier {
+                return None;
+            }
+        }
+        let mut pending = st.remove_pending(req_id)?;
+        st.tunnel_seq = st.tunnel_seq.wrapping_add(1).max(1);
+        let tunnel_id = st.tunnel_seq;
+        if let Some(stream_id) = h2_stream_id {
+            let head = pending
+                .cold
+                .as_mut()
+                .and_then(|c| c.body.take())
+                .unwrap_or_default();
+            let mut frame = std::mem::take(&mut st.scratch_frame);
+            frame.clear();
+            let written = {
+                let Some(slot) = st.conn_meta.get_mut(conn_id) else {
+                    st.scratch_frame = frame;
+                    return None;
+                };
+                let Some(h2) = slot.h2.as_deref_mut() else {
+                    st.scratch_frame = frame;
+                    return None;
+                };
+                with_flat_header_pairs(&hdr_vec, |pairs| {
+                    h2.write_connect_response(stream_id, code, pairs, &mut frame)
+                })
+            };
+            if !written
+                || self.server.write_to_conn(conn_id, &frame, false) == WriteResult::Closed
+            {
+                st.scratch_frame = frame;
+                return None;
+            }
+            st.scratch_frame = frame;
+            if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                slot.h2_tunnels
+                    .insert(stream_id, ConnectTunnel { id: tunnel_id });
+            }
+            st.tunnel_map
+                .insert(tunnel_id, TunnelLoc::H2 { conn_id, stream_id });
+            return Some(ConnectAcceptResult {
+                tunnel_id,
+                head: Buffer::from(head),
+            });
+        }
+
+        let head = if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+            slot.h1_head = 0;
+            slot.h1_overflow = None;
+            slot.h1_connect_pending = false;
+            slot.h1_connect_req_id = 0;
+            slot.h1_tunnel = Some(ConnectTunnel { id: tunnel_id });
+            std::mem::take(&mut slot.h1_connect_head)
+        } else {
+            return None;
+        };
+        self.server.set_read_paused(conn_id, false);
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
+        let valid = with_flat_header_pairs(&hdr_vec, |pairs| {
+            nifra_http::write_connect_response_head(&mut frame, code, pairs)
+        });
+        let ok = valid
+            && self.server.write_to_conn(conn_id, &frame, false) != WriteResult::Closed;
+        st.scratch_frame = frame;
+        if !ok {
+            if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                slot.h1_tunnel = None;
+            }
+            return None;
+        }
+        st.tunnel_map.insert(tunnel_id, TunnelLoc::H1 { conn_id });
+        Some(ConnectAcceptResult {
+            tunnel_id,
+            head: Buffer::from(head),
+        })
+    }
+
+    /// Write raw bytes to an accepted `CONNECT` tunnel (`1` written, `0` backpressured, `-1` closed).
+    #[napi(catch_unwind)]
+    pub fn tunnel_write(&self, tunnel_id: u32, chunk: Buffer) -> i32 {
+        let mut st = self.shared.borrow_mut();
+        let Some(&loc) = st.tunnel_map.get(&tunnel_id) else {
+            return -1;
+        };
+        match loc {
+            TunnelLoc::H1 { conn_id } => match self.server.write_to_conn(conn_id, &chunk, false) {
+                WriteResult::Written => 1,
+                WriteResult::Backpressured => 0,
+                WriteResult::Closed => -1,
+            },
+            TunnelLoc::H2 { conn_id, stream_id } => {
+                let mut frame = std::mem::take(&mut st.scratch_frame);
+                frame.clear();
+                let Some(h2) = st
+                    .conn_meta
+                    .get_mut(conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                else {
+                    st.scratch_frame = frame;
+                    return -1;
+                };
+                let room = h2.write_stream_data(stream_id, &chunk, false, &mut frame);
+                let res = self.server.write_to_conn(conn_id, &frame, false);
+                st.scratch_frame = frame;
+                match res {
+                    WriteResult::Closed => -1,
+                    WriteResult::Backpressured => 0,
+                    WriteResult::Written => i32::from(room),
+                }
+            }
+        }
+    }
+
+    /// Half-close / finish writing on an accepted `CONNECT` tunnel.
+    #[napi(catch_unwind)]
+    pub fn tunnel_end(&self, tunnel_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(loc) = st.tunnel_map.get(&tunnel_id).copied() else {
+            return false;
+        };
+        match loc {
+            TunnelLoc::H1 { conn_id } => {
+                st.tunnel_map.remove(&tunnel_id);
+                if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                    slot.h1_tunnel = None;
+                }
+                self.server.write_to_conn(conn_id, &[], true) != WriteResult::Closed
+            }
+            TunnelLoc::H2 { conn_id, stream_id } => {
+                let mut frame = std::mem::take(&mut st.scratch_frame);
+                frame.clear();
+                if let Some(h2) = st
+                    .conn_meta
+                    .get_mut(conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                {
+                    h2.write_stream_data(stream_id, &[], true, &mut frame);
+                    let _ = self.server.write_to_conn(conn_id, &frame, false);
+                }
+                st.scratch_frame = frame;
+                true
+            }
+        }
+    }
+
+    /// Abruptly close / reset an accepted `CONNECT` tunnel.
+    #[napi(catch_unwind)]
+    pub fn tunnel_destroy(&self, tunnel_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(loc) = st.tunnel_map.remove(&tunnel_id) else {
+            return false;
+        };
+        match loc {
+            TunnelLoc::H1 { conn_id } => {
+                if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                    slot.h1_tunnel = None;
+                }
+                self.server.close_conn(conn_id);
+                true
+            }
+            TunnelLoc::H2 { conn_id, stream_id } => {
+                let mut frame = std::mem::take(&mut st.scratch_frame);
+                frame.clear();
+                if let Some(slot) = st.conn_meta.get_mut(conn_id) {
+                    slot.h2_tunnels.remove(&stream_id);
+                    if let Some(h2) = slot.h2.as_deref_mut() {
+                        h2.reset_stream(stream_id, 0x8, &mut frame);
+                        let _ = self.server.write_to_conn(conn_id, &frame, false);
+                    }
+                }
+                st.scratch_frame = frame;
+                true
+            }
+        }
+    }
+
+    #[napi(catch_unwind)]
+    pub fn tunnel_pause(&self, tunnel_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(&loc) = st.tunnel_map.get(&tunnel_id) else {
+            return false;
+        };
+        match loc {
+            TunnelLoc::H1 { conn_id } => self.server.set_read_paused(conn_id, true),
+            TunnelLoc::H2 { conn_id, stream_id } => {
+                let mut frame = std::mem::take(&mut st.scratch_frame);
+                frame.clear();
+                if let Some(h2) = st
+                    .conn_meta
+                    .get_mut(conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                {
+                    h2.set_stream_recv_paused(stream_id, true, &mut frame);
+                }
+                st.scratch_frame = frame;
+                true
+            }
+        }
+    }
+
+    #[napi(catch_unwind)]
+    pub fn tunnel_resume(&self, tunnel_id: u32) -> bool {
+        let mut st = self.shared.borrow_mut();
+        let Some(&loc) = st.tunnel_map.get(&tunnel_id) else {
+            return false;
+        };
+        match loc {
+            TunnelLoc::H1 { conn_id } => self.server.set_read_paused(conn_id, false),
+            TunnelLoc::H2 { conn_id, stream_id } => {
+                let mut frame = std::mem::take(&mut st.scratch_frame);
+                frame.clear();
+                if let Some(h2) = st
+                    .conn_meta
+                    .get_mut(conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                {
+                    h2.set_stream_recv_paused(stream_id, false, &mut frame);
+                    if !frame.is_empty() {
+                        let _ = self.server.write_to_conn(conn_id, &frame, false);
+                    }
+                }
+                st.scratch_frame = frame;
+                true
+            }
+        }
+    }
+
+    /// Return the DER-encoded mTLS client certificate chain (leaf first) for `req_id`.
+    #[napi(catch_unwind)]
+    pub fn get_peer_certificates(&self, req_id: u32) -> Vec<Buffer> {
+        let Some(conn_id) = self.shared.borrow().pending.get(req_id).map(|p| p.conn_id) else {
+            return Vec::new();
+        };
+        self.server
+            .peer_certs_der(conn_id)
+            .map(|certs| certs.into_iter().map(Buffer::from).collect())
+            .unwrap_or_default()
+    }
+
     #[napi(catch_unwind)]
     pub fn set_static_route(
         &self,
@@ -3774,6 +4378,79 @@ impl UvHttpServer {
             &frame,
             true,
             pending.keep_alive(),
+        ) != WriteResult::Closed;
+        st.scratch_frame = frame;
+        sent
+    }
+
+    /// Write a `1xx` informational response (`100..=199`, excluding `101`) before the final
+    /// response head is sent (supports HTTP/1.1 including pipelining, and HTTP/2 `HEADERS`).
+    #[napi(catch_unwind)]
+    pub fn write_informational(
+        &self,
+        req_id: u32,
+        status: u16,
+        flat_headers: Option<Vec<String>>,
+    ) -> bool {
+        if !(100..=199).contains(&status) || status == 101 {
+            return false;
+        }
+        let hdr_vec = flat_headers.unwrap_or_default();
+        if hdr_vec.len() % 2 != 0 {
+            return false;
+        }
+        let mut st = self.shared.borrow_mut();
+        let Some(pending) = st.pending.get(req_id) else {
+            return false;
+        };
+        if pending.streaming() {
+            return false;
+        }
+        let conn_id = pending.conn_id;
+        let h2_stream_id = pending.h2_stream_id();
+        if h2_stream_id.is_none() && (pending.flags & PENDING_HTTP10) != 0 {
+            return false;
+        }
+        let keep_alive = pending.keep_alive();
+        let mut frame = std::mem::take(&mut st.scratch_frame);
+        frame.clear();
+        if let Some(stream_id) = h2_stream_id {
+            let Some(h2) = st
+                .conn_meta
+                .get_mut(conn_id)
+                .and_then(|s| s.h2.as_deref_mut())
+            else {
+                st.scratch_frame = frame;
+                return false;
+            };
+            let mut valid = true;
+            with_flat_header_pairs(&hdr_vec, |pairs| {
+                valid = h2.write_informational(stream_id, status, pairs, &mut frame);
+            });
+            if !valid {
+                st.scratch_frame = frame;
+                return false;
+            }
+            let sent = self.server.write_to_conn(conn_id, &frame, false) != WriteResult::Closed;
+            st.scratch_frame = frame;
+            return sent;
+        }
+        let mut valid = true;
+        with_flat_header_pairs(&hdr_vec, |pairs| {
+            valid = nifra_http::write_informational_response(&mut frame, status, pairs);
+        });
+        if !valid {
+            st.scratch_frame = frame;
+            return false;
+        }
+        let sent = h1_send(
+            &self.server,
+            &mut st,
+            conn_id,
+            req_id,
+            &frame,
+            false,
+            keep_alive,
         ) != WriteResult::Closed;
         st.scratch_frame = frame;
         sent
@@ -4687,6 +5364,19 @@ impl UvHttpServer {
         }
     }
 
+    /// Return the DER-encoded mTLS client certificate chain (leaf first) for a WebSocket.
+    #[napi(catch_unwind)]
+    pub fn ws_get_peer_certificates(&self, socket_id: u32) -> Vec<Buffer> {
+        let st = self.shared.borrow();
+        let Some(conn_id) = ws_conn_id_for_socket(&st, socket_id) else {
+            return Vec::new();
+        };
+        self.server
+            .peer_certs_der(conn_id)
+            .map(|certs| certs.into_iter().map(Buffer::from).collect())
+            .unwrap_or_default()
+    }
+
     /// Add or replace an SNI certificate/key entry at runtime.
     #[napi(catch_unwind)]
     pub fn add_server_name(&self, entry: TlsSniEntry) -> Result<()> {
@@ -5509,6 +6199,9 @@ pub fn create_uv_server(
         on_ws_message_ref: std::ptr::null_mut(),
         on_ws_close_ref: std::ptr::null_mut(),
         on_ws_drain_ref: std::ptr::null_mut(),
+        on_connect_data_ref: std::ptr::null_mut(),
+        on_connect_end_ref: std::ptr::null_mut(),
+        on_connect_drain_ref: std::ptr::null_mut(),
         ws_max_message_size,
         ws_max_backpressure,
         ws_close_on_backpressure_limit,
@@ -5516,9 +6209,11 @@ pub fn create_uv_server(
         ws_shared_pool,
         ws_topics: HashMap::new(),
         h2_ws_map: HashMap::new(),
+        tunnel_map: HashMap::new(),
         h2_cork_conns: HashMap::new(),
         pending_aborted: Vec::new(),
         h2_ws_seq: 0,
+        tunnel_seq: 0,
         compression,
         http2_enabled,
         h2_cfg,
