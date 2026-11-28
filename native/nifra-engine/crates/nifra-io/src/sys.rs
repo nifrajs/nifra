@@ -1215,10 +1215,9 @@ pub(crate) fn collect_timeouts<'a>(
             idle.push(id);
         }
         if c.partial_since.is_some_and(|at| past(at, request_limit))
-            || (request_limit.is_some()
-                && callbacks
-                    .as_deref_mut()
-                    .is_some_and(|cb| cb.expire_requests(id, now, &mut reply)))
+            || callbacks
+                .as_deref_mut()
+                .is_some_and(|cb| cb.expire_requests(id, now, &mut reply))
         {
             overdue.push(id);
             reply.clear();

@@ -112,6 +112,40 @@ With `tls`, clients negotiate `h2` by ALPN. Without it, a client opening with th
 An upload that exceeds the deadline is cancelled while other streams keep running.
 If the deadline expires inside an unfinished frame or HPACK header block, the connection closes.
 
+Response header fields are compressed (Huffman coding and the HPACK dynamic table). `set-cookie` is sent as never-indexed.
+
+`stop()` shuts each connection down in two steps: a `GOAWAY` that refuses nothing and a `PING`, then, once the peer answers or after one second, the final `GOAWAY`. Requests already on their way are served.
+
+### Settings
+
+`http2` also takes an object. A value out of range makes `serve()` throw.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `maxConcurrentStreams` | 128 | Streams open at once on a connection. |
+| `initialWindowSize` | 1 MiB | Flow-control window of each request body. |
+| `connectionWindowSize` | 4 MiB | Flow-control window of the connection, 65535 or more. |
+| `maxFrameSize` | 16384 | Largest frame accepted. |
+| `headerTableSize` | 4096 | Bytes of each HPACK table, request and response side. 0 to 65536. |
+| `maxSendBuffer` | 16 MiB | Queued response bytes per connection past which further responses wait. |
+| `pingIntervalMs` | 0 (off) | Quiet time after which a `PING` is sent, checked once a second. A peer that answers is not idle: set this below `idleTimeoutMs` to keep a live one open. |
+| `pingTimeoutMs` | 20000 | Budget for the answer before the connection closes. |
+
+### Response trailers
+
+HTTP/2 only:
+
+```ts
+import { setResponseTrailers } from "@nifrajs/node-engine"
+
+app.get("/report", (c) => {
+  setResponseTrailers(c.req, { "x-checksum": "abc123" })
+  return { ok: true }
+})
+```
+
+Pass the `Request` the engine made (`c.req`, or the first `fetch` argument), not a copy, and call it before the body ends: a streamed body can call it from its last `pull`. It returns `false`, and sets nothing, on HTTP/1.1, once the response is complete, or for a name that cannot be a trailer (a pseudo-header, a connection field, `content-length`, `host`, `te`).
+
 ### HTTP/2 benchmarks
 
 There are none yet. HTTP/2 here is covered by correctness tests only, and no throughput or latency figure for it has been measured or is quoted anywhere in this package. Figures for this repository's public pages come from the benchmark-accuracy CI run, not from a developer machine, and that run has no HTTP/2 target.
@@ -162,9 +196,9 @@ When a streamed body fails after its head is out, the response is cut so the cli
 | Response | HTTP/1.1 | HTTP/2 |
 |---|---|---|
 | Declared `Content-Length`, body falls short | Connection closed | Stream reset |
-| No declared length | Connection closed, no chunk terminator | Ends cleanly: the protocol has no failed end to signal |
+| No declared length | Connection closed, no chunk terminator | Stream reset |
 
-If a route streams something a client must be able to tell is incomplete, declare its length. The failure is also reported through the app's error hook.
+The failure is also reported through the app's error hook.
 
 ## Clustering
 

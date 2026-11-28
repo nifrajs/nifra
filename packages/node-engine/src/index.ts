@@ -14,4 +14,4 @@ export type {
   WsDeflateOptions,
 } from "./options.ts"
 export { bodyCeiling, mayServeSockets, payloadCeiling } from "./options.ts"
-export { isNativeAvailable, probe, serve } from "./serve.ts"
+export { isNativeAvailable, probe, serve, setResponseTrailers } from "./serve.ts"
