@@ -136,7 +136,8 @@ When more than one caller shares the route, also pass `evidenceOwner: (c) => <th
 tenant id>`: turns are recorded and replayed under that owner, so another caller's reconnect or
 reused `runId` finds none of them. Without it a turn id (by default the client's `runId`) works as a
 bearer capability. The owner function runs before any replay; throwing from it refuses the request with `403`, and a
-thrown `Response` answers the request as built, as one thrown from `ports` does.
+thrown `Response` answers the request as built, as one thrown from `ports` does. `ports` also runs on
+a reconnect, before anything is replayed, so a budget or rate-limit charge made there is made again.
 
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 

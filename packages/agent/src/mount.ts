@@ -99,6 +99,9 @@ export interface MountAgentOptions<
    * and budgets. Receives the route context so the caller can scope every port to the request subject.
    * Throw a `Response` (a 401 with its challenge, a 403) to answer the request with it; any other throw
    * is a fault and reaches the app's error handling.
+   *
+   * Also runs on a `Last-Event-ID` reconnect, before anything is replayed, although no turn starts:
+   * a budget or rate-limit charge made here is made again.
    */
   readonly ports: (c: AgentRouteContext) => AgentPorts | Promise<AgentPorts>
   /**
