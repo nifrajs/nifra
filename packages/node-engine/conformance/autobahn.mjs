@@ -3,12 +3,11 @@
  * any case it marks failed. `AUTOBAHN_CASES` narrows the run, comma separated. Case 9.* measures
  * throughput rather than conformance and is left out.
  */
-import { execFileSync, spawn } from "node:child_process"
-import { once } from "node:events"
+import { execFileSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { startServer } from "./ready.mjs"
 
 const IMAGE =
   "crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074"
@@ -19,14 +18,9 @@ mkdirSync(join(work, "reports"))
 // The container's user writes the report.
 chmodSync(join(work, "reports"), 0o777)
 
-const server = spawn(process.execPath, [fileURLToPath(new URL("./server.mjs", import.meta.url))], {
-  env: { ...process.env, PORT: "0", WS_DEFLATE: "1" },
-  stdio: ["ignore", "pipe", "inherit"],
-})
+const { server, port } = await startServer({ WS_DEFLATE: "1" })
 let failed = []
 try {
-  const [line] = await once(server.stdout, "data")
-  const port = Number(String(line).split(" ")[1])
   const host = linux ? "127.0.0.1" : "host.docker.internal"
   writeFileSync(
     join(work, "config", "fuzzingclient.json"),

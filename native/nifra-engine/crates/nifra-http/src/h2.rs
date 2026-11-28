@@ -223,6 +223,9 @@ pub struct H2Conn {
     seen_stream_id: u32,
     /// The latest run of ids the peer jumped over: closed without ever being used.
     skipped_ids: (u32, u32),
+    /// Highest stream pushed out of `draining`. At or below it, late trailers cannot be told from a
+    /// violation, so they are ignored.
+    forgotten_drain_id: u32,
     active_streams: HashMap<u32, InStream>,
     open_response_streams: HashMap<u32, ()>,
     continuation: Option<HeaderContinuation>,
@@ -260,6 +263,7 @@ impl H2Conn {
             last_stream_id: 0,
             seen_stream_id: 0,
             skipped_ids: (1, 0),
+            forgotten_drain_id: 0,
             active_streams: HashMap::with_capacity(16),
             open_response_streams: HashMap::with_capacity(16),
             continuation: None,
@@ -388,7 +392,8 @@ impl H2Conn {
             return;
         }
         if self.draining.len() >= DRAINING_LIMIT {
-            self.draining.remove(0);
+            let (forgotten, _) = self.draining.remove(0);
+            self.forgotten_drain_id = self.forgotten_drain_id.max(forgotten);
         }
         self.draining.push((stream_id, rst_owed));
     }
@@ -1094,6 +1099,9 @@ impl H2Conn {
             // Trailers in flight when the server cut a stream short still count for the HPACK
             // table, which is why they are decoded first. Anything else is a peer error (§5.1).
             let Some(at) = self.draining.iter().position(|&(id, _)| id == stream_id) else {
+                if stream_id <= self.forgotten_drain_id {
+                    return Ok(());
+                }
                 let (first, last) = self.skipped_ids;
                 return Err(if (first..=last).contains(&stream_id) {
                     ERR_PROTOCOL_ERROR
@@ -3297,6 +3305,23 @@ mod tests {
         assert!(!conn.feed(&late, &mut Vec::new()).close_after_write);
         // The trailers ended the peer's side, so nothing more is expected.
         assert!(conn.feed(&late, &mut Vec::new()).close_after_write);
+    }
+
+    #[test]
+    fn h2_trailers_for_a_reset_pushed_out_of_the_list_are_still_ignored() {
+        let mut conn = ready_conn(H2Config {
+            max_concurrent_streams: 256,
+            ..H2Config::default()
+        });
+        let streams = (0..=DRAINING_LIMIT as u32).map(|n| n * 2 + 1);
+        for stream in streams {
+            let upload = frame(FRAME_HEADERS, FLAG_END_HEADERS, stream, &get_headers(&[]));
+            conn.feed(&upload, &mut Vec::new());
+            conn.reset_stream(stream, ERR_CANCEL, &mut Vec::new());
+        }
+        let flags = FLAG_END_HEADERS | FLAG_END_STREAM;
+        let late = frame(FRAME_HEADERS, flags, 1, &[]);
+        assert!(!conn.feed(&late, &mut Vec::new()).close_after_write);
     }
 
     #[test]

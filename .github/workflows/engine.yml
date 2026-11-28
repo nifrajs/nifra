@@ -24,6 +24,9 @@ on:
 
 permissions: {}
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 concurrency:
   group: engine-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

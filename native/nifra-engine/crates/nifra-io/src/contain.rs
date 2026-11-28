@@ -32,7 +32,14 @@ impl UvCallbacks for Contained {
         contain(false, || self.0.has_pending_requests(conn_id))
     }
     fn without_pending(&self, ids: Vec<u32>) -> Vec<u32> {
-        contain(Vec::new(), || self.0.without_pending(ids))
+        // A panic must not keep every candidate open: ask about each, and spare the ones that panic.
+        catch_unwind(AssertUnwindSafe(|| self.0.without_pending(ids.clone()))).unwrap_or_else(
+            |_| {
+                ids.into_iter()
+                    .filter(|&id| !contain(true, || self.0.has_pending_requests(id)))
+                    .collect()
+            },
+        )
     }
     fn unanswered_only(&self, conn_id: u32) -> bool {
         contain(false, || self.0.unanswered_only(conn_id))
@@ -91,6 +98,27 @@ mod tests {
         fn on_disconnect(&mut self, _: u32) {
             panic!("on_disconnect")
         }
+    }
+
+    struct PanicsFor(u32);
+
+    impl UvCallbacks for PanicsFor {
+        fn on_data(&mut self, _: u32, _: &[u8], _: &mut Vec<u8>) -> ConnAction {
+            ConnAction::CloseNow
+        }
+        fn on_turn_end(&mut self) {}
+        fn has_pending_requests(&self, conn_id: u32) -> bool {
+            assert_ne!(conn_id, self.0, "has_pending_requests");
+            conn_id == 3
+        }
+        fn on_writable(&mut self, _: u32) {}
+        fn on_disconnect(&mut self, _: u32) {}
+    }
+
+    #[test]
+    fn a_panic_over_one_connection_does_not_keep_the_other_idle_ones_open() {
+        let handler = Contained(Box::new(PanicsFor(2)));
+        assert_eq!(handler.without_pending(vec![1, 2, 3, 4]), [1, 4]);
     }
 
     #[test]

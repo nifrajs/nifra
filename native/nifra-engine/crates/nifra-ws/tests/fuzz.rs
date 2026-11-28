@@ -3,7 +3,7 @@
 #[path = "../../nifra-http/tests/support/mod.rs"]
 mod support;
 
-use nifra_ws::{NegotiatedDeflate, WsConn};
+use nifra_ws::{NegotiatedDeflate, WsConn, WsEvent};
 use support::{deliver, mutate, run};
 
 fn frame(first: u8, payload: &[u8]) -> Vec<u8> {
@@ -54,7 +54,11 @@ fn websocket_frames_never_panic_the_decoder() {
         let mut out = Vec::new();
         deliver(rng, &input, |buffer| {
             let result = conn.feed(buffer, &mut out);
-            events += result.events.len() as u64;
+            events += result
+                .events
+                .iter()
+                .filter(|event| matches!(event, WsEvent::Text(_) | WsEvent::Binary(_)))
+                .count() as u64;
             (result.consumed, !result.close_after_write)
         });
     });

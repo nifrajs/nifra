@@ -1456,7 +1456,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   }
   activateAsyncContextFrame()
   enableNodeDirect(app)
-  const report = errorReporterOf(app)
+  const reporter = errorReporterOf(app)
+  // Reporting happens inside recovery paths, which a throwing logger must not cut short.
+  const report =
+    reporter &&
+    ((error: unknown): void => {
+      try {
+        reporter(error)
+      } catch {
+        // nowhere left to report it
+      }
+    })
   const lifecycle = lifecycleOf(app)
   const resolveNodeSource = app.resolveNodeSource
   const resolveWs = app.resolveWebSocketUpgrade
@@ -1535,11 +1545,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
   }
 
   const fail = (source: RustBatchSource, error: unknown): void => {
-    try {
-      report?.(error)
-    } catch {
-      // ignore logger errors
-    }
+    report?.(error)
     if (!source.aborted && !source.settled) {
       // The engine throws when it fails here; this is the last handler, so it only reports.
       try {
@@ -1981,12 +1987,17 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<EngineS
     outcome: NodeServeOutcome,
     isHead: boolean,
   ): void => {
-    if (!source.aborted && !source.settled && queueOutcome(source.requestId, outcome, isHead)) {
-      finish(source)
-      flushSoon()
-      return
+    // Runs from promise continuations too, where a throw would be an unhandled rejection.
+    try {
+      if (!source.aborted && !source.settled && queueOutcome(source.requestId, outcome, isHead)) {
+        finish(source)
+        flushSoon()
+        return
+      }
+      writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
+    } catch (error) {
+      fail(source, error)
     }
-    writeComplexOutcome(source, outcome, isHead, defaultOutcomeContentType(outcome, isHead))
   }
 
   const dispatchBatched = (i: number): void => {

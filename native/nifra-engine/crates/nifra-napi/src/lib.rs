@@ -3516,6 +3516,8 @@ impl UvHttpServer {
 
     #[napi(catch_unwind)]
     pub fn prepare_response(&self, status: u16, flat_headers: Vec<String>) -> u32 {
+        #[cfg(feature = "fault-injection")]
+        assert_ne!(status, 299, "injected fault");
         let pairs: Vec<(&str, &str)> = flat_headers
             .chunks_exact(2)
             .map(|c| (c[0].as_str(), c[1].as_str()))
@@ -3545,188 +3547,17 @@ impl UvHttpServer {
         let n = (count as usize).min(meta.len() / OUT_SLOT_U32S);
         let (sec, date_text) = nifra_http::date::now_cached();
         let mut frame = std::mem::take(&mut st.scratch_frame);
-        let compression = st.compression;
         for i in 0..n {
-            let base = i * OUT_SLOT_U32S;
-            let req_id = meta[base];
-            let template_id = meta[base + 1];
-            let body_off = meta[base + 2] as usize;
-            let body_len = meta[base + 3] as usize;
-            // Non-zero: that many bytes of header lines precede the body, and the template field
-            // carries the status instead.
-            let block_len = meta[base + 4] as usize;
-            let Some(mut pending) = st.remove_pending(req_id) else {
-                continue;
-            };
-            let split = body_off + block_len;
-            if split + body_len > data.len() {
-                continue;
-            }
-            let body_slice = &data[split..split + body_len];
-            frame.clear();
-            if block_len != 0 {
-                let block = &data[body_off..split];
-                let status = template_id as u16;
-                // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
-                let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
-                    .unwrap_or("")
-                    .split_terminator("\r\n")
-                    .filter_map(|line| line.split_once(": "))
-                    .collect();
-                let compressed = negotiate_compression_payload(
-                    compression,
-                    &st.batch_heads,
-                    &mut pending,
-                    status,
-                    &pairs,
-                    body_slice,
-                );
-                let out_body = compressed
-                    .as_ref()
-                    .and_then(|c| c.body.as_deref())
-                    .unwrap_or(body_slice);
-                if let Some(stream_id) = pending.h2_stream_id() {
-                    let Some(h2) = st
-                        .conn_meta
-                        .get_mut(pending.conn_id)
-                        .and_then(|s| s.h2.as_deref_mut())
-                    else {
-                        continue;
-                    };
-                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
-                        h2.write_response(stream_id, status, out_pairs, Some(out_body), &mut frame);
-                    });
-                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
-                } else if compressed.is_some() {
-                    with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
-                        write_buffered_response(&mut frame, status, out_pairs, Some(out_body));
-                    });
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
-                } else {
-                    write_block_response(&mut frame, status, block, body_slice);
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
-                }
-                continue;
-            }
-            if let Some(stream_id) = pending.h2_stream_id() {
-                let compressed =
-                    st.template_meta
-                        .get(template_id as usize)
-                        .and_then(|(status, hdrs)| {
-                            with_tuple_header_pairs(hdrs, |pairs| {
-                                negotiate_compression_payload(
-                                    compression,
-                                    &st.batch_heads,
-                                    &mut pending,
-                                    *status,
-                                    pairs,
-                                    body_slice,
-                                )
-                            })
-                        });
-                let UvHttpShared {
-                    ref template_meta,
-                    ref mut conn_meta,
-                    ..
-                } = *st;
-                if let (Some((status, hdrs)), Some(h2)) = (
-                    template_meta.get(template_id as usize),
-                    conn_meta
-                        .get_mut(pending.conn_id)
-                        .and_then(|s| s.h2.as_deref_mut()),
-                ) {
-                    let out_body = compressed
-                        .as_ref()
-                        .and_then(|c| c.body.as_deref())
-                        .unwrap_or(body_slice);
-                    with_tuple_header_pairs(hdrs, |pairs| {
-                        with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
-                            h2.write_response(
-                                stream_id,
-                                *status,
-                                out_pairs,
-                                Some(out_body),
-                                &mut frame,
-                            );
-                        });
-                    });
-                    let _ = self.server.write_to_conn(pending.conn_id, &frame, false);
-                }
-            } else {
-                let compressed = compression
-                    .enabled
-                    .then(|| {
-                        st.template_meta
-                            .get(template_id as usize)
-                            .and_then(|(status, hdrs)| {
-                                with_tuple_header_pairs(hdrs, |pairs| {
-                                    negotiate_compression_payload(
-                                        compression,
-                                        &st.batch_heads,
-                                        &mut pending,
-                                        *status,
-                                        pairs,
-                                        body_slice,
-                                    )
-                                })
-                            })
-                    })
-                    .flatten();
-                if let Some(ref comp) = compressed {
-                    if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
-                        let out_body = comp.body.as_deref().unwrap_or(body_slice);
-                        with_tuple_header_pairs(hdrs, |pairs| {
-                            with_compression_headers(pairs, Some(comp), |out_pairs| {
-                                write_buffered_response(
-                                    &mut frame,
-                                    *status,
-                                    out_pairs,
-                                    Some(out_body),
-                                );
-                            });
-                        });
-                        let _ = h1_send(
-                            &self.server,
-                            &mut st,
-                            pending.conn_id,
-                            req_id,
-                            &frame,
-                            true,
-                            pending.keep_alive(),
-                        );
-                    }
-                } else if st.templates.write_prepared_at(
-                    template_id,
-                    sec,
-                    &date_text,
-                    body_slice,
-                    &mut frame,
-                ) {
-                    let _ = h1_send(
-                        &self.server,
-                        &mut st,
-                        pending.conn_id,
-                        req_id,
-                        &frame,
-                        true,
-                        pending.keep_alive(),
-                    );
+            let req_id = meta[i * OUT_SLOT_U32S];
+            let conn_id = st.pending.get(req_id).map(|pending| pending.conn_id);
+            // The other slots are other requests' answers; a panic costs only this one.
+            let flushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.flush_slot(&mut st, i, meta, data, sec, &date_text, &mut frame);
+            }));
+            if flushed.is_err() {
+                st.remove_pending(req_id);
+                if let Some(conn_id) = conn_id {
+                    self.server.close_conn(conn_id);
                 }
             }
         }
@@ -5156,6 +4987,196 @@ fn publish_ws_topic(
         }
     }
     delivered
+}
+
+impl UvHttpServer {
+    /// Write the response in out-slab slot `i`.
+    #[allow(clippy::too_many_arguments)]
+    fn flush_slot(
+        &self,
+        st: &mut UvHttpShared,
+        i: usize,
+        meta: &[u32],
+        data: &[u8],
+        sec: u64,
+        date_text: &[u8; nifra_http::date::IMF_LEN],
+        frame: &mut Vec<u8>,
+    ) {
+        let compression = st.compression;
+        let base = i * OUT_SLOT_U32S;
+        let req_id = meta[base];
+        let template_id = meta[base + 1];
+        let body_off = meta[base + 2] as usize;
+        let body_len = meta[base + 3] as usize;
+        // Non-zero: that many bytes of header lines precede the body, and the template field
+        // carries the status instead.
+        let block_len = meta[base + 4] as usize;
+        let Some(mut pending) = st.remove_pending(req_id) else {
+            return;
+        };
+        let split = body_off + block_len;
+        if split + body_len > data.len() {
+            return;
+        }
+        let body_slice = &data[split..split + body_len];
+        frame.clear();
+        if block_len != 0 {
+            let block = &data[body_off..split];
+            let status = template_id as u16;
+            // A validated name holds no ':' and a value no CR or LF, so this splits exactly.
+            let pairs: Vec<(&str, &str)> = std::str::from_utf8(block)
+                .unwrap_or("")
+                .split_terminator("\r\n")
+                .filter_map(|line| line.split_once(": "))
+                .collect();
+            #[cfg(feature = "fault-injection")]
+            assert!(
+                !pairs.iter().any(|(name, _)| *name == "x-nifra-panic-flush"),
+                "injected fault"
+            );
+            let compressed = negotiate_compression_payload(
+                compression,
+                &st.batch_heads,
+                &mut pending,
+                status,
+                &pairs,
+                body_slice,
+            );
+            let out_body = compressed
+                .as_ref()
+                .and_then(|c| c.body.as_deref())
+                .unwrap_or(body_slice);
+            if let Some(stream_id) = pending.h2_stream_id() {
+                let Some(h2) = st
+                    .conn_meta
+                    .get_mut(pending.conn_id)
+                    .and_then(|s| s.h2.as_deref_mut())
+                else {
+                    return;
+                };
+                with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                    h2.write_response(stream_id, status, out_pairs, Some(out_body), frame);
+                });
+                let _ = self.server.write_to_conn(pending.conn_id, frame, false);
+            } else if compressed.is_some() {
+                with_compression_headers(&pairs, compressed.as_ref(), |out_pairs| {
+                    write_buffered_response(frame, status, out_pairs, Some(out_body));
+                });
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            } else {
+                write_block_response(frame, status, block, body_slice);
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            }
+            return;
+        }
+        if let Some(stream_id) = pending.h2_stream_id() {
+            let compressed =
+                st.template_meta
+                    .get(template_id as usize)
+                    .and_then(|(status, hdrs)| {
+                        with_tuple_header_pairs(hdrs, |pairs| {
+                            negotiate_compression_payload(
+                                compression,
+                                &st.batch_heads,
+                                &mut pending,
+                                *status,
+                                pairs,
+                                body_slice,
+                            )
+                        })
+                    });
+            let UvHttpShared {
+                ref template_meta,
+                ref mut conn_meta,
+                ..
+            } = *st;
+            if let (Some((status, hdrs)), Some(h2)) = (
+                template_meta.get(template_id as usize),
+                conn_meta
+                    .get_mut(pending.conn_id)
+                    .and_then(|s| s.h2.as_deref_mut()),
+            ) {
+                let out_body = compressed
+                    .as_ref()
+                    .and_then(|c| c.body.as_deref())
+                    .unwrap_or(body_slice);
+                with_tuple_header_pairs(hdrs, |pairs| {
+                    with_compression_headers(pairs, compressed.as_ref(), |out_pairs| {
+                        h2.write_response(stream_id, *status, out_pairs, Some(out_body), frame);
+                    });
+                });
+                let _ = self.server.write_to_conn(pending.conn_id, frame, false);
+            }
+        } else {
+            let compressed = compression
+                .enabled
+                .then(|| {
+                    st.template_meta
+                        .get(template_id as usize)
+                        .and_then(|(status, hdrs)| {
+                            with_tuple_header_pairs(hdrs, |pairs| {
+                                negotiate_compression_payload(
+                                    compression,
+                                    &st.batch_heads,
+                                    &mut pending,
+                                    *status,
+                                    pairs,
+                                    body_slice,
+                                )
+                            })
+                        })
+                })
+                .flatten();
+            if let Some(ref comp) = compressed {
+                if let Some((status, hdrs)) = st.template_meta.get(template_id as usize) {
+                    let out_body = comp.body.as_deref().unwrap_or(body_slice);
+                    with_tuple_header_pairs(hdrs, |pairs| {
+                        with_compression_headers(pairs, Some(comp), |out_pairs| {
+                            write_buffered_response(frame, *status, out_pairs, Some(out_body));
+                        });
+                    });
+                    let _ = h1_send(
+                        &self.server,
+                        st,
+                        pending.conn_id,
+                        req_id,
+                        frame,
+                        true,
+                        pending.keep_alive(),
+                    );
+                }
+            } else if st
+                .templates
+                .write_prepared_at(template_id, sec, date_text, body_slice, frame)
+            {
+                let _ = h1_send(
+                    &self.server,
+                    st,
+                    pending.conn_id,
+                    req_id,
+                    frame,
+                    true,
+                    pending.keep_alive(),
+                );
+            }
+        }
+    }
 }
 
 impl Drop for UvHttpServer {

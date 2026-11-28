@@ -2,12 +2,11 @@
  * Runs h2spec (`H2SPEC` names the binary, `openssl` must be on the path) against `server.mjs` over
  * TLS and fails on any case it fails.
  */
-import { execFileSync, spawn, spawnSync } from "node:child_process"
-import { once } from "node:events"
+import { execFileSync, spawnSync } from "node:child_process"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { startServer } from "./ready.mjs"
 
 const binary = process.env.H2SPEC
 if (!binary) throw new Error("set H2SPEC to the h2spec binary")
@@ -26,15 +25,10 @@ execFileSync(
   { stdio: "ignore" },
 )
 
-const server = spawn(process.execPath, [fileURLToPath(new URL("./server.mjs", import.meta.url))], {
-  env: { ...process.env, PORT: "0", TLS_CERT: cert, TLS_KEY: key },
-  stdio: ["ignore", "pipe", "inherit"],
-})
+const { server, port } = await startServer({ TLS_CERT: cert, TLS_KEY: key })
 let status = 1
 try {
-  const [line] = await once(server.stdout, "data")
-  const port = String(line).split(" ")[1].trim()
-  const run = spawnSync(binary, ["-h", "127.0.0.1", "-p", port, "-t", "-k", "-o", "5"], {
+  const run = spawnSync(binary, ["-h", "127.0.0.1", "-p", String(port), "-t", "-k", "-o", "5"], {
     stdio: "inherit",
   })
   status = run.status ?? 1

@@ -2,21 +2,19 @@
  * Mixed good and hostile traffic against `server.mjs` for `SOAK_SECONDS`, failing if the server
  * stops answering or its resident memory keeps growing after the first third of the run.
  */
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { once } from "node:events"
 import { connect as connectH2 } from "node:http2"
 import { createConnection } from "node:net"
-import { fileURLToPath } from "node:url"
+import { startServer } from "./ready.mjs"
 
 const seconds = Number(process.env.SOAK_SECONDS ?? 300)
 const allowedGrowthMb = Number(process.env.SOAK_GROWTH_MB ?? 48)
-const script = fileURLToPath(new URL("./server.mjs", import.meta.url))
-const server = spawn(process.execPath, [script], {
-  env: { ...process.env, PORT: "0", WS_DEFLATE: "1" },
-  stdio: ["ignore", "pipe", "inherit"],
-})
-const [line] = await once(server.stdout, "data")
-const port = Number(String(line).split(" ")[1])
+const SAMPLE_MS = 2000
+// The growth check compares thirds of the run, each of which needs a memory sample.
+if (!(seconds >= 10)) throw new Error("SOAK_SECONDS must be at least 10")
+const OPERATION_MS = 30_000
+const { server, port } = await startServer({ WS_DEFLATE: "1" })
 const origin = `http://127.0.0.1:${port}`
 const deadline = Date.now() + seconds * 1000
 const counts = { http1: 0, http2: 0, websocket: 0, hostile: 0, failures: 0 }
@@ -28,10 +26,19 @@ const resident = () =>
       .trim(),
   ) / 1024
 
+/** A peer that stops answering must fail the run, not hang it. */
+function within(operation) {
+  let timer
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(reject, OPERATION_MS, new Error(`no answer in ${OPERATION_MS} ms`))
+  })
+  return Promise.race([operation, expired]).finally(() => clearTimeout(timer))
+}
+
 async function loop(name, once_) {
   while (Date.now() < deadline) {
     try {
-      await once_()
+      await within(once_())
       counts[name] += 1
     } catch (error) {
       counts.failures += 1
@@ -80,8 +87,10 @@ const websocket = async () => {
   for (let i = 0; i < 10; i++) {
     const message = "m".repeat(Math.floor(Math.random() * 100_000))
     socket.send(message)
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       socket.onmessage = resolve
+      socket.onerror = reject
+      socket.onclose = () => reject(new Error("closed before the echo"))
     })
   }
   socket.close()
@@ -109,19 +118,33 @@ const hostile = () =>
   })
 
 const samples = []
-const sampler = setInterval(() => samples.push(resident()), 2000)
-await Promise.all([
-  ...Array.from({ length: 8 }, () => loop("http1", http1)),
-  ...Array.from({ length: 2 }, () => loop("http2", http2)),
-  ...Array.from({ length: 4 }, () => loop("websocket", websocket)),
-  ...Array.from({ length: 8 }, () => loop("hostile", hostile)),
-])
-clearInterval(sampler)
-const alive = await fetch(origin).then((r) => r.json())
+const sampler = setInterval(() => {
+  try {
+    samples.push(resident())
+  } catch {
+    // The server is gone; the health check below reports it.
+  }
+}, SAMPLE_MS)
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
-const third = Math.floor(samples.length / 3)
-const middle = median(samples.slice(third, third * 2))
-const last = median(samples.slice(third * 2))
-console.log(JSON.stringify({ seconds, ...counts, middleRssMb: middle, lastRssMb: last }))
-server.kill()
-if (alive !== "ok" || counts.failures > 0 || last - middle > allowedGrowthMb) process.exit(1)
+let passed = false
+try {
+  await Promise.all([
+    ...Array.from({ length: 8 }, () => loop("http1", http1)),
+    ...Array.from({ length: 2 }, () => loop("http2", http2)),
+    ...Array.from({ length: 4 }, () => loop("websocket", websocket)),
+    ...Array.from({ length: 8 }, () => loop("hostile", hostile)),
+  ])
+  const response = await fetch(origin, { signal: AbortSignal.timeout(OPERATION_MS) })
+  const alive = await response.json()
+  if (samples.length < 3) throw new Error(`only ${samples.length} memory samples`)
+  const third = Math.floor(samples.length / 3)
+  const middle = median(samples.slice(third, third * 2))
+  const last = median(samples.slice(third * 2))
+  console.log(JSON.stringify({ seconds, ...counts, middleRssMb: middle, lastRssMb: last }))
+  passed = alive === "ok" && counts.failures === 0 && last - middle <= allowedGrowthMb
+} finally {
+  clearInterval(sampler)
+  server.kill()
+}
+// Exit outright: an operation that timed out may still hold its socket open.
+process.exit(passed ? 0 : 1)
