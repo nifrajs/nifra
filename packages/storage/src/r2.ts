@@ -7,12 +7,15 @@
 import { assertSafeKey } from "./key.ts"
 import {
   type ListOptions,
+  type PagedStorageAdapter,
   type PutOptions,
-  type StorageAdapter,
   type StorageData,
   type StorageListPage,
   type StorageListPageOptions,
   type StorageObject,
+  type StorageObjectMetadata,
+  type StorageStreamObject,
+  type StreamableStorageAdapter,
   toBytes,
 } from "./types.ts"
 
@@ -27,7 +30,7 @@ export interface R2ObjectLike {
 export interface R2BucketLike {
   put(
     key: string,
-    value: ArrayBuffer | ArrayBufferView,
+    value: ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>,
     options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
   ): Promise<unknown>
   get(key: string): Promise<
@@ -49,7 +52,7 @@ export interface R2BucketLike {
 /** The most keys one R2 `list()` call returns; the rest arrive behind its cursor. */
 const R2_PAGE = 1000
 
-export class R2Storage implements StorageAdapter {
+export class R2Storage implements StreamableStorageAdapter, PagedStorageAdapter {
   private readonly maxReadBytes: number
 
   constructor(
@@ -62,16 +65,45 @@ export class R2Storage implements StorageAdapter {
     }
   }
 
-  async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
-    assertSafeKey(key)
+  private putOptions(options: PutOptions): {
+    httpMetadata?: { contentType?: string }
+    customMetadata?: Record<string, string>
+  } {
     const put: {
       httpMetadata?: { contentType?: string }
       customMetadata?: Record<string, string>
     } = {}
     if (options.contentType !== undefined) put.httpMetadata = { contentType: options.contentType }
     if (options.metadata !== undefined) put.customMetadata = { ...options.metadata }
+    return put
+  }
+
+  async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
+    assertSafeKey(key)
     // R2 wants a copied ArrayBuffer (not a view into a larger buffer).
-    await this.bucket.put(key, toBytes(data).slice().buffer, put)
+    await this.bucket.put(key, toBytes(data).slice().buffer, this.putOptions(options))
+  }
+
+  async putStream(
+    key: string,
+    stream: ReadableStream<Uint8Array>,
+    options: PutOptions = {},
+  ): Promise<void> {
+    assertSafeKey(key)
+    await this.bucket.put(key, stream, this.putOptions(options))
+  }
+
+  private objectMetadata(object: R2ObjectLike): StorageObjectMetadata {
+    const result: {
+      size: number
+      contentType?: string
+      metadata?: Readonly<Record<string, string>>
+    } = { size: object.size }
+    if (object.httpMetadata?.contentType !== undefined) {
+      result.contentType = object.httpMetadata.contentType
+    }
+    if (object.customMetadata !== undefined) result.metadata = object.customMetadata
+    return result
   }
 
   /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */
@@ -91,11 +123,36 @@ export class R2Storage implements StorageAdapter {
     }
     return {
       body,
-      size: object.size,
-      ...(object.httpMetadata?.contentType !== undefined
-        ? { contentType: object.httpMetadata.contentType }
-        : {}),
-      ...(object.customMetadata !== undefined ? { metadata: object.customMetadata } : {}),
+      ...this.objectMetadata(object),
+    }
+  }
+
+  async head(key: string): Promise<StorageObjectMetadata | null> {
+    assertSafeKey(key)
+    const object = await this.bucket.head(key)
+    if (object === null) return null
+    return this.objectMetadata(object)
+  }
+
+  async getStream(key: string): Promise<StorageStreamObject | null> {
+    assertSafeKey(key)
+    const object = await this.bucket.get(key)
+    if (object === null) return null
+    let body: ReadableStream<Uint8Array>
+    if (object.body !== undefined) {
+      body = object.body
+    } else {
+      const bytes = new Uint8Array(await object.arrayBuffer())
+      body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (bytes.byteLength > 0) controller.enqueue(bytes)
+          controller.close()
+        },
+      })
+    }
+    return {
+      body,
+      ...this.objectMetadata(object),
     }
   }
 

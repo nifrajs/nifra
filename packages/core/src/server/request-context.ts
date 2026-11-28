@@ -40,6 +40,7 @@ export { readBodyFramed, readBodyFramedNow, readBoundedJsonSource } from "./body
 /** A fixed past instant for cookie deletion (`Expires`). A literal epoch - deterministic, unlike an
  * argless `new Date()`. */
 const EPOCH = new Date(0)
+const EMPTY_TRAILERS: Readonly<Record<string, string>> = Object.freeze(Object.create(null))
 
 class LazyResponseControls implements CtxSet {
   status?: number
@@ -379,6 +380,10 @@ export class RequestContext implements RawContext {
 
   set headers(value: Record<string, string>) {
     this.headersValue = value
+  }
+
+  get trailers(): Readonly<Record<string, string>> {
+    return this.source.trailers ?? EMPTY_TRAILERS
   }
 
   /**

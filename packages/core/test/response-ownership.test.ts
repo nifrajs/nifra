@@ -180,7 +180,7 @@ for (const lane of LANES) {
     }
 
     for (const async of [false, true]) {
-      const hook = (async ? "an async" : "a sync") + " onResponse hook"
+      const hook = `${async ? "an async" : "a sync"} onResponse hook`
       test(`a body ${hook} hands back is single-use and never replays a cookie`, async () => {
         let shared: Response | undefined
         const app = server({ logger: silentLogger })

@@ -30,7 +30,7 @@ test(
         socket.on("end", () => resolve(Buffer.concat(chunks).toString()))
         socket.on("connect", () => {
           const ready = "GET /ready HTTP/1.1\r\nHost: localhost\r\n\r\n"
-          socket.end(ready.repeat(260) + "GET /answer HTTP/1.1\r\nHost: localhost\r\n\r\n")
+          socket.end(`${ready.repeat(260)}GET /answer HTTP/1.1\r\nHost: localhost\r\n\r\n`)
         })
       })
       assert.match(response, /^HTTP\/1\.1 200 /)

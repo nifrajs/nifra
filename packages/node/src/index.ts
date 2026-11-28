@@ -10,7 +10,7 @@
  * so this adapter just bridges Node's stream-based `(req, res)` to/from Web
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
-import { AsyncLocalStorage } from "node:async_hooks"
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks"
 import { createHash } from "node:crypto"
 import { type FileHandle, realpath } from "node:fs/promises"
 import {
@@ -1262,6 +1262,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     )
   }
   activateAsyncContextFrame()
+  const serveScope = new AsyncResource("nifra.node.serve")
   enableNodeDirect(app)
   const report = errorReporterOf(app)
   if (options.fastResponse === true) installFastResponse()
@@ -1295,33 +1296,37 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   }
   const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     inFlight += 1
-    try {
-      const handled = handle(
-        app,
-        nodeReq,
-        nodeRes,
-        protocol,
-        staticState,
-        hostPolicy,
-        staticHandler,
-      )
-      if (handled instanceof Promise) {
-        // The rejection arm is required: Node terminates the process on an unhandled rejection by
-        // default. Every writer already ends and reports its own failures (`failAndReport`), so
-        // anything arriving here is a fault no response can still be built from - the connection is
-        // the only thing left to end. One `then`, not `catch` + `finally`: every async response
-        // pays for each extra promise and microtask.
-        handled.then(settled, (error: unknown) => {
-          inFlight -= 1
-          failAndReport(nodeRes, error)
-        })
-        return
+    serveScope.runInAsyncScope(() => {
+      try {
+        const handled = new AsyncResource("nifra.node.request").runInAsyncScope(
+          handle,
+          undefined,
+          app,
+          nodeReq,
+          nodeRes,
+          protocol,
+          staticState,
+          hostPolicy,
+          staticHandler,
+        )
+        if (handled instanceof Promise) {
+          // The rejection arm is required: Node terminates the process on an unhandled rejection by
+          // default. Every writer already ends and reports its own failures (`failAndReport`), so
+          // anything arriving here is a fault no response can still be built from - the connection is
+          // the only thing left to end. One `then`, not `catch` + `finally`: every async response
+          // pays for each extra promise and microtask.
+          handled.then(settled, (error: unknown) => {
+            inFlight -= 1
+            failAndReport(nodeRes, error)
+          })
+          return
+        }
+        inFlight -= 1
+      } catch (error) {
+        failAndReport(nodeRes, error)
+        inFlight -= 1
       }
-      inFlight -= 1
-    } catch (error) {
-      failAndReport(nodeRes, error)
-      inFlight -= 1
-    }
+    })
   }
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   // Only a WebSocket handshake leaves the HTTP parser; any other `Upgrade` (curl's h2c offer) is an
@@ -1365,25 +1370,27 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     // and mounted children can declare different caps.
     const servers = new Map<number | undefined, Promise<WsServer | undefined>>()
     server.on("upgrade", (nodeReq, socket, head) => {
-      void handleUpgrade(
-        app,
-        answering,
-        adopt,
-        resolveWs,
-        protocol,
-        hostPolicy,
-        nodeReq,
-        socket,
-        head,
-        (maxPayloadBytes) => {
-          let wss = servers.get(maxPayloadBytes)
-          if (wss === undefined) {
-            wss = loadWsServer(maxPayloadBytes)
-            servers.set(maxPayloadBytes, wss)
-          }
-          return wss
-        },
-      )
+      serveScope.runInAsyncScope(() => {
+        void handleUpgrade(
+          app,
+          answering,
+          adopt,
+          resolveWs,
+          protocol,
+          hostPolicy,
+          nodeReq,
+          socket,
+          head,
+          (maxPayloadBytes) => {
+            let wss = servers.get(maxPayloadBytes)
+            if (wss === undefined) {
+              wss = loadWsServer(maxPayloadBytes)
+              servers.set(maxPayloadBytes, wss)
+            }
+            return wss
+          },
+        )
+      })
     })
   }
 
@@ -2182,6 +2189,14 @@ abstract class NodeSourceBase {
   get headers(): Headers {
     this.headersValue ??= headersFromNode(this.nodeReq.headers)
     return this.headersValue
+  }
+
+  get trailers(): Readonly<Record<string, string>> {
+    const out: Record<string, string> = Object.create(null)
+    for (const [k, v] of Object.entries(this.nodeReq.trailers)) {
+      if (typeof v === "string") out[k.toLowerCase()] = v
+    }
+    return out
   }
 
   // Read straight off Node's request (comma-joining multi-values to match `Headers.get`) so the

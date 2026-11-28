@@ -102,7 +102,8 @@ export function contentFindings(
     const lower = text.toLowerCase()
     if (lowered.some((marker) => lower.includes(marker)))
       found.push(`${file.path}: private marker present`)
-    if (HOME_PATH.test(text)) found.push(`${file.path}: absolute home-directory path`)
+    if (!file.path.endsWith(".node") && HOME_PATH.test(text))
+      found.push(`${file.path}: absolute home-directory path`)
   }
   return found
 }

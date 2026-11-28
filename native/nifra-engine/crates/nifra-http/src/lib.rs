@@ -42,8 +42,37 @@ fn lines_end_in_crlf(head: &[u8]) -> bool {
     memchr::memchr_iter(b'\n', head).all(|at| at > 0 && head[at - 1] == b'\r')
 }
 
-/// An origin-form or absolute-form target, or `*` for `OPTIONS` (RFC 9112 §3.2).
+/// Validate an authority-form request target (`host:port`, RFC 9110 §9.3.6 `CONNECT`).
+pub fn is_authority_target(target: &str) -> bool {
+    if target.is_empty()
+        || target
+            .bytes()
+            .any(|b| b <= b' ' || b == 0x7f || matches!(b, b'/' | b'?' | b'#' | b'@'))
+    {
+        return false;
+    }
+    let Some((host, port)) = target.rsplit_once(':') else {
+        return false;
+    };
+    if host.is_empty() || port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit())
+    {
+        return false;
+    }
+    if !port.parse::<u16>().is_ok_and(|p| p > 0) {
+        return false;
+    }
+    if host.starts_with('[') {
+        host.len() >= 3 && host.ends_with(']')
+    } else {
+        !host.contains(':') && !host.contains('[') && !host.contains(']')
+    }
+}
+
+/// An origin-form or absolute-form target, authority-form for `CONNECT`, or `*` for `OPTIONS` (RFC 9112 §3.2).
 fn is_routable_target(method: &str, target: &str) -> bool {
+    if method == "CONNECT" {
+        return is_authority_target(target);
+    }
     if target.starts_with('/') {
         return true;
     }
@@ -751,6 +780,31 @@ pub fn parse_http1_resume<'a>(
     let keep_alive = !close_seen && (keep_alive_seen || default_keep_alive);
     let host_valid = host.is_some_and(is_valid_host);
 
+    if method == "CONNECT" {
+        if has_te || content_length.is_some_and(|cl| cl != 0) {
+            return Err(ParseError::Malformed);
+        }
+        return Ok(ParseStatus::Complete(ParsedRequest {
+            method_idx: method_to_idx(method),
+            method,
+            path,
+            query,
+            host,
+            host_valid,
+            is_json_ct: false,
+            content_type,
+            http10,
+            is_chunked: false,
+            is_ws_upgrade: false,
+            keep_alive,
+            body: Cow::Borrowed(&[]),
+            trailers: Vec::new(),
+            over_max_body: false,
+            head_len,
+            total_bytes: head_len,
+        }));
+    }
+
     if limits.stream_request_bodies && !is_ws_upgrade && !resume.is_active() {
         let should_stream = if is_chunked {
             true
@@ -1352,6 +1406,82 @@ pub fn write_block_response(out: &mut Vec<u8>, status: u16, block: &[u8], body: 
     out.extend_from_slice(num.format(body.len()).as_bytes());
     out.extend_from_slice(b"\r\n\r\n");
     out.extend_from_slice(body);
+}
+
+/// Write an HTTP/1.1 `1xx` informational response (`100..=199`, excluding `101 Switching Protocols`).
+/// Returns `false` if `status` is invalid or any header contains CR/LF/NUL or is empty.
+pub fn write_informational_response(
+    out: &mut Vec<u8>,
+    status: u16,
+    headers: &[(&str, &str)],
+) -> bool {
+    if !(100..=199).contains(&status) || status == 101 {
+        return false;
+    }
+    for &(k, v) in headers {
+        if k.is_empty()
+            || k.bytes()
+                .any(|b| b <= 0x20 || b >= 0x7f || matches!(b, b':' | b'(' | b')' | b'<' | b'>' | b'@' | b',' | b';' | b'\\' | b'"' | b'/' | b'[' | b']' | b'?' | b'=' | b'{' | b'}'))
+            || v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+        {
+            return false;
+        }
+    }
+    let mut num = itoa::Buffer::new();
+    out.extend_from_slice(b"HTTP/1.1 ");
+    out.extend_from_slice(num.format(status).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(reason_phrase(status).as_bytes());
+    out.extend_from_slice(b"\r\n");
+    for &(k, v) in headers {
+        if k.eq_ignore_ascii_case("content-length")
+            || k.eq_ignore_ascii_case("transfer-encoding")
+            || k.eq_ignore_ascii_case("connection")
+        {
+            continue;
+        }
+        out.extend_from_slice(k.as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"\r\n");
+    true
+}
+
+/// Write an HTTP/1.1 `2xx` CONNECT tunnel established head (`200 Connection Established\r\n...\r\n`).
+pub fn write_connect_response_head(
+    out: &mut Vec<u8>,
+    status: u16,
+    headers: &[(&str, &str)],
+) -> bool {
+    if !(200..=299).contains(&status) {
+        return false;
+    }
+    let mut num = itoa::Buffer::new();
+    out.extend_from_slice(b"HTTP/1.1 ");
+    out.extend_from_slice(num.format(status).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(if status == 200 {
+        b"Connection Established"
+    } else {
+        reason_phrase(status).as_bytes()
+    });
+    out.extend_from_slice(b"\r\n");
+    for &(k, v) in headers {
+        if k.is_empty()
+            || k.bytes().any(|b| b <= 0x20 || b >= 0x7f || b == b':')
+            || v.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0))
+        {
+            return false;
+        }
+        out.extend_from_slice(k.as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"\r\n");
+    true
 }
 
 /// Write the HTTP/1.1 head for a streamed response (`Transfer-Encoding: chunked` unless

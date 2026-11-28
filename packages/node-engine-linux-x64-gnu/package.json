@@ -1,0 +1,46 @@
+{
+  "name": "@nifrajs/node-engine-linux-x64-gnu",
+  "version": "5.17.0",
+  "description": "Prebuilt native binary for @nifrajs/node-engine (linux-x64-gnu).",
+  "keywords": [
+    "nifra",
+    "node-engine",
+    "native",
+    "prebuilt",
+    "linux-x64-gnu"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "preferUnplugged": true,
+  "nifra": {
+    "nativePrebuild": "linux-x64-gnu"
+  },
+  "files": [
+    "nifra_napi.node",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/node-engine-linux-x64-gnu"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

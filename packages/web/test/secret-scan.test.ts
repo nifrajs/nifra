@@ -587,3 +587,51 @@ describe("prerender", () => {
     expect(existsSync(join(out, "index.html"))).toBe(false)
   })
 })
+
+describe("secret-scan boundary and encoding edge cases", () => {
+  test("base64url variant is detected when standard base64 contains + or /", () => {
+    const raw = "secret+value?with/url_chars-99"
+    const base64url = btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
+    expect(base64url).not.toBe(btoa(raw).replaceAll("=", ""))
+    const findings = scanForSecrets({
+      artifacts: [{ name: "assets/app.js", text: `const s = "${base64url}"` }],
+      env: { API_SECRET: raw },
+    })
+    expect(rules(findings)).toEqual(["private-env-value: value of API_SECRET (base64)"])
+  })
+
+  test("env needles enforce minimum length 8 and empty publicEnvPrefix does not exempt secrets", () => {
+    const short7 = "Ab3!x9Z"
+    const exact8 = "Ab3!x9Zq"
+    expect(
+      scanForSecrets({
+        artifacts: [{ name: "assets/app.js", text: `${short7} ${exact8}` }],
+        env: { SHORT_SECRET: short7, EXACT_SECRET: exact8 },
+        publicEnvPrefix: "",
+      }).map((f) => f.what),
+    ).toEqual(["value of EXACT_SECRET"])
+  })
+
+  test("exemption on emitted bundle suppresses finding attributed to an origin module", () => {
+    const dir = mkdtempSync(`${import.meta.dir}/.tmp-secret-origin-exempt-`)
+    try {
+      const file = join(dir, "vendor.js")
+      writeFileSync(file, `export const k = "${STRIPE}"\n`)
+      const findings = scanForSecrets({
+        artifacts: [
+          {
+            name: "assets/vendor-exempt.js",
+            text: `var k="${STRIPE}"`,
+            origins: [{ name: "node_modules/helper/vendor.js", path: file }],
+          },
+        ],
+        exemptions: [
+          { rule: "key-format", file: "assets/vendor-exempt.js", reason: "exempt emitted bundle" },
+        ],
+      })
+      expect(findings).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

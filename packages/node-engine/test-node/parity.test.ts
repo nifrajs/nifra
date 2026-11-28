@@ -118,7 +118,7 @@ const cases: Array<[string, string | Buffer]> = [
   ["unknown route is 404", get("/nope")],
   [
     "HEAD of a json route",
-    "HEAD /orders HTTP/1.1\r\nHost: example.test\r\nauthorization: " + AUTH + "\r\n\r\n",
+    `HEAD /orders HTTP/1.1\r\nHost: example.test\r\nauthorization: ${AUTH}\r\n\r\n`,
   ],
   ["async route", get("/slow")],
   ["header read after an await", get("/async-header", "x-late: still-here\r\n")],

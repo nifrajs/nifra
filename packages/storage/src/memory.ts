@@ -7,9 +7,11 @@ import { assertSafeKey } from "./key.ts"
 import {
   type ListOptions,
   type PutOptions,
-  type StorageAdapter,
   type StorageData,
   type StorageObject,
+  type StorageObjectMetadata,
+  type StorageStreamObject,
+  type StreamableStorageAdapter,
   toBytes,
 } from "./types.ts"
 
@@ -19,7 +21,22 @@ interface Entry {
   readonly metadata?: Readonly<Record<string, string>>
 }
 
-export class MemoryStorage implements StorageAdapter {
+function objectMetadata(
+  size: number,
+  contentType: string | undefined,
+  metadata: Readonly<Record<string, string>> | undefined,
+): StorageObjectMetadata {
+  const result: {
+    size: number
+    contentType?: string
+    metadata?: Readonly<Record<string, string>>
+  } = { size }
+  if (contentType !== undefined) result.contentType = contentType
+  if (metadata !== undefined) result.metadata = metadata
+  return result
+}
+
+export class MemoryStorage implements StreamableStorageAdapter {
   private readonly objects: Map<string, Entry>
 
   constructor() {
@@ -28,12 +45,42 @@ export class MemoryStorage implements StorageAdapter {
 
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     assertSafeKey(key)
-    const entry: Entry = { body: toBytes(data) }
-    this.objects.set(key, {
-      ...entry,
-      ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
-      ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
-    })
+    const entry: {
+      body: Uint8Array
+      contentType?: string
+      metadata?: Readonly<Record<string, string>>
+    } = { body: toBytes(data) }
+    if (options.contentType !== undefined) entry.contentType = options.contentType
+    if (options.metadata !== undefined) entry.metadata = options.metadata
+    this.objects.set(key, entry)
+  }
+
+  async putStream(
+    key: string,
+    stream: ReadableStream<Uint8Array>,
+    options: PutOptions = {},
+  ): Promise<void> {
+    assertSafeKey(key)
+    const reader = stream.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        total += value.byteLength
+      }
+    } finally {
+      reader.releaseLock()
+    }
+    const merged = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      merged.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    await this.put(key, merged, options)
   }
 
   async get(key: string): Promise<StorageObject | null> {
@@ -42,9 +89,31 @@ export class MemoryStorage implements StorageAdapter {
     if (entry === undefined) return null
     return {
       body: entry.body,
-      size: entry.body.byteLength,
-      ...(entry.contentType !== undefined ? { contentType: entry.contentType } : {}),
-      ...(entry.metadata !== undefined ? { metadata: entry.metadata } : {}),
+      ...objectMetadata(entry.body.byteLength, entry.contentType, entry.metadata),
+    }
+  }
+
+  async head(key: string): Promise<StorageObjectMetadata | null> {
+    assertSafeKey(key)
+    const entry = this.objects.get(key)
+    if (entry === undefined) return null
+    return objectMetadata(entry.body.byteLength, entry.contentType, entry.metadata)
+  }
+
+  async getStream(key: string): Promise<StorageStreamObject | null> {
+    assertSafeKey(key)
+    const entry = this.objects.get(key)
+    if (entry === undefined) return null
+    const snapshot = entry.body
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (snapshot.byteLength > 0) controller.enqueue(snapshot)
+        controller.close()
+      },
+    })
+    return {
+      body,
+      ...objectMetadata(snapshot.byteLength, entry.contentType, entry.metadata),
     }
   }
 

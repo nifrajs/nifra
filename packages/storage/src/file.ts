@@ -26,9 +26,11 @@ import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
   type ListOptions,
   type PutOptions,
-  type StorageAdapter,
   type StorageData,
   type StorageObject,
+  type StorageObjectMetadata,
+  type StorageStreamObject,
+  type StreamableStorageAdapter,
   toBytes,
 } from "./types.ts"
 
@@ -160,7 +162,7 @@ export async function renameOver(
   }
 }
 
-export class FileStorage implements StorageAdapter {
+export class FileStorage implements StreamableStorageAdapter {
   private readonly maxReadBytes: number
   private readonly maxMetadataBytes: number
   private root = ""
@@ -462,7 +464,7 @@ export class FileStorage implements StorageAdapter {
     base: string,
     path: string,
     key: string,
-    data: Uint8Array | string,
+    data: Uint8Array | string | ReadableStream<Uint8Array>,
   ): Promise<FileIdentity> {
     await this.assertNoSymlinkPath(base, path, key)
     await this.privateState()
@@ -475,6 +477,7 @@ export class FileStorage implements StorageAdapter {
       // to the object and is still one rename. Windows has no name to stage it under: a backslash
       // separates paths there.
       if (errorCode(error) !== "EXDEV" || process.platform === "win32") throw error
+      if (data instanceof ReadableStream) throw error
       return await this.stageAndRename(base, path, key, data, dirname(path))
     }
   }
@@ -483,7 +486,7 @@ export class FileStorage implements StorageAdapter {
     base: string,
     path: string,
     key: string,
-    data: Uint8Array | string,
+    data: Uint8Array | string | ReadableStream<Uint8Array>,
     stagingDir: string,
   ): Promise<FileIdentity> {
     const staged = await this.stage(key, data, stagingDir)
@@ -512,7 +515,7 @@ export class FileStorage implements StorageAdapter {
   /** A new, exclusively created file in `dir` holding `data`. */
   private async stage(
     key: string,
-    data: Uint8Array | string,
+    data: Uint8Array | string | ReadableStream<Uint8Array>,
     dir: string,
   ): Promise<FileIdentity & { readonly path: string }> {
     const own = dir === this.stagingRoot
@@ -532,7 +535,20 @@ export class FileStorage implements StorageAdapter {
       throw error
     }
     try {
-      await handle.writeFile(data)
+      if (data instanceof ReadableStream) {
+        const reader = data.getReader()
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (value.byteLength > 0) await handle.write(value)
+          }
+        } finally {
+          reader.releaseLock()
+        }
+      } else {
+        await handle.writeFile(data)
+      }
       return { path, ...(await identityOf(handle)) }
     } catch (error) {
       await discardStaged(path)
@@ -588,31 +604,78 @@ export class FileStorage implements StorageAdapter {
     return next
   }
 
-  async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
+  private async writeObjectAndMetadata(
+    key: string,
+    data: Uint8Array | ReadableStream<Uint8Array>,
+    options: PutOptions,
+  ): Promise<void> {
     await this.pinRoot(key)
     const path = this.pathFor(key)
     const metadataPath = this.metadataPathFor(key)
-    const bytes = toBytes(data)
     await this.serialized(key, async () => {
       // Body and sidecar are two files, so another process's put can land between them. The sidecar
       // names the body it was written with, and a read ignores one that names another.
-      const body = await this.writeContained(this.root, path, key, bytes)
+      const body = await this.writeContained(this.root, path, key, data)
       await this.removeLegacyMetadata(key)
       if (options.contentType !== undefined || options.metadata !== undefined) {
+        const stored: {
+          contentType?: string
+          metadata?: Readonly<Record<string, string>>
+          body: FileIdentity
+        } = { body }
+        if (options.contentType !== undefined) stored.contentType = options.contentType
+        if (options.metadata !== undefined) stored.metadata = options.metadata
         await this.writeContained(
           this.metadataRoot,
           metadataPath,
           key,
-          JSON.stringify({
-            ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
-            ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
-            body,
-          } satisfies StoredMetadata),
+          JSON.stringify(stored satisfies StoredMetadata),
         )
       } else {
         await this.removeContained(this.metadataRoot, metadataPath, key)
       }
     })
+  }
+
+  async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
+    await this.writeObjectAndMetadata(key, toBytes(data), options)
+  }
+
+  async putStream(
+    key: string,
+    stream: ReadableStream<Uint8Array>,
+    options: PutOptions = {},
+  ): Promise<void> {
+    await this.writeObjectAndMetadata(key, stream, options)
+  }
+
+  private async resolveMetadata(
+    key: string,
+    identity: FileIdentity,
+    body?: Uint8Array,
+  ): Promise<{
+    readonly contentType?: string
+    readonly metadata?: Readonly<Record<string, string>>
+  }> {
+    const sidecar =
+      (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
+      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key))
+    const named = sidecar?.body
+    const stored =
+      named === undefined ||
+      (named.dev === identity.dev &&
+        named.ino === identity.ino &&
+        (named.sha256 === undefined || (body !== undefined && named.sha256 === sha256(body))))
+        ? (sidecar ?? {})
+        : {}
+    const contentType = stored.contentType ?? inferContentType(key)
+    const resolved: {
+      contentType?: string
+      metadata?: Readonly<Record<string, string>>
+    } = {}
+    if (contentType !== undefined) resolved.contentType = contentType
+    if (stored.metadata !== undefined) resolved.metadata = stored.metadata
+    return resolved
   }
 
   /** Objects and their metadata each have a 16 MiB buffered-read limit by default.
@@ -631,25 +694,79 @@ export class FileStorage implements StorageAdapter {
     } finally {
       await bodyHandle.close()
     }
-    const sidecar =
-      (await this.readMetadata(this.metadataRoot, this.metadataPathFor(key), key)) ??
-      (await this.readMetadata(this.legacyMetadataRoot, this.legacyMetadataPathFor(key), key))
-    // A sidecar from before bodies were named describes whatever body is there, as it always did.
-    const named = sidecar?.body
-    const stored =
-      named === undefined ||
-      (named.dev === identity.dev &&
-        named.ino === identity.ino &&
-        (named.sha256 === undefined || named.sha256 === sha256(body)))
-        ? (sidecar ?? {})
-        : {}
-    // Objects with no sidecar still infer a useful MIME type from their extension.
-    const contentType = stored.contentType ?? inferContentType(key)
+    const resolved = await this.resolveMetadata(key, identity, body)
     return {
       body,
       size: body.byteLength,
-      ...(contentType !== undefined ? { contentType } : {}),
-      ...(stored.metadata !== undefined ? { metadata: stored.metadata } : {}),
+      ...resolved,
+    }
+  }
+
+  async head(key: string): Promise<StorageObjectMetadata | null> {
+    await this.pinRoot(key)
+    const path = this.pathFor(key)
+    const opened = await this.openObject(this.root, path, key)
+    if (opened === null) return null
+    const { handle, info } = opened
+    const identity: FileIdentity = { dev: String(info.dev), ino: String(info.ino) }
+    await handle.close()
+    const resolved = await this.resolveMetadata(key, identity)
+    return {
+      size: Number(info.size),
+      ...resolved,
+    }
+  }
+
+  async getStream(key: string): Promise<StorageStreamObject | null> {
+    await this.pinRoot(key)
+    const path = this.pathFor(key)
+    const opened = await this.openObject(this.root, path, key)
+    if (opened === null) return null
+    const { handle, info } = opened
+    const identity: FileIdentity = { dev: String(info.dev), ino: String(info.ino) }
+    let resolved: {
+      readonly contentType?: string
+      readonly metadata?: Readonly<Record<string, string>>
+    }
+    try {
+      resolved = await this.resolveMetadata(key, identity)
+    } catch (error) {
+      await handle.close()
+      throw error
+    }
+    let offset = 0
+    let closed = false
+    const closeHandle = async (): Promise<void> => {
+      if (closed) return
+      closed = true
+      await handle.close()
+    }
+    const chunkSize = 64 * 1024
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const buffer = new Uint8Array(chunkSize)
+          const { bytesRead } = await handle.read(buffer, 0, chunkSize, offset)
+          if (bytesRead === 0) {
+            await closeHandle()
+            controller.close()
+            return
+          }
+          offset += bytesRead
+          controller.enqueue(bytesRead === chunkSize ? buffer : buffer.subarray(0, bytesRead))
+        } catch (error) {
+          await closeHandle()
+          controller.error(error)
+        }
+      },
+      async cancel() {
+        await closeHandle()
+      },
+    })
+    return {
+      body,
+      size: Number(info.size),
+      ...resolved,
     }
   }
 

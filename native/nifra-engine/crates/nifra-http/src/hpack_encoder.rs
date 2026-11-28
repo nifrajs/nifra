@@ -206,7 +206,7 @@ impl HpackEncoder {
             literal(0x00, 4, name_index, name, value, out);
         } else {
             literal(0x40, 6, name_index, name, value, out);
-            self.evict(self.max_size - size);
+            self.evict(self.max_size.saturating_sub(size));
             self.dynamic.push_front((name.into(), value.into()));
             self.size += size;
         }

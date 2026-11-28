@@ -277,6 +277,8 @@ export interface RequestSource {
   readonly method: string
   readonly url: string
   readonly headers: Headers
+  /** Optional trailing headers received after the request body completes. */
+  readonly trailers?: Readonly<Record<string, string>>
   header?(name: string): string | null
   /** Pre-split pathname/search, when the source already had the origin-form target (the Node lazy
    * sources do) - saves synthesizing an absolute URL only to scan it apart again. */

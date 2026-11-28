@@ -3617,6 +3617,42 @@
     "signature": "export interface CloudflareZoneOptions {\n    /** The zone id (32 hex characters, on the zone's Overview page). */\n    readonly zoneId: string;\n    /** An API token scoped to Zone > Cache Purge for this zone. Keep it in an env binding. */\n    readonly apiToken: string;\n    readonly queue?: PurgeQueueOptions;\n    /** The fetch purge calls go through; tests pass their own. */\n    readonly fetch?: typeof fetch;\n}"
   },
   {
+    "name": "ClusterOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ClusterOptions extends ServeOptions {\n    /** Fixed port every worker binds with `SO_REUSEPORT` (or `0` when {@link sharedListener} is `true`). */\n    readonly port: number;\n    /** Share a single primary-bound listener socket across workers via IPC handle passing (supports `port: 0` and zero-drop rolling restarts). */\n    readonly sharedListener?: boolean;\n    /** Worker processes. Default: one per available core. */\n    readonly workers?: number;\n    /** Start a replacement when a worker dies while the cluster is running. Default `true`. */\n    readonly respawn?: boolean;\n    /** Told of every worker coming up and every worker going away; runs in the primary. */\n    readonly onWorkerEvent?: (event: ClusterWorkerEvent) => void;\n}"
+  },
+  {
+    "name": "ClusterPrimary",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ClusterPrimary {\n    readonly role: \"primary\";\n    readonly port: number;\n    /** The workers listening now. */\n    workers(): readonly ClusterWorkerInfo[];\n    /**\n     * Stop every worker as `serve().stop()` stops one server - `onStopping` hooks, `delayMs`, a drain\n     * of up to `drainMs` - then resolve once they have all exited. A worker still alive well past that\n     * is killed.\n     */\n    stop(options?: NodeStopOptions): Promise<void>;\n    /**\n     * Replace every worker, one at a time: a new worker starts and is listening before the one it\n     * replaces is stopped (with `drainMs` and `delayMs`, as `stop()`), so the port is always served and\n     * capacity never drops. The new workers run whatever the entry file and its imports are on disk\n     * now. Resolves when the last old worker has exited. Rejects, leaving the workers not yet replaced\n     * running, when a new worker does not start within `startTimeoutMs` or the cluster stops meanwhile.\n     * A call while one is under way returns that one.\n     *\n     * `SO_REUSEPORT` drops the connections waiting in a closing worker's accept queue, so a client may\n     * see a reset on a connection it opened in that instant; clients that retry an idempotent request\n     * never notice.\n     */\n    restart(options?: ClusterRestartOptions): Promise<void>;\n    /**\n     * `reloadTls()` in every worker, resolving when each has answered. Rejects naming the workers that\n     * refused; the others have changed. The certificate must be given as PEM text or file names, since\n     * it crosses a process boundary.\n     */\n    reloadTls(tls?: NonNullable<ServeOptions[\"tls\"]>): Promise<void>;\n    [Symbol.asyncDispose](): Promise<void>;\n}"
+  },
+  {
+    "name": "ClusterRestartOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ClusterRestartOptions extends NodeStopOptions {\n    /** How long a new worker has to start listening before the restart gives up. Default 30 s. */\n    readonly startTimeoutMs?: number;\n}"
+  },
+  {
+    "name": "ClusterWorker",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ClusterWorker {\n    readonly role: \"worker\";\n    readonly server: EngineServer;\n}"
+  },
+  {
+    "name": "ClusterWorkerEvent",
+    "kind": "type",
+    "package": "@nifrajs/node-engine",
+    "signature": "export type ClusterWorkerEvent = {\n    readonly type: \"listening\";\n    readonly id: number;\n    readonly pid: number;\n} | {\n    readonly type: \"exit\";\n    readonly id: number;\n    readonly pid: number;\n    readonly code: number | null;\n    readonly signal: string | null;\n    /** A replacement follows. */\n    readonly respawning: boolean;\n};"
+  },
+  {
+    "name": "ClusterWorkerInfo",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ClusterWorkerInfo {\n    readonly id: number;\n    readonly pid: number;\n}"
+  },
+  {
     "name": "Codeframe",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -3854,6 +3890,13 @@
     "signature": "export interface CompressionOptions {\n    /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body\n     * (see below) since runtimes rarely expose `Content-Length` on a constructed `Response`. */\n    readonly threshold?: number;\n    /** Decide whether a `Content-Type` is worth compressing. Default: text, JSON/+json, JS, XML/+xml,\n     * NDJSON, wasm, SVG. Already-compressed media (images, video, archives) is skipped. */\n    readonly compressible?: (contentType: string) => boolean;\n    /** Gzip a buffered body of up to this many bytes on the calling thread, rather than handing it to a\n     * worker pool. The default depends on the runtime: Bun on Linux gzips inline up to 64 KiB, Deno\n     * always does, and Node never does. A pool hand-off pays when the process has idle cores to spend\n     * on it; when every core already runs a process of its own (one per core, behind a cluster or\n     * `reusePort`) it only adds cost, and an inline limit measured 1.5 to 4 times the throughput on\n     * Node. `0` gzips nothing inline. Streamed bodies are unaffected. */\n    readonly inlineMax?: number;\n}"
   },
   {
+    "name": "CompressionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface CompressionOptions {\n    /** Enable or disable compression. Default `true` when an options object is passed. */\n    readonly enabled?: boolean;\n    /** Allow Zstandard (`zstd`). Default `true`. */\n    readonly zstd?: boolean;\n    /** Allow Brotli (`br`). Default `true`. */\n    readonly brotli?: boolean;\n    /** Allow Gzip (`gzip`). Default `true`. */\n    readonly gzip?: boolean;\n    /** Allow Deflate (`deflate`). Default `true`. */\n    readonly deflate?: boolean;\n    /** Minimum uncompressed body length in bytes before compressing. Default `1024`. */\n    readonly minBytes?: number;\n}",
+    "doc": "/** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */"
+  },
+  {
     "name": "Computed",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -3865,6 +3908,13 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface ConditionalResponseOptions {\n    /** Entity tag to attach and compare using HTTP weak comparison for GET/HEAD. */\n    readonly etag?: string;\n    /** Last-modified validator to attach and compare at one-second HTTP date precision. */\n    readonly lastModified?: Date;\n}"
+  },
+  {
+    "name": "ConnectHandler",
+    "kind": "type",
+    "package": "@nifrajs/node-engine",
+    "signature": "export type ConnectHandler = (request: Request, socket: Duplex, head: Buffer) => undefined | Response | Promise<undefined | Response>;",
+    "doc": "/** Handler invoked for HTTP/1.1 or HTTP/2 `CONNECT` tunnel requests. */"
   },
   {
     "name": "ConnectPostgresOptions",
@@ -3963,14 +4013,14 @@
     "name": "Context",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} - the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */\n    readonly header: (name: string) => string | null;\n    readonly params: ParamsOf<S, Path>;\n    /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */\n    readonly headers: HeadersOf<S>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive\n     * as `value.signature` - verify with `unsignValue`. */\n    readonly cookies: CookiesOf<S>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work - DB drivers, `fetch` - so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server\n     * clamps an inbound deadline to local policy when `acceptInboundDeadlines` is enabled.\n     */\n    readonly budget: RequestBudget;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` - Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * The caller's IP. By default the raw socket peer the serving adapter observed (`listen()`,\n     * `@nifrajs/node`, `@nifrajs/deno`) - the one address a client cannot forge - or `undefined` when the\n     * runtime exposes no socket (Workers) and no trust is declared. Behind a proxy/CDN, set the\n     * `clientIp` server option (`{ trustedHops }` or `{ header }`) to derive the real caller from the\n     * forwarding chain as far as you trust it; unset, no forwarded header is ever believed. Safe to key\n     * rate limits and audit logs on.\n     */\n    readonly clientIp: string | undefined;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** - raw bodies, file uploads,\n     * BYO-validation - where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit - both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
+    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} - the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */\n    readonly header: (name: string) => string | null;\n    readonly params: ParamsOf<S, Path>;\n    /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */\n    readonly headers: HeadersOf<S>;\n    /**\n     * HTTP trailers received after the request body (HTTP/1.1 chunked or HTTP/2 trailing HEADERS).\n     * Empty when the client sent no trailers or before a streamed request body finishes.\n     */\n    readonly trailers: Readonly<Record<string, string>>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive\n     * as `value.signature` - verify with `unsignValue`. */\n    readonly cookies: CookiesOf<S>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work - DB drivers, `fetch` - so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server\n     * clamps an inbound deadline to local policy when `acceptInboundDeadlines` is enabled.\n     */\n    readonly budget: RequestBudget;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` - Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * The caller's IP. By default the raw socket peer the serving adapter observed (`listen()`,\n     * `@nifrajs/node`, `@nifrajs/deno`) - the one address a client cannot forge - or `undefined` when the\n     * runtime exposes no socket (Workers) and no trust is declared. Behind a proxy/CDN, set the\n     * `clientIp` server option (`{ trustedHops }` or `{ header }`) to derive the real caller from the\n     * forwarding chain as far as you trust it; unset, no forwarded header is ever believed. Safe to key\n     * rate limits and audit logs on.\n     */\n    readonly clientIp: string | undefined;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** - raw bodies, file uploads,\n     * BYO-validation - where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit - both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
     "doc": "/**\n * Handler context. `params` are inferred from the path; `body` and `query` are\n * the validated outputs of their schemas when declared (else `undefined` /\n * raw `URLSearchParams`).\n */"
   },
   {
     "name": "Context",
     "kind": "interface",
     "package": "nifra",
-    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} - the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */\n    readonly header: (name: string) => string | null;\n    readonly params: ParamsOf<S, Path>;\n    /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */\n    readonly headers: HeadersOf<S>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive\n     * as `value.signature` - verify with `unsignValue`. */\n    readonly cookies: CookiesOf<S>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work - DB drivers, `fetch` - so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server\n     * clamps an inbound deadline to local policy when `acceptInboundDeadlines` is enabled.\n     */\n    readonly budget: RequestBudget;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` - Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * The caller's IP. By default the raw socket peer the serving adapter observed (`listen()`,\n     * `@nifrajs/node`, `@nifrajs/deno`) - the one address a client cannot forge - or `undefined` when the\n     * runtime exposes no socket (Workers) and no trust is declared. Behind a proxy/CDN, set the\n     * `clientIp` server option (`{ trustedHops }` or `{ header }`) to derive the real caller from the\n     * forwarding chain as far as you trust it; unset, no forwarded header is ever believed. Safe to key\n     * rate limits and audit logs on.\n     */\n    readonly clientIp: string | undefined;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** - raw bodies, file uploads,\n     * BYO-validation - where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit - both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
+    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} - the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */\n    readonly header: (name: string) => string | null;\n    readonly params: ParamsOf<S, Path>;\n    /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */\n    readonly headers: HeadersOf<S>;\n    /**\n     * HTTP trailers received after the request body (HTTP/1.1 chunked or HTTP/2 trailing HEADERS).\n     * Empty when the client sent no trailers or before a streamed request body finishes.\n     */\n    readonly trailers: Readonly<Record<string, string>>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive\n     * as `value.signature` - verify with `unsignValue`. */\n    readonly cookies: CookiesOf<S>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work - DB drivers, `fetch` - so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server\n     * clamps an inbound deadline to local policy when `acceptInboundDeadlines` is enabled.\n     */\n    readonly budget: RequestBudget;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` - Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * The caller's IP. By default the raw socket peer the serving adapter observed (`listen()`,\n     * `@nifrajs/node`, `@nifrajs/deno`) - the one address a client cannot forge - or `undefined` when the\n     * runtime exposes no socket (Workers) and no trust is declared. Behind a proxy/CDN, set the\n     * `clientIp` server option (`{ trustedHops }` or `{ header }`) to derive the real caller from the\n     * forwarding chain as far as you trust it; unset, no forwarded header is ever believed. Safe to key\n     * rate limits and audit logs on.\n     */\n    readonly clientIp: string | undefined;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** - raw bodies, file uploads,\n     * BYO-validation - where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit - both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
     "doc": "/**\n * Handler context. `params` are inferred from the path; `body` and `query` are\n * the validated outputs of their schemas when declared (else `undefined` /\n * raw `URLSearchParams`).\n */"
   },
   {
@@ -6093,6 +6143,26 @@
     "signature": "export interface EngineInit {\n    readonly baseUrl: string;\n    readonly cookies: readonly {\n        readonly name: string;\n        readonly value: string;\n    }[];\n    readonly hydration: HydrationMode;\n}"
   },
   {
+    "name": "EngineServer",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface EngineServer {\n    /** The bound port (resolved when `port: 0` is requested, or `0` for Unix domain sockets). */\n    readonly port: number;\n    /** Bound Unix domain socket path when started with `ServeOptions.path`. */\n    readonly path?: string;\n    /**\n     * Run the app's `onStopping` hooks, keep serving for `delayMs`, stop accepting connections, let\n     * in-flight requests finish for up to `drainMs`, then close what is left and run `onStop`.\n     */\n    stop(options?: NodeStopOptions): Promise<void>;\n    /**\n     * Replace the certificate and key (and cipher policy) used for every handshake from now on, with no\n     * restart; connections already open keep the one they handshook with. `tls` is the whole\n     * {@link ServeOptions.tls} shape, not a diff. With none it reads the current one again, which is how\n     * a rotation of certificate *files* is picked up. Session tickets carry over, so resumption survives\n     * a new certificate. Throws, leaving the certificate in place, on material the engine refuses; also\n     * when the server has no TLS or has stopped.\n     */\n    reloadTls(tls?: NonNullable<ServeOptions[\"tls\"]>): void;\n    /** Add or replace an SNI certificate entry at runtime without restarting the listener. */\n    addServerName(entry: TlsSniEntry): void;\n    /** Remove an SNI certificate entry at runtime. Returns `true` if one was removed. */\n    removeServerName(serverName: string): boolean;\n    [Symbol.asyncDispose](): Promise<void>;\n}"
+  },
+  {
+    "name": "EngineSocket",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface EngineSocket {\n    readonly id: number;\n    /** The handshake request's headers; names are lowercase. */\n    headers(): Headers;\n    /** The handshake request's query string, without the `?`. */\n    query(): string;\n    /** The peer's address, once the socket is open. */\n    remoteAddress(): string | undefined;\n    /** Queued outbound socket bytes currently waiting for the peer to read. */\n    getBufferedAmount(): number;\n    /** The mTLS client certificate presented on the underlying TLS connection, or `null`. */\n    getPeerCertificate?(detailed?: boolean): PeerCertificateInfo | null;\n}",
+    "doc": "/**\n * What `ws.raw` is on this transport: the engine keeps no socket object to hand out, so this is the\n * socket's id and what the engine still knows about its handshake.\n */"
+  },
+  {
+    "name": "EngineTuning",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface EngineTuning {\n    /** Idle connection budget in ms. Quiet WebSockets receive a Ping before closing. 0 disables. Default 30 s. */\n    readonly idleTimeoutMs?: number;\n    /** Budget in ms for a request head, and for a TLS handshake. 0 disables. Default 60 s. */\n    readonly headersTimeoutMs?: number;\n    /** Largest request head, 431 beyond it. Default 16 KiB, as `node:http`. */\n    readonly maxHeaderBytes?: number;\n    /** Stalled response budget in ms. Defaults to idleTimeoutMs. 0 disables. */\n    readonly responseTimeoutMs?: number;\n    /** Budget in ms for one complete request, from its first byte; does not reset on activity. 0 disables. */\n    readonly requestTimeoutMs?: number;\n    /** Most simultaneous connections; accepts beyond it are dropped. */\n    readonly maxConnections?: number;\n    /** TCP listen backlog passed to `listen(2)`. Default 4096. */\n    readonly backlog?: number;\n    /** Alias for maxHeaderBytes. maxHeaderBytes takes precedence. */\n    readonly maxHeadSize?: number;\n    /** Maximum number of headers allowed on a request before replying 431. */\n    readonly maxHeaders?: number;\n    /** Maximum length in bytes of the request target (URI + query) before replying 414. */\n    readonly maxUriSize?: number;\n    /** Maximum queued bytes per HTTP/1.1 connection waiting behind an earlier pipelined request. Default 8 MiB. */\n    readonly maxPendingBytes?: number;\n    /** Maximum queued outbound socket bytes before dropping a non-reading peer. Default 16 MiB. */\n    readonly responseBackpressureLimit?: number;\n    /** Streaming chunk buffer / buffered response threshold in bytes. Default 2 MiB. */\n    readonly writeHighWaterMark?: number;\n    /** Optional maximum lifetime in ms for any WebSocket connection. 0 disables. */\n    readonly wsMaxLifetimeMs?: number;\n    /** Per-socket queued outbound byte threshold at which `ws.send()` rejects backpressured sends (0 = unlimited). */\n    readonly wsMaxBackpressure?: number;\n    /** Close the WebSocket connection when queued bytes hit `wsMaxBackpressure`. */\n    readonly wsCloseOnBackpressureLimit?: boolean;\n    /** Stream HTTP/1.1 & HTTP/2 request bodies incrementally to `req.body` instead of buffering whole payloads. */\n    readonly streamRequestBodies?: boolean;\n    /** Inherit a pre-bound TCP listener descriptor (used by `serveCluster` with `sharedListener`). */\n    readonly listenerFd?: number;\n    /** Bind with `SO_REUSEPORT` so several processes share the port. Off by default; `serveCluster` sets it. */\n    readonly reusePort?: boolean;\n}",
+    "doc": "/** Engine limits and timeouts beyond the first-class options. */"
+  },
+  {
     "name": "EnqueueOptions",
     "kind": "interface",
     "package": "@nifrajs/jobs",
@@ -6619,6 +6689,13 @@
   {
     "name": "FetchHandler",
     "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: {\n        readonly clientIp?: string | undefined;\n    }): Response | Promise<Response>;\n    /** Present on every nifra app: the node-direct lane, which skips building a Web `Request`. */\n    resolveNodeSource?(source: unknown, platform?: unknown, runtime?: object | undefined): NodeServeOutcome | Promise<NodeServeOutcome>;\n    /** Present on every nifra app: serves `app.ws()` routes. Absent, a handshake is refused with 501. */\n    resolveWebSocketUpgrade?(request: Request, platform?: {\n        readonly clientIp?: string | undefined;\n    }): WsUpgradeOutcome | Promise<WsUpgradeOutcome>;\n}",
+    "doc": "/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */"
+  },
+  {
+    "name": "FetchHandler",
+    "kind": "interface",
     "package": "@nifrajs/node-uws",
     "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: {\n        readonly clientIp?: string | undefined;\n    }): Response | Promise<Response>;\n    /** Present on every nifra app: the node-direct lane, which skips building a Web `Request`. */\n    resolveNodeSource?(source: unknown, platform?: unknown, runtime?: object | undefined): NodeServeOutcome | Promise<NodeServeOutcome>;\n}",
     "doc": "/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */"
@@ -6736,7 +6813,7 @@
     "name": "FileStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly maxReadBytes;\n    private readonly maxMetadataBytes;\n    private root;\n    private metadataRoot;\n    private legacyMetadataRoot;\n    private stagingRoot;\n    private stateRoot;\n    private statePrivate;\n    /** Each key's latest write, so this instance publishes a key's body and sidecar one put at a time. */\n    private readonly writes;\n    /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */\n    private anchor;\n    constructor(root: string, options?: {\n        readonly maxReadBytes?: number;\n        readonly maxMetadataBytes?: number;\n    });\n    private placeRoot;\n    /**\n     * Resolve the directory holding the root (or its nearest existing ancestor) once, then work beneath\n     * that real path and prove before every operation that it is still the same directory. Swapping an\n     * ancestor, for a symbolic link or by a rename from whoever can write above the root, then cannot\n     * redirect a later read, write or delete into another tree: the operation fails closed instead.\n     */\n    private pinRoot;\n    private movedError;\n    /**\n     * Move the pin down to the directory holding the root once it exists. Pinned at first use, the\n     * anchor is the nearest existing ancestor; a directory a first write creates below it was never\n     * checked again, so swapping it for a link redirected every later operation. Called right after\n     * such a write creates directories, and before every operation.\n     */\n    private pinHolder;\n    private resolveAnchor;\n    private metadataPathFor;\n    /** `<key>.json`, where earlier versions kept a sidecar: `a.json` there is also key `a.json`'s parent. */\n    private legacyMetadataPathFor;\n    private containedPath;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    private symlinkError;\n    private assertTrustedDirectory;\n    /**\n     * Prove that another local principal cannot rename any directory leading to `base` after validation.\n     * A sticky shared parent (the ordinary `/tmp` case) is safe only while its child belongs to this uid.\n     * Root-owned system directories are trusted; a directory owned by any other uid is not.\n     */\n    private assertTrustedAncestorChain;\n    /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */\n    private assertNoSymlinkPath;\n    /** {@link openContained} for an object: a directory under the root is a key prefix, not an object. */\n    private openObject;\n    /**\n     * Open an existing file without following its final component, then prove the descriptor is the file\n     * still reachable through a symlink-free path below the same root inode. Reads use the descriptor,\n     * not the pathname checked earlier, closing their check/open race.\n     */\n    private openContained;\n    private assertOpenedContained;\n    /**\n     * Write `data` whole or not at all: staged in a sibling directory, or next to `path` where a rename\n     * from there would cross devices, then renamed over `path`, so a reader never sees a half-written\n     * object and a failed write leaves the previous one. The renamed inode is then proven to be the\n     * staged one, reachable beneath the same root.\n     */\n    private writeContained;\n    private stageAndRename;\n    /** A new, exclusively created file in `dir` holding `data`. */\n    private stage;\n    /**\n     * Staged bytes and sidecars sit beside the root, where its own mode cannot cover them, so that tree\n     * is the owner's alone. One an earlier version left open is closed once per instance.\n     */\n    private privateState;\n    private closeState;\n    /** Run `write` after this instance's earlier write of `key` settles. */\n    private serialized;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    /** Objects and their metadata each have a 16 MiB buffered-read limit by default.\n     * Oversized reads throw a RangeError. */\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    private readMetadata;\n    private removeLegacyMetadata;\n    exists(key: string): Promise<boolean>;\n    /** Revalidate an opened inode immediately before unlinking its pathname. */\n    private removeContained;\n    list(options?: ListOptions): Promise<string[]>;\n    /** The directory for key prefix `dirKey`, or `undefined` when no plain directory chain leads there. */\n    private listingDirectory;\n    private walk;\n    private directoryEntries;\n}"
+    "signature": "export declare class FileStorage implements StreamableStorageAdapter {\n    private readonly maxReadBytes;\n    private readonly maxMetadataBytes;\n    private root;\n    private metadataRoot;\n    private legacyMetadataRoot;\n    private stagingRoot;\n    private stateRoot;\n    private statePrivate;\n    /** Each key's latest write, so this instance publishes a key's body and sidecar one put at a time. */\n    private readonly writes;\n    /** The directory holding the root and its bookkeeping, by real path and identity, once resolved. */\n    private anchor;\n    constructor(root: string, options?: {\n        readonly maxReadBytes?: number;\n        readonly maxMetadataBytes?: number;\n    });\n    private placeRoot;\n    /**\n     * Resolve the directory holding the root (or its nearest existing ancestor) once, then work beneath\n     * that real path and prove before every operation that it is still the same directory. Swapping an\n     * ancestor, for a symbolic link or by a rename from whoever can write above the root, then cannot\n     * redirect a later read, write or delete into another tree: the operation fails closed instead.\n     */\n    private pinRoot;\n    private movedError;\n    /**\n     * Move the pin down to the directory holding the root once it exists. Pinned at first use, the\n     * anchor is the nearest existing ancestor; a directory a first write creates below it was never\n     * checked again, so swapping it for a link redirected every later operation. Called right after\n     * such a write creates directories, and before every operation.\n     */\n    private pinHolder;\n    private resolveAnchor;\n    private metadataPathFor;\n    /** `<key>.json`, where earlier versions kept a sidecar: `a.json` there is also key `a.json`'s parent. */\n    private legacyMetadataPathFor;\n    private containedPath;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    private symlinkError;\n    private assertTrustedDirectory;\n    /**\n     * Prove that another local principal cannot rename any directory leading to `base` after validation.\n     * A sticky shared parent (the ordinary `/tmp` case) is safe only while its child belongs to this uid.\n     * Root-owned system directories are trusted; a directory owned by any other uid is not.\n     */\n    private assertTrustedAncestorChain;\n    /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */\n    private assertNoSymlinkPath;\n    /** {@link openContained} for an object: a directory under the root is a key prefix, not an object. */\n    private openObject;\n    /**\n     * Open an existing file without following its final component, then prove the descriptor is the file\n     * still reachable through a symlink-free path below the same root inode. Reads use the descriptor,\n     * not the pathname checked earlier, closing their check/open race.\n     */\n    private openContained;\n    private assertOpenedContained;\n    /**\n     * Write `data` whole or not at all: staged in a sibling directory, or next to `path` where a rename\n     * from there would cross devices, then renamed over `path`, so a reader never sees a half-written\n     * object and a failed write leaves the previous one. The renamed inode is then proven to be the\n     * staged one, reachable beneath the same root.\n     */\n    private writeContained;\n    private stageAndRename;\n    /** A new, exclusively created file in `dir` holding `data`. */\n    private stage;\n    /**\n     * Staged bytes and sidecars sit beside the root, where its own mode cannot cover them, so that tree\n     * is the owner's alone. One an earlier version left open is closed once per instance.\n     */\n    private privateState;\n    private closeState;\n    /** Run `write` after this instance's earlier write of `key` settles. */\n    private serialized;\n    private writeObjectAndMetadata;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    putStream(key: string, stream: ReadableStream<Uint8Array>, options?: PutOptions): Promise<void>;\n    private resolveMetadata;\n    /** Objects and their metadata each have a 16 MiB buffered-read limit by default.\n     * Oversized reads throw a RangeError. */\n    get(key: string): Promise<StorageObject | null>;\n    head(key: string): Promise<StorageObjectMetadata | null>;\n    getStream(key: string): Promise<StorageStreamObject | null>;\n    delete(key: string): Promise<void>;\n    private readMetadata;\n    private removeLegacyMetadata;\n    exists(key: string): Promise<boolean>;\n    /** Revalidate an opened inode immediately before unlinking its pathname. */\n    private removeContained;\n    list(options?: ListOptions): Promise<string[]>;\n    /** The directory for key prefix `dirKey`, or `undefined` when no plain directory chain leads there. */\n    private listingDirectory;\n    private walk;\n    private directoryEntries;\n}"
   },
   {
     "name": "FileType",
@@ -7402,6 +7479,13 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export type HtmlValue = string | number | bigint | boolean | null | undefined | Template | RawHtml | ReadonlyArray<HtmlValue>;",
     "doc": "/** What an interpolation may be: escaped primitives, nested templates/raw, arrays of the same.\n * `null`/`undefined`/`false` render as nothing (conditional rendering: `cond && html\\`…\\``). */"
+  },
+  {
+    "name": "Http2Options",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface Http2Options {\n    readonly maxConcurrentStreams?: number;\n    /** Flow-control window of each request body, in bytes. Default 1 MiB. */\n    readonly initialWindowSize?: number;\n    /** Flow-control window of the whole connection, 65535 or more. Default 4 MiB. */\n    readonly connectionWindowSize?: number;\n    /** Largest frame accepted, 16384 to 16777215. Default 16384. */\n    readonly maxFrameSize?: number;\n    /** Bytes of each HPACK table, request and response side; 0 to 65536. Default 4096. */\n    readonly headerTableSize?: number;\n    /**\n     * Queued response bytes per connection. At this limit the next buffered response with a body is\n     * reset with `ENHANCE_YOUR_CALM`, and past it a streamed one is told to wait. Default 16 MiB.\n     */\n    readonly maxSendBuffer?: number;\n    /**\n     * Send a `PING` to a connection quiet for this long, and close it when no answer comes. A peer that\n     * answers is not idle, so set this below `idleTimeoutMs` to keep a live one open. Timers are checked\n     * once a second. Off by default (`0`).\n     */\n    readonly pingIntervalMs?: number;\n    /** Budget in ms for that answer. Default 20 s. */\n    readonly pingTimeoutMs?: number;\n}",
+    "doc": "/** HTTP/2 settings the server advertises. */"
   },
   {
     "name": "HttpAgentTransport",
@@ -9958,7 +10042,7 @@
     "name": "MemoryStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class MemoryStorage implements StorageAdapter {\n    private readonly objects;\n    constructor();\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n}"
+    "signature": "export declare class MemoryStorage implements StreamableStorageAdapter {\n    private readonly objects;\n    constructor();\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    putStream(key: string, stream: ReadableStream<Uint8Array>, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    head(key: string): Promise<StorageObjectMetadata | null>;\n    getStream(key: string): Promise<StorageStreamObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n}"
   },
   {
     "name": "MemoryStore",
@@ -10927,6 +11011,12 @@
     "doc": "/** One `node:`-builtin-in-the-client finding: the offending builtin, the emitted chunk it landed in,\n * and the shortest USER-module import chain that pulled it there (entry → … → builtin). */"
   },
   {
+    "name": "NodeCompatPair",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface NodeCompatPair {\n    readonly req: IncomingMessage;\n    readonly res: ServerResponse;\n    readonly socket: CompatSocket;\n    readonly response: Promise<Response>;\n    headersForResponse(): Headers;\n}"
+  },
+  {
     "name": "NodeEffectKey",
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
@@ -10939,6 +11029,18 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export interface NodeEffectKey {\n    /** SHA-256 hex over the canonical effect material. 64 lowercase hex chars. */\n    readonly digest: string;\n    /** Non-secret structural coordinates, safe to log. */\n    readonly planDigest: string;\n    readonly nodeId: string;\n}",
     "doc": "/** The stable, content-free identity of one side-effecting node attempt-boundary. */"
+  },
+  {
+    "name": "NodeMiddleware",
+    "kind": "type",
+    "package": "@nifrajs/node-engine",
+    "signature": "export type NodeMiddleware = (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void) => void;"
+  },
+  {
+    "name": "NodeMiddlewareContextLike",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface NodeMiddlewareContextLike {\n    readonly req: Request;\n    readonly set?: {\n        status?: number;\n        readonly headers: Record<string, string>;\n    };\n}"
   },
   {
     "name": "NodeNativeProxyRequest",
@@ -10981,6 +11083,12 @@
     "package": "nifra",
     "signature": "export type NodeRequestHook = (request: NodeRequestContext, platform?: Platform) => MaybePromise<Response | undefined>;",
     "doc": "/** Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request. */"
+  },
+  {
+    "name": "NodeRequestListener",
+    "kind": "type",
+    "package": "@nifrajs/node-engine",
+    "signature": "export type NodeRequestListener = (req: IncomingMessage, res: ServerResponse) => void;"
   },
   {
     "name": "NodeResponseBodyHook",
@@ -11056,6 +11164,13 @@
     "package": "@nifrajs/node",
     "signature": "export interface NodeStopOptions {\n    /** How long in-flight requests get to finish before the stop forces them closed. Default 10_000. */\n    readonly drainMs?: number;\n    /**\n     * How long the server keeps serving after `stop()` began, before it stops accepting connections:\n     * the time a load balancer takes to see readiness fail. Default 0.\n     */\n    readonly delayMs?: number;\n}",
     "doc": "/** How `stop()` winds the server down; the same shape as nifra's Bun `stop()` takes. */"
+  },
+  {
+    "name": "NodeStopOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface NodeStopOptions {\n    readonly drainMs?: number;\n    readonly delayMs?: number;\n}",
+    "doc": "/** How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`. */"
   },
   {
     "name": "NodeStopOptions",
@@ -11675,6 +11790,13 @@
     "doc": "/** The `:name` segments of a route path. */"
   },
   {
+    "name": "PeerCertificateInfo",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface PeerCertificateInfo {\n    readonly subject: string;\n    readonly issuer: string;\n    readonly subjectAltName: string | undefined;\n    readonly validFrom: string;\n    readonly validTo: string;\n    readonly serialNumber: string;\n    readonly fingerprint: string;\n    readonly fingerprint256: string;\n    readonly fingerprint512: string;\n    readonly raw: Buffer;\n    readonly x509: X509Certificate;\n    readonly issuerCertificate?: PeerCertificateInfo;\n}",
+    "doc": "/** Parsed mTLS peer certificate information exposed by {@link getPeerCertificate}. */"
+  },
+  {
     "name": "PendingApprovalView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -12214,6 +12336,13 @@
     "doc": "/**\n * The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when\n * `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a\n * literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowed branch.\n */"
   },
   {
+    "name": "ProbeResult",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ProbeResult {\n    readonly ok: boolean;\n    readonly version: string;\n    readonly platform: string;\n    readonly arch: string;\n    readonly transport: string;\n    readonly reason?: string;\n    readonly capabilities: Readonly<Record<string, boolean>>;\n}",
+    "doc": "/** Native engine probe result describing loaded platform, transport, and capability flags. */"
+  },
+  {
     "name": "ProblemDetailsOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -12634,7 +12763,7 @@
     "name": "R2BucketLike",
     "kind": "interface",
     "package": "@nifrajs/storage",
-    "signature": "export interface R2BucketLike {\n    put(key: string, value: ArrayBuffer | ArrayBufferView, options?: {\n        httpMetadata?: {\n            contentType?: string;\n        };\n        customMetadata?: Record<string, string>;\n    }): Promise<unknown>;\n    get(key: string): Promise<(R2ObjectLike & {\n        readonly body?: ReadableStream<Uint8Array>;\n        arrayBuffer(): Promise<ArrayBuffer>;\n    }) | null>;\n    head(key: string): Promise<R2ObjectLike | null>;\n    delete(key: string): Promise<void>;\n    list(options?: {\n        prefix?: string;\n        limit?: number;\n        cursor?: string;\n    }): Promise<{\n        objects: ReadonlyArray<{\n            key: string;\n        }>;\n        truncated?: boolean;\n        cursor?: string;\n    }>;\n}",
+    "signature": "export interface R2BucketLike {\n    put(key: string, value: ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>, options?: {\n        httpMetadata?: {\n            contentType?: string;\n        };\n        customMetadata?: Record<string, string>;\n    }): Promise<unknown>;\n    get(key: string): Promise<(R2ObjectLike & {\n        readonly body?: ReadableStream<Uint8Array>;\n        arrayBuffer(): Promise<ArrayBuffer>;\n    }) | null>;\n    head(key: string): Promise<R2ObjectLike | null>;\n    delete(key: string): Promise<void>;\n    list(options?: {\n        prefix?: string;\n        limit?: number;\n        cursor?: string;\n    }): Promise<{\n        objects: ReadonlyArray<{\n            key: string;\n        }>;\n        truncated?: boolean;\n        cursor?: string;\n    }>;\n}",
     "doc": "/** The slice of the R2 bucket binding this adapter calls. `env.<BUCKET>` satisfies it. */"
   },
   {
@@ -12648,7 +12777,7 @@
     "name": "R2Storage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class R2Storage implements StorageAdapter {\n    private readonly bucket;\n    private readonly maxReadBytes;\n    constructor(bucket: R2BucketLike, options?: {\n        readonly maxReadBytes?: number;\n    });\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    /** Every key (up to `limit`), following R2's cursor past the 1000 keys one call returns. */\n    list(options?: ListOptions): Promise<string[]>;\n    /** One page of at most 1000 keys, and the cursor for the next while there are more. */\n    listPage(options?: StorageListPageOptions): Promise<StorageListPage>;\n}"
+    "signature": "export declare class R2Storage implements StreamableStorageAdapter, PagedStorageAdapter {\n    private readonly bucket;\n    private readonly maxReadBytes;\n    constructor(bucket: R2BucketLike, options?: {\n        readonly maxReadBytes?: number;\n    });\n    private putOptions;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    putStream(key: string, stream: ReadableStream<Uint8Array>, options?: PutOptions): Promise<void>;\n    private objectMetadata;\n    /** Read up to `maxReadBytes` (16 MiB by default). An oversized object throws a RangeError. */\n    get(key: string): Promise<StorageObject | null>;\n    head(key: string): Promise<StorageObjectMetadata | null>;\n    getStream(key: string): Promise<StorageStreamObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    /** Every key (up to `limit`), following R2's cursor past the 1000 keys one call returns. */\n    list(options?: ListOptions): Promise<string[]>;\n    /** One page of at most 1000 keys, and the cursor for the next while there are more. */\n    listPage(options?: StorageListPageOptions): Promise<StorageListPage>;\n}"
   },
   {
     "name": "REDACTED_CELL",
@@ -13530,7 +13659,7 @@
     "name": "RequestSource",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface RequestSource {\n    readonly method: string;\n    readonly url: string;\n    readonly headers: Headers;\n    header?(name: string): string | null;\n    /** Pre-split pathname/search, when the source already had the origin-form target (the Node lazy\n     * sources do) - saves synthesizing an absolute URL only to scan it apart again. */\n    readonly urlParts?: UrlParts;\n    readonly body: ReadableStream<Uint8Array> | null;\n    arrayBuffer(): Promise<ArrayBuffer>;\n    json(): Promise<unknown>;\n    /** Optional runtime-native exact-byte reader (Bun's Request.bytes, when available). */\n    bytes?(): Promise<Uint8Array>;\n    /** Present only when materializing a `Request` is non-trivial (the Node lazy source); for a real\n     * `Request` passed as the source it's absent and {@link requestOf} returns the source itself. */\n    readonly request?: Request;\n    /** Optional pre-`Request` reader surface for the transport cap. A source that reads its own\n     * transport bytes (the Node lazy source reads the socket) exposes them here so a capped direct\n     * read (`c.req.json()`) buffers off the transport instead of routing through the deferred\n     * `Request`. `body` must stay the live stream - the cap still guards a chunked body mid-flight. */\n    rawBodyReaders?(): RawBodyReaders;\n}",
+    "signature": "export interface RequestSource {\n    readonly method: string;\n    readonly url: string;\n    readonly headers: Headers;\n    /** Optional trailing headers received after the request body completes. */\n    readonly trailers?: Readonly<Record<string, string>>;\n    header?(name: string): string | null;\n    /** Pre-split pathname/search, when the source already had the origin-form target (the Node lazy\n     * sources do) - saves synthesizing an absolute URL only to scan it apart again. */\n    readonly urlParts?: UrlParts;\n    readonly body: ReadableStream<Uint8Array> | null;\n    arrayBuffer(): Promise<ArrayBuffer>;\n    json(): Promise<unknown>;\n    /** Optional runtime-native exact-byte reader (Bun's Request.bytes, when available). */\n    bytes?(): Promise<Uint8Array>;\n    /** Present only when materializing a `Request` is non-trivial (the Node lazy source); for a real\n     * `Request` passed as the source it's absent and {@link requestOf} returns the source itself. */\n    readonly request?: Request;\n    /** Optional pre-`Request` reader surface for the transport cap. A source that reads its own\n     * transport bytes (the Node lazy source reads the socket) exposes them here so a capped direct\n     * read (`c.req.json()`) buffers off the transport instead of routing through the deferred\n     * `Request`. `body` must stay the live stream - the cap still guards a chunked body mid-flight. */\n    rawBodyReaders?(): RawBodyReaders;\n}",
     "doc": "/**\n * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass\n * their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and\n * {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `request`\n * getter builds an undici `Request` only when user code reads `c.req`, an onRequest/onResponse hook\n * needs it, or a body helper consumes it - so the common Node request never pays for a `Request` build.\n */"
   },
   {
@@ -15718,6 +15847,12 @@
   {
     "name": "ServeOptions",
     "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface ServeOptions extends HostPolicyOptions {\n    /** TCP port to bind (`0` for ephemeral). Omit for {@link path} or an inherited listener descriptor. */\n    readonly port?: number;\n    readonly hostname?: string;\n    /** Unix domain socket path to listen on (mutually exclusive with a TCP `hostname`/`port` bind). */\n    readonly path?: string;\n    /** The scheme `Request.url` carries. `\"https\"` by default when {@link tls} is set, else `\"http\"`. */\n    readonly protocol?: \"http\" | \"https\";\n    /** In-process TLS, inline PEM or file names. */\n    readonly tls?: TlsOptions;\n    /** Static file handler (`serveStatic(...)`) or custom middleware consulted before routes on GET/HEAD. */\n    readonly static?: (request: Request) => Response | undefined | Promise<Response | undefined>;\n    /** Replace `globalThis.Response` with the lazy direct-write response wrapper to skip stream drains. */\n    readonly fastResponse?: boolean;\n    /** Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`. */\n    readonly compression?: boolean | CompressionOptions;\n    /** Fall back to `@nifrajs/node` (`node:http`/`node:https`) if the native addon binary cannot be loaded. Default `false`. */\n    readonly fallback?: boolean;\n    /**\n     * Largest request body the engine accepts, 413 beyond it. The engine buffers a body whole before\n     * the app runs, so this bounds the memory one request can hold. Default: 1 MiB, or the largest\n     * `maxBodyBytes` among the app and its mounted apps when that is more. A route with its own larger\n     * `bodyLimit` needs this set to match.\n     */\n    readonly maxBodySize?: number;\n    /**\n     * Bytes past {@link maxBodySize} the engine still buffers, so that a body only a little over the cap\n     * is answered with the app's 413 body instead of the engine's empty one. A request can hold\n     * `maxBodySize` plus this in memory. `0` turns it off: every body over the cap is refused natively\n     * and the request path does no size check. Default 1 MiB.\n     */\n    readonly oversizeWindow?: number;\n    /**\n     * Check every request's `Host` before the app runs: a malformed one is refused with a 400, and\n     * `req.url` is built from its normalized form. Off by default, as `validateHost` is on the Bun and\n     * Deno server: the check costs an engine call per request, and a server behind a proxy that already\n     * checks `Host` gains nothing from it. Off, a `Host` holding a path, query, fragment or userinfo\n     * delimiter is still refused (and an empty one read as `localhost`), so `req.url` never names a\n     * path the router did not see; anything else the URL parser refuses (an out-of-range port, say)\n     * makes `req.url` throw when read. Turn it on for a server that clients reach directly.\n     * `allowedHosts` and `canonicalHost` need every `Host` read, so setting either turns it on.\n     */\n    readonly validateHost?: boolean;\n    /**\n     * HTTP/2 beside HTTP/1.1 on the same port: negotiated by ALPN when {@link tls} is set, by prior\n     * knowledge (a client opening with the HTTP/2 preface) when it is not. `true` takes the engine's\n     * defaults; an object sets its settings.\n     */\n    readonly http2?: boolean | Http2Options;\n    /**\n     * Largest WebSocket message the engine accepts before it fails the connection with 1009. Defaults to\n     * the largest `wsMaxPayloadBytes` among the app and the apps mounted in it that serve sockets (a\n     * route whose app declares less is held to its own), else the engine's 16 MiB. The Node fallback\n     * rejects this option at startup.\n     */\n    readonly wsMaxMessageSize?: number;\n    /** Enable RFC 7692 WebSocket `permessage-deflate` compression (`true` for defaults, or options). */\n    readonly wsDeflate?: boolean | WsDeflateOptions;\n    /** Any other engine limit or timeout, passed through as given. */\n    readonly engine?: EngineTuning;\n    /** Optional handler for HTTP/1.1 and HTTP/2 `CONNECT` tunnel requests. */\n    readonly onConnect?: ConnectHandler;\n    /** SIGTERM/SIGINT call `stop()`; off by default, as in `@nifrajs/node`. */\n    readonly gracefulSignals?: boolean | NodeStopOptions;\n}"
+  },
+  {
+    "name": "ServeOptions",
+    "kind": "interface",
     "package": "@nifrajs/node-uws",
     "signature": "export interface ServeOptions extends HostPolicyOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /** The scheme `Request.url` carries. `\"https\"` by default when {@link tls} is set, else `\"http\"`. */\n    readonly protocol?: \"http\" | \"https\";\n    readonly tls?: UwsTlsOptions;\n    /** SIGTERM/SIGINT call `stop()`; off by default, as in `@nifrajs/node`. */\n    readonly gracefulSignals?: boolean | NodeStopOptions;\n}"
   },
@@ -16990,8 +17125,15 @@
     "name": "StorageObject",
     "kind": "interface",
     "package": "@nifrajs/storage",
-    "signature": "export interface StorageObject {\n    readonly body: Uint8Array;\n    readonly size: number;\n    readonly contentType?: string;\n    readonly metadata?: Readonly<Record<string, string>>;\n}",
+    "signature": "export interface StorageObject extends StorageObjectMetadata {\n    readonly body: Uint8Array;\n}",
     "doc": "/** An object read back from storage. `body` is buffered (not streamed) - fine for typical uploads. */"
+  },
+  {
+    "name": "StorageObjectMetadata",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageObjectMetadata {\n    readonly size: number;\n    readonly contentType?: string;\n    readonly metadata?: Readonly<Record<string, string>>;\n}",
+    "doc": "/** Metadata for a stored object, without buffering its bytes. */"
   },
   {
     "name": "StoragePresignOperation",
@@ -17015,6 +17157,13 @@
     "doc": "/** A provider-minted URL and its known expiry. */"
   },
   {
+    "name": "StorageStreamObject",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageStreamObject extends StorageObjectMetadata {\n    readonly body: ReadableStream<Uint8Array>;\n}",
+    "doc": "/** A streamed object read back from storage without buffering the full payload in memory. */"
+  },
+  {
     "name": "StoredEntry",
     "kind": "interface",
     "package": "@nifrajs/cache",
@@ -17034,6 +17183,13 @@
     "package": "@nifrajs/core",
     "signature": "export interface StoredResponse {\n    readonly status: number;\n    readonly headers: readonly (readonly [string, string])[];\n    /** Base64-encoded response body; `\"\"` when the response had no body. */\n    readonly body: string;\n}",
     "doc": "/** A serialized response held by a store. `body` is base64 so binary payloads round-trip intact. */"
+  },
+  {
+    "name": "StreamableStorageAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StreamableStorageAdapter extends StorageAdapter {\n    /** Read object size and metadata without reading its bytes, or `null` if absent. */\n    head(key: string): Promise<StorageObjectMetadata | null>;\n    /** Read the object at `key` as a byte stream, or `null` if it doesn't exist. */\n    getStream(key: string): Promise<StorageStreamObject | null>;\n    /** Store a byte stream under `key`, overwriting any existing object. */\n    putStream(key: string, stream: ReadableStream<Uint8Array>, options?: PutOptions): Promise<void>;\n}",
+    "doc": "/** Optional streaming and metadata-only capability for large objects without full-body buffering. */"
   },
   {
     "name": "StripImageMetadataOptions",
@@ -17295,6 +17451,20 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface TimingOptions {\n    /** Name for the automatic total request metric. Default `\"total\"`; set `false` to disable. */\n    readonly total?: string | false;\n    /** Decimal places for durations. Default `1`. */\n    readonly precision?: number;\n    /** Only emit timing for matching requests. Default `true`. */\n    readonly enabled?: boolean | ((request: Request) => boolean);\n}"
+  },
+  {
+    "name": "TlsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface TlsOptions {\n    readonly cert?: string | ArrayBuffer | Uint8Array;\n    readonly key?: string | ArrayBuffer | Uint8Array;\n    readonly cert_file_name?: string;\n    readonly key_file_name?: string;\n    /** Passphrase protecting an encrypted private key PEM (`key` or `key_file_name`). */\n    readonly passphrase?: string;\n    /** Trusted CA PEM certificates for verifying client certificates (mTLS). */\n    readonly ca?: string | ArrayBuffer | Uint8Array | readonly (string | ArrayBuffer | Uint8Array)[];\n    /** Path to a PEM bundle of trusted CA certificates for client certificate verification (mTLS). */\n    readonly ca_file_name?: string;\n    /** PEM Certificate Revocation List(s) checked during mTLS client authentication. */\n    readonly crl?: string | ArrayBuffer | Uint8Array | readonly (string | ArrayBuffer | Uint8Array)[];\n    /** Path to a PEM Certificate Revocation List file checked during mTLS client authentication. */\n    readonly crl_file_name?: string;\n    /** Request a client certificate during TLS handshake. */\n    readonly requestCert?: boolean;\n    /** Reject clients whose certificate fails verification or is absent when `requestCert` is true. Default `true` when `requestCert` is set. */\n    readonly rejectUnauthorized?: boolean;\n    /** Minimum TLS protocol version allowed (`\"TLSv1.2\"` or `\"TLSv1.3\"`). */\n    readonly minVersion?: \"TLSv1.2\" | \"TLSv1.3\";\n    /** Maximum TLS protocol version allowed (`\"TLSv1.2\"` or `\"TLSv1.3\"`). */\n    readonly maxVersion?: \"TLSv1.2\" | \"TLSv1.3\";\n    /** Colon/space-separated TLS cipher list (IANA or OpenSSL names, or `!EXCLUDED`). */\n    readonly ciphers?: string;\n    /** TLS 1.3 cipher suite list merged with {@link ciphers}. */\n    readonly ciphersuites?: string;\n    /** Colon-separated ECDH/KEM key exchange group list (e.g. `\"X25519:P-256:P-384\"`). */\n    readonly ecdhCurve?: string;\n    /** Additional SNI certificates keyed by hostname or single-level `*.domain` wildcard. */\n    readonly serverNames?: readonly TlsSniEntry[];\n    /**\n     * Session-ticket keys: one or more 48-byte entries (16-byte name, 16-byte HMAC secret, 16-byte AES\n     * key), newest first, so a rotation keeps resuming sessions. Share them across workers.\n     */\n    readonly ticketKeys?: string | ArrayBuffer | Uint8Array;\n}",
+    "doc": "/** In-process TLS: inline PEM or file names, encrypted key passphrase, mTLS & TLS policy. */"
+  },
+  {
+    "name": "TlsSniEntry",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface TlsSniEntry {\n    readonly serverName: string;\n    readonly cert?: string | ArrayBuffer | Uint8Array;\n    readonly key?: string | ArrayBuffer | Uint8Array;\n    readonly cert_file_name?: string;\n    readonly key_file_name?: string;\n    /** Passphrase protecting an encrypted private key PEM (`key` or `key_file_name`). */\n    readonly passphrase?: string;\n}",
+    "doc": "/** Per-hostname certificate entry for TLS Server Name Indication (SNI), matching exact or single-level wildcard (`*.example.com`). */"
   },
   {
     "name": "ToOpenAPIOptions",
@@ -18530,6 +18700,13 @@
     "doc": "/** `Out` is what the handle delivers: a `validateReceive` schema must produce that type. */"
   },
   {
+    "name": "WsDeflateOptions",
+    "kind": "interface",
+    "package": "@nifrajs/node-engine",
+    "signature": "export interface WsDeflateOptions {\n    /** Disallow server LZ77 context reuse across messages (`server_no_context_takeover`). */\n    readonly serverNoContextTakeover?: boolean;\n    /** Request client to reset its LZ77 window per message (`client_no_context_takeover`). */\n    readonly clientNoContextTakeover?: boolean;\n    /** Server deflate LZ77 window bits (9..15; 8 is rejected on server config and declined if offered by client). Default 15. */\n    readonly serverMaxWindowBits?: number;\n    /** Client deflate LZ77 window bits (8..15). Default 15. */\n    readonly clientMaxWindowBits?: number;\n    /** Minimum outgoing payload bytes before compressing (`0` compresses all frames). Default 0. */\n    readonly threshold?: number;\n    /** Upper limit in bytes on decompressed incoming message size (zip-bomb defense). Defaults to `wsMaxMessageSize`. */\n    readonly maxDecompressedSize?: number;\n    /** Compression level 1..9. Default 6. */\n    readonly level?: number;\n    /** Reuse a single stateless compressor instead of allocating one per open WebSocket. */\n    readonly sharedCompressor?: boolean;\n}",
+    "doc": "/** RFC 7692 WebSocket `permessage-deflate` negotiation and compression settings. */"
+  },
+  {
     "name": "WsHandle",
     "kind": "interface",
     "package": "@nifrajs/client",
@@ -19015,6 +19192,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function bindList<T, E extends ListNode = HTMLElement>(source: () => readonly T[], container: ListContainer<NoInfer<E>>, options: BindListOptions<T, E>): () => void;",
     "doc": "/**\n * Render a list signal (or any getter) into `container` with keyed reconciliation. A surviving item\n * keeps its node, so focus, selection and input state survive a reorder. A render with no earlier\n * nodes replaces the container's children; later renders move only the nodes outside the longest\n * run already in order. `key`, `create` and `update` run untracked: a signal they read does not\n * re-render the list. Returns the disposer; inside an island the binding also stops on unmount.\n */"
+  },
+  {
+    "name": "bodyCeiling",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function bodyCeiling(app: object): number | undefined;",
+    "doc": "/**\n * The largest `maxBodyBytes` among the app and the apps mounted under it, or `undefined` when none\n * is declared. The engine buffers a body before the app sees it, so a cap below what the app accepts\n * would refuse bodies the app allows, with an empty 413 and no way for the app to answer.\n */"
   },
   {
     "name": "bodyLimit",
@@ -20377,6 +20561,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function createNifraTools(options: NifraContextOptions & Pick<VerificationOptions, \"command\">): readonly NifraAgentTool[];",
     "doc": "/** Optional first-party tool descriptors. The Pi adapter can register these through an extension. */"
+  },
+  {
+    "name": "createNodeCompat",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function createNodeCompat(request: Request): NodeCompatPair;",
+    "doc": "/**\n * Create a genuine Node `IncomingMessage` and `ServerResponse` pair wired to a Web `Request` (and\n * underlying `@nifrajs/node-engine` request metadata when served by `serve()`).\n */"
   },
   {
     "name": "createNonceResolver",
@@ -21847,6 +22038,20 @@
     "doc": "/** Rehydrate a deterministic join artifact. */"
   },
   {
+    "name": "fromNodeHandler",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function fromNodeHandler(handler: NodeRequestListener): FetchHandler & ((request: Request) => Promise<Response>);",
+    "doc": "/**\n * Wrap a Node `http.RequestListener` — including an entire Express application (`express()`) —\n * into a Web `FetchHandler` + fetch function that runs directly inside `@nifrajs/node-engine` `serve()`.\n */"
+  },
+  {
+    "name": "fromNodeMiddleware",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function fromNodeMiddleware(...middlewares: readonly NodeMiddleware[]): (target: Request | NodeMiddlewareContextLike) => Promise<Response | undefined>;",
+    "doc": "/**\n * Run one or more Node/Express-style `(req, res, next)` middlewares inside either a Nifra hook\n * (`app.onRequest(...)` / route handler) or a plain Fetch pipeline. Short-circuits with a `Response`\n * when middleware ends `res`, propagates headers/status to `c.set` when calling `next()`, and rejects\n * when `next(err)` is invoked.\n */"
+  },
+  {
     "name": "fromPrecompiled",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -21960,6 +22165,13 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function getFixRecipe(id: string): FixRecipe | undefined;"
+  },
+  {
+    "name": "getPeerCertificate",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function getPeerCertificate(request: Request, detailed?: boolean): PeerCertificateInfo | null;",
+    "doc": "/**\n * Return the client certificate presented on an mTLS connection for `request`, or `null` when\n * the request did not arrive over TLS with a client certificate.\n */"
   },
   {
     "name": "getRouteSlotRuntime",
@@ -22616,6 +22828,13 @@
     "signature": "export declare function isModelGatewayErrorCode(value: unknown): value is ModelGatewayErrorCode;"
   },
   {
+    "name": "isNativeAvailable",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function isNativeAvailable(): boolean;",
+    "doc": "/** Whether the native Rust engine addon can be loaded in this process. */"
+  },
+  {
     "name": "isNativeServerView",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -23055,6 +23274,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function maxClassification(values: Iterable<DataClassification>): DataClassification;",
     "doc": "/** The most sensitive classification among the inputs; `\"public\"` when none are given. */"
+  },
+  {
+    "name": "mayServeSockets",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function mayServeSockets(app: object): boolean;",
+    "doc": "/**\n * Whether a handshake could be taken by this app or an app mounted in it. `false` only when that is\n * certain: an app with no socket route and mounts that each say, through the same `wsRuntime` seam\n * `listen()` asks, that nothing in them can take an upgrade. Anything the adapter cannot read counts as\n * able, so a handshake is only skipped when it would have been answered as a plain GET anyway.\n */"
   },
   {
     "name": "mcp",
@@ -24096,6 +24322,13 @@
     "signature": "export declare function pathnameOf(url: string): string;"
   },
   {
+    "name": "payloadCeiling",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function payloadCeiling(app: object): number | undefined;",
+    "doc": "/**\n * The largest `wsMaxPayloadBytes` among the app and the apps mounted under it that serve sockets, or\n * `undefined` when none is declared. The engine takes one limit per listener, so it has to admit every\n * mounted app's cap; a route whose app declares less is held to it by the hub. Reads each server's own\n * mount table by reflection, so a plain handler or an app with no socket routes names no cap.\n */"
+  },
+  {
     "name": "pickLanguage",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -24304,6 +24537,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function privateEnvReason(reads: readonly string[], publicPrefix: string): string;",
     "doc": "/** The denial reason for a file's private environment reads. */"
+  },
+  {
+    "name": "probe",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function probe(): ProbeResult;",
+    "doc": "/** Probe whether a native addon binary is available on this host and report its transport/capabilities. */"
   },
   {
     "name": "problemDetails",
@@ -25799,8 +26039,21 @@
   {
     "name": "serve",
     "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<EngineServer>;"
+  },
+  {
+    "name": "serve",
+    "kind": "function",
     "package": "@nifrajs/node-uws",
     "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<UwsServer>;"
+  },
+  {
+    "name": "serveCluster",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function serveCluster(app: () => FetchHandler | Promise<FetchHandler>, options: ClusterOptions): Promise<ClusterPrimary | ClusterWorker>;",
+    "doc": "/**\n * Run `app` on every core. The primary returns once every worker is listening; a worker returns once\n * its server is. Rejects in the primary when a worker cannot start, after stopping the others.\n */"
   },
   {
     "name": "serveDatabaseAsMcp",
@@ -25827,6 +26080,13 @@
     "name": "serveStatic",
     "kind": "function",
     "package": "@nifrajs/node",
+    "signature": "export declare function serveStatic(mounts: ServeStaticOptions | readonly ServeStaticOptions[]): (request: Request) => Promise<Response | undefined> | undefined;",
+    "doc": "/**\n * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the\n * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to\n * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the\n * app on its direct lane. Called with a Web `Request`, it answers the same way. Bun's\n * `@nifrajs/core/serve-static` and `@nifrajs/deno` take the same mounts.\n *\n * @example\n * ```ts\n * await serve(app, { port: 3000, static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
+  },
+  {
+    "name": "serveStatic",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
     "signature": "export declare function serveStatic(mounts: ServeStaticOptions | readonly ServeStaticOptions[]): (request: Request) => Promise<Response | undefined> | undefined;",
     "doc": "/**\n * The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the\n * first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to\n * {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the\n * app on its direct lane. Called with a Web `Request`, it answers the same way. Bun's\n * `@nifrajs/core/serve-static` and `@nifrajs/deno` take the same mounts.\n *\n * @example\n * ```ts\n * await serve(app, { port: 3000, static: serveStatic({ dir: new URL(\"./assets/\", import.meta.url) }) })\n * ```\n */"
   },
@@ -25986,6 +26246,13 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare function setMountedRouter(router: ClientRouter | undefined): void;",
     "doc": "/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */"
+  },
+  {
+    "name": "setResponseTrailers",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function setResponseTrailers(request: Request, trailers: Readonly<Record<string, string>>): boolean;",
+    "doc": "/**\n * HTTP/2 only: set the fields the response to `request` ends with, replacing any set before. Call it\n * before the body ends, with the `Request` the engine made (`c.req` in a nifra route), not a copy.\n * `false`, and nothing is set, on HTTP/1.1, once the response is complete, or when a name or value\n * cannot be a trailer.\n */"
   },
   {
     "name": "setRouteSlot",
@@ -27984,6 +28251,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function writeDevServerRecord(root: string, record: DevServerRecord): void;",
     "doc": "/** Write the record atomically (temp file + rename) and owner-only. */"
+  },
+  {
+    "name": "writeEarlyHints",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function writeEarlyHints(request: Request, hints: Readonly<Record<string, string | readonly string[]>>): boolean;",
+    "doc": "/**\n * Send a `103 Early Hints` informational response before the final response for `request`.\n */"
+  },
+  {
+    "name": "writeInformational",
+    "kind": "function",
+    "package": "@nifrajs/node-engine",
+    "signature": "export declare function writeInformational(request: Request, status: number, headers?: Readonly<Record<string, string | readonly string[]>>): boolean;",
+    "doc": "/**\n * Send an HTTP `1xx` informational response (such as `103 Early Hints`) before the final response\n * is sent for `request`. Supports HTTP/1.1 (including pipelining) and HTTP/2.\n */"
   },
   {
     "name": "writeRouteTypes",

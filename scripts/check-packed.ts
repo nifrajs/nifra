@@ -119,10 +119,24 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
   if (options.markers.length === 0) notes.push("marker scan skipped (PRIVATE_MARKERS unset)")
 
   const snapshot: Record<string, readonly string[]> = {}
+  const optionalMissingNative = new Set<string>()
+  const requireNative = process.env.NIFRA_REQUIRE_NATIVE_BINARIES === "1"
   let fileCount = 0
   const dest = mkdtempSync(join(tmpdir(), "nifra-check-packed-"))
   try {
     for (const pkg of options.packages) {
+      const pkgManifest = JSON.parse(
+        readFileSync(join(options.root, pkg.dir, "package.json"), "utf8"),
+      ) as { readonly nifra?: { readonly nativePrebuild?: string } }
+      const isPrebuildPkg = typeof pkgManifest.nifra?.nativePrebuild === "string"
+      const hasBinary = existsSync(join(options.root, pkg.dir, "nifra_napi.node"))
+      if (isPrebuildPkg && !hasBinary) {
+        if (requireNative) {
+          failures.push(`${pkg.name}: missing staged nifra_napi.node`)
+        } else {
+          optionalMissingNative.add(pkg.name)
+        }
+      }
       const out = join(dest, pkg.dir.replaceAll("/", "_"))
       const packed = spawnSync(
         process.execPath,
@@ -182,9 +196,14 @@ export async function checkPacked(options: PackedCheckOptions): Promise<PackedCh
       ? JSON.parse(readFileSync(snapshotPath, "utf8"))
       : {}
     const names = [...new Set([...Object.keys(committed), ...Object.keys(snapshot)])]
-    const drift = names.flatMap(
-      (name) => describeDrift(name, fileListDrift(committed[name], snapshot[name] ?? [])) ?? [],
-    )
+    const drift = names.flatMap((name) => {
+      const expected = committed[name]
+      const actual =
+        optionalMissingNative.has(name) && expected?.includes("nifra_napi.node")
+          ? [...(snapshot[name] ?? []), "nifra_napi.node"].sort(codeUnitOrder)
+          : (snapshot[name] ?? [])
+      return describeDrift(name, fileListDrift(expected, actual)) ?? []
+    })
     if (drift.length > 0) {
       const header = `published files differ from ${SNAPSHOT_FILE}; review, then run \`bun run check:packed --update\`:`
       if (options.release) failures.push(header, ...drift)

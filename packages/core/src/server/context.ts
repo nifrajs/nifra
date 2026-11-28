@@ -451,6 +451,11 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   readonly params: ParamsOf<S, Path>
   /** Request headers, names lower-cased; when `schema.headers` is declared, its validated output. */
   readonly headers: HeadersOf<S>
+  /**
+   * HTTP trailers received after the request body (HTTP/1.1 chunked or HTTP/2 trailing HEADERS).
+   * Empty when the client sent no trailers or before a streamed request body finishes.
+   */
+  readonly trailers: Readonly<Record<string, string>>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
   /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on

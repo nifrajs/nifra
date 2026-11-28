@@ -37,8 +37,11 @@ export {
   type StorageListPage,
   type StorageListPageOptions,
   type StorageObject,
+  type StorageObjectMetadata,
   type StoragePresignedUrl,
   type StoragePresignOperation,
   type StoragePresignOptions,
+  type StorageStreamObject,
+  type StreamableStorageAdapter,
   toBytes,
 } from "./types.ts"

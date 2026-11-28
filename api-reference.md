@@ -4750,6 +4750,66 @@ _No named exports (side-effect entrypoint)._
 - **resolveRequestTarget** _(const)_ - `resolveRequestTarget: (target: string, normalizeTarget: boolean) => string`
   The origin-form target the app routes on: absolute-form unwrapped, dot segments resolved when asked.
 
+## @nifrajs/node-engine
+
+- **CompressionOptions** _(interface)_ - `interface CompressionOptions`
+  Native HTTP response compression (`zstd`, `br`, `gzip`, `deflate`) negotiated via `Accept-Encoding`.
+- **ConnectHandler** _(type)_ - `type ConnectHandler = ( request: Request, socket: Duplex, head: Buffer, ) => undefined | Response | Promise<undefined | Response>`
+  Handler invoked for HTTP/1.1 or HTTP/2 `CONNECT` tunnel requests.
+- **EngineServer** _(interface)_ - `interface EngineServer`
+- **EngineSocket** _(interface)_ - `interface EngineSocket`
+  What `ws.raw` is on this transport: the engine keeps no socket object to hand out, so this is the socket's id and what the engine still knows about its handshake.
+- **EngineTuning** _(interface)_ - `interface EngineTuning`
+  Engine limits and timeouts beyond the first-class options.
+- **FetchHandler** _(interface)_ - `interface FetchHandler`
+  Anything exposing a Web `fetch` handler - a nifra `app`, for instance.
+- **Http2Options** _(interface)_ - `interface Http2Options`
+  HTTP/2 settings the server advertises.
+- **NodeCompatPair** _(interface)_ - `interface NodeCompatPair`
+- **NodeMiddleware** _(type)_ - `type NodeMiddleware = ( req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void, ) => void`
+- **NodeMiddlewareContextLike** _(interface)_ - `interface NodeMiddlewareContextLike`
+- **NodeRequestListener** _(type)_ - `type NodeRequestListener = (req: IncomingMessage, res: ServerResponse) => void`
+- **NodeStopOptions** _(interface)_ - `interface NodeStopOptions`
+  How `stop()` winds the server down; the same shape `serve()` takes in `@nifrajs/node`.
+- **PeerCertificateInfo** _(interface)_ - `interface PeerCertificateInfo`
+  Parsed mTLS peer certificate information exposed by {@link getPeerCertificate}.
+- **ProbeResult** _(interface)_ - `interface ProbeResult`
+  Native engine probe result describing loaded platform, transport, and capability flags.
+- **ServeOptions** _(interface)_ - `interface ServeOptions`
+- **TlsOptions** _(interface)_ - `interface TlsOptions`
+  In-process TLS: inline PEM or file names, encrypted key passphrase, mTLS & TLS policy.
+- **TlsSniEntry** _(interface)_ - `interface TlsSniEntry`
+  Per-hostname certificate entry for TLS Server Name Indication (SNI), matching exact or single-level wildcard (`*.example.com`).
+- **WsDeflateOptions** _(interface)_ - `interface WsDeflateOptions`
+  RFC 7692 WebSocket `permessage-deflate` negotiation and compression settings.
+- **bodyCeiling** _(function)_ - `bodyCeiling: (app: object) => number | undefined`
+  The largest `maxBodyBytes` among the app and the apps mounted under it, or `undefined` when none is declared. The engine buffers a body before the app sees it, so a cap below what the app accepts would refuse bodies the app allows, with an empty 413 and no way for the app to answer.
+- **createNodeCompat** _(function)_ - `createNodeCompat: (request: Request) => NodeCompatPair`
+  Create a genuine Node `IncomingMessage` and `ServerResponse` pair wired to a Web `Request` (and underlying `@nifrajs/node-engine` request metadata when served by `serve()`).
+- **fromNodeHandler** _(function)_ - `fromNodeHandler: (handler: NodeRequestListener) => FetchHandler & ((request: Request) => Promise<Response>)`
+  Wrap a Node `http.RequestListener` — including an entire Express application (`express()`) — into a Web `FetchHandler` + fetch function that runs directly inside `@nifrajs/node-engine` `serve()`.
+- **fromNodeMiddleware** _(function)_ - `fromNodeMiddleware: (...middlewares: readonly NodeMiddleware[]) => (target: Request | NodeMiddlewareContextLike) => Promise<Response | undefined>`
+  Run one or more Node/Express-style `(req, res, next)` middlewares inside either a Nifra hook (`app.onRequest(...)` / route handler) or a plain Fetch pipeline. Short-circuits with a `Response` when middleware ends `res`, propagates headers/status to `c.set` when calling `next()`, and rejects when `n…
+- **getPeerCertificate** _(function)_ - `getPeerCertificate: (request: Request, detailed?: boolean) => PeerCertificateInfo | null`
+  Return the client certificate presented on an mTLS connection for `request`, or `null` when the request did not arrive over TLS with a client certificate.
+- **isNativeAvailable** _(function)_ - `isNativeAvailable: () => boolean`
+  Whether the native Rust engine addon can be loaded in this process.
+- **mayServeSockets** _(function)_ - `mayServeSockets: (app: object) => boolean`
+  Whether a handshake could be taken by this app or an app mounted in it. `false` only when that is certain: an app with no socket route and mounts that each say, through the same `wsRuntime` seam `listen()` asks, that nothing in them can take an upgrade. Anything the adapter cannot read counts as ab…
+- **payloadCeiling** _(function)_ - `payloadCeiling: (app: object) => number | undefined`
+  The largest `wsMaxPayloadBytes` among the app and the apps mounted under it that serve sockets, or `undefined` when none is declared. The engine takes one limit per listener, so it has to admit every mounted app's cap; a route whose app declares less is held to it by the hub. Reads each server's ow…
+- **probe** _(function)_ - `probe: () => ProbeResult`
+  Probe whether a native addon binary is available on this host and report its transport/capabilities.
+- **serve** _(function)_ - `serve: (app: FetchHandler, options: ServeOptions) => Promise<EngineServer>`
+- **serveStatic** _(function)_ - `serveStatic: (mounts: ServeStaticOptions | readonly ServeStaticOptions[]) => (request: Request) => Promise<Response | undefined> | undefined`
+  The `static` handler for files on disk: each mount serves a directory under a URL prefix, and the first mount whose prefix (and `files`, when set) takes a GET or HEAD path answers it. Passed to {@link serve}, the mounts run on Node's own request, so a request none of them takes reaches the app on i…
+- **setResponseTrailers** _(function)_ - `setResponseTrailers: (request: Request, trailers: Readonly<Record<string, string>>) => boolean`
+  HTTP/2 only: set the fields the response to `request` ends with, replacing any set before. Call it before the body ends, with the `Request` the engine made (`c.req` in a nifra route), not a copy. `false`, and nothing is set, on HTTP/1.1, once the response is complete, or when a name or value cannot…
+- **writeEarlyHints** _(function)_ - `writeEarlyHints: (request: Request, hints: Readonly<Record<string, string | readonly string[]>>) => boolean`
+  Send a `103 Early Hints` informational response before the final response for `request`.
+- **writeInformational** _(function)_ - `writeInformational: (request: Request, status: number, headers?: Readonly<Record<string, string | readonly string[]>>) => boolean`
+  Send an HTTP `1xx` informational response (such as `103 Early Hints`) before the final response is sent for `request`. Supports HTTP/1.1 (including pipelining) and HTTP/2.
+
 ## @nifrajs/node-uws
 
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
@@ -5101,12 +5161,18 @@ _No named exports (side-effect entrypoint)._
   Cursor-aware listing options. `cursor` is adapter-owned and must be treated as opaque.
 - **StorageObject** _(interface)_ - `interface StorageObject`
   An object read back from storage. `body` is buffered (not streamed) - fine for typical uploads.
+- **StorageObjectMetadata** _(interface)_ - `interface StorageObjectMetadata`
+  Metadata for a stored object, without buffering its bytes.
 - **StoragePresignOperation** _(type)_ - `type StoragePresignOperation = "get" | "put"`
   Operation represented by a presigned storage URL.
 - **StoragePresignOptions** _(interface)_ - `interface StoragePresignOptions`
   Mechanical constraints applied while minting a presigned URL.
 - **StoragePresignedUrl** _(interface)_ - `interface StoragePresignedUrl`
   A provider-minted URL and its known expiry.
+- **StorageStreamObject** _(interface)_ - `interface StorageStreamObject`
+  A streamed object read back from storage without buffering the full payload in memory.
+- **StreamableStorageAdapter** _(interface)_ - `interface StreamableStorageAdapter`
+  Optional streaming and metadata-only capability for large objects without full-body buffering.
 - **assertSafeKey** _(function)_ - `assertSafeKey: (key: string) => void`
   Throw {@link StorageKeyError} unless `key` is a safe relative storage key.
 - **assertStorageAdapterConformance** _(function)_ - `assertStorageAdapterConformance: (options: StorageAdapterConformanceOptions) => Promise<void>`
